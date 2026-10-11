@@ -185,7 +185,7 @@ export const CHARGE_LABELS = [
   msg("Story bible entry"), msg("Style suggestions"), msg("Sample brief"), msg("Style sample"),
   msg("Sample lettering"), msg("Production style"), msg("Style name"), msg("Style direction"), msg("Style check"),
   msg("Character and place designs"), msg("Character reference"), msg("Appearance reference"),
-  msg("Location reference"), msg("Location variant"), msg("Prop reference"), msg("Prop variant"),
+  msg("Location reference"), msg("Location variant"), msg("Location style board"), msg("Prop reference"), msg("Prop variant"),
   msg("Instruction rewrite"), msg("Visual check"), msg("Book adaptation"), msg("Narrative treatment"),
   msg("Scene blueprint"), msg("Lettering copy"), msg("Book plan"), msg("Page map"), msg("Page details"),
   msg("Page art"), msg("Text check"), msg("Story review"), msg("Lettering translation"), msg("Cover"),

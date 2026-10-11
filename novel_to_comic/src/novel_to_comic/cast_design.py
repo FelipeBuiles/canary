@@ -14,12 +14,13 @@ from collections import Counter
 from typing import Literal
 
 from PIL import Image, ImageDraw, ImageOps
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic import artifacts
 from novel_to_comic.ai.errors import AIStructuredResponseError
 from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.clients import text
+from novel_to_comic.style_reference import find_style_reference
 from novel_to_comic.clients.structured_call import (
     StructuredCallError, generate_validated_json, validation_error_summary,
 )
@@ -66,11 +67,22 @@ class CastDesignResponse(BaseModel):
 
 
 class CastVisualIssue(BaseModel):
+    """One note about character sheets, or a style note about location plates."""
+
     model_config = ConfigDict(extra="forbid")
-    character_ids: list[str] = Field(min_length=1)
-    concern: Literal["lookalike", "anatomy", "wardrobe", "identity", "presentation", "contradiction"]
+    character_ids: list[str] = Field(default_factory=list)
+    location_ids: list[str] = Field(default_factory=list)
+    concern: Literal["lookalike", "anatomy", "wardrobe", "identity", "presentation", "contradiction", "style"]
     evidence: str = Field(min_length=1)
     suggestion: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _one_subject_kind(self) -> "CastVisualIssue":
+        if bool(self.character_ids) == bool(self.location_ids):
+            raise ValueError("A Cast check note names characters or location plates, never both or neither")
+        if self.location_ids and self.concern != "style":
+            raise ValueError("Location plates are checked for style only")
+        return self
 
 
 class CastVisualReview(BaseModel):
@@ -86,7 +98,8 @@ class CastReviewDismissal(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    character_ids: list[str] = Field(min_length=1)
+    character_ids: list[str] = Field(default_factory=list)
+    location_ids: list[str] = Field(default_factory=list)
     concern: str
     sheets: dict[str, str]
 
@@ -134,11 +147,14 @@ established holds characters whose designs are already fixed: keep them exactly 
 they are and make every new design distinguishable from them as well.
 """
 
-REVIEW_SYSTEM = """Visually review a comic cast. Images are labelled contact sheets
-of actual canonical character reference sheets. Compare ALL characters across
-ALL images. Return JSON {"issues": [{"character_ids": ["id"],
-"concern": "lookalike|anatomy|wardrobe|identity|presentation|contradiction",
-"evidence": "visible evidence", "suggestion": "specific correction"}]}. Use only supplied ids.
+REVIEW_SYSTEM = """Visually review a comic cast. Image 1 is the selected style proof,
+the rendering authority for every reference. The remaining images are labelled
+contact sheets of actual canonical character reference sheets, then of canonical
+location plates. Compare ALL characters across ALL images. Return JSON
+{"issues": [{"character_ids": ["id"], "location_ids": [],
+"concern": "lookalike|anatomy|wardrobe|identity|presentation|contradiction|style",
+"evidence": "visible evidence", "suggestion": "specific correction"}]}. Use only
+supplied ids. A note names character_ids or location_ids, never both.
 Flag faces/silhouettes so alike readers could confuse separate people, anatomy
 borrowed from another character, wardrobe or identity contradicting source facts.
 Check each sheet against its own source facts one by one:
@@ -150,6 +166,14 @@ Check each sheet against its own source facts one by one:
   drawn as a worn ring, "no jewelry" drawn with jewelry), a stated material or
   fabric replaced by another, or invented marks, tattoos, headwear or iconography
   that dominate the design without source support.
+- style: a character sheet or location plate whose rendering visibly departs from
+  the style proof: medium, palette, value range, shadow depth, line weight, edge
+  treatment, shading or modeling, facial abstraction, character proportion system
+  or degree of simplification. Judge how it is drawn, never what the proof depicts:
+  ignore the proof's people, costumes, rooms, poses and composition, and a sheet's
+  plain background or neutral pose. Location plates get style notes only, with
+  location_ids. Name the specific visible departure and how the proof renders it,
+  and suggest a redraw direction in the proof's rendering language.
 Common artistic style alone is not a collision. Related people may resemble one
 another. Source facts override adaptation choices. Ground every issue in visible
 pixels; do not invent problems solely from descriptions. Include both ids for a
@@ -408,6 +432,19 @@ async def ensure_design(config, project_dir, bible, ctx):
     return plan
 
 
+def _style_proof(config, project_dir):
+    proof = find_style_reference(project_dir, config.style_template)
+    if proof is None:
+        raise ValueError("Select a Style proof before reviewing the cast.")
+    return proof
+
+
+def _existing_plates(project_dir, bible) -> dict:
+    """Canonical plates drawn so far; a plate drawn later makes the check stale."""
+    return {loc.id: path for loc in bible.locations
+            if (path := artifacts.location_plate_path(project_dir, loc.id)).is_file()}
+
+
 def review_input(config, project_dir, bible) -> dict:
     plan = read_design(config, project_dir, bible)
     sheets = {}
@@ -416,20 +453,30 @@ def review_input(config, project_dir, bible) -> dict:
         if not path.exists():
             raise ValueError("Generate every canonical character sheet before reviewing the cast.")
         sheets[char.id] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return {"version": 1, "design": plan.model_dump(), "sheets": sheets,
+    plates = {loc_id: hashlib.sha256(path.read_bytes()).hexdigest()
+              for loc_id, path in _existing_plates(project_dir, bible).items()}
+    return {"version": 2, "design": plan.model_dump(), "sheets": sheets, "plates": plates,
+            "style_proof": hashlib.sha256(_style_proof(config, project_dir).read_bytes()).hexdigest(),
             "source": design_context(config, bible),
             "instructions": {c.id: artifacts.read_active_addendum(
                 artifacts.character_ref_instructions_path(project_dir, c.id)) for c in bible.characters}}
 
 
-def _sheet_hashes(inputs: dict, character_ids) -> dict[str, str]:
-    return {cid: inputs["sheets"].get(cid, "") for cid in sorted(set(character_ids))}
+def _sheet_hashes(inputs: dict, character_ids, location_ids=()) -> dict[str, str]:
+    hashes = {cid: inputs["sheets"].get(cid, "") for cid in sorted(set(character_ids))}
+    hashes.update({lid: inputs["plates"].get(lid, "") for lid in sorted(set(location_ids))})
+    return hashes
+
+
+def _same_subject(note, character_ids, location_ids) -> bool:
+    return (sorted(set(note.character_ids)) == sorted(set(character_ids))
+            and sorted(set(note.location_ids)) == sorted(set(location_ids)))
 
 
 def _is_dismissed(issue: CastVisualIssue, inputs: dict, dismissals: CastReviewDismissals) -> bool:
-    ids = sorted(set(issue.character_ids))
-    sheets = _sheet_hashes(inputs, ids)
-    return any(sorted(set(d.character_ids)) == ids and d.concern == issue.concern and d.sheets == sheets
+    sheets = _sheet_hashes(inputs, issue.character_ids, issue.location_ids)
+    return any(_same_subject(d, issue.character_ids, issue.location_ids)
+               and d.concern == issue.concern and d.sheets == sheets
                for d in dismissals.dismissed)
 
 
@@ -462,7 +509,8 @@ def review_status(config, project_dir) -> dict:
         return {"status": "stale", "issues": [], "dismissed": 0, "reviewing": reviewing}
 
 
-def dismiss_review_issue(config, project_dir, character_ids: list[str], concern: str) -> None:
+def dismiss_review_issue(config, project_dir, character_ids: list[str], concern: str,
+                         location_ids: list[str] = ()) -> None:
     """Record that the author judged a current note fine for the current sheets."""
     target = TargetArtifacts(project_dir)
     bible = read_cast_story_bible(project_dir)
@@ -470,33 +518,52 @@ def dismiss_review_issue(config, project_dir, character_ids: list[str], concern:
     inputs = review_input(config, project_dir, bible)
     if review.input_sha256 != _digest(inputs):
         raise ValueError("The character check is out of date; resume Cast to compare the current references.")
-    ids = sorted(set(character_ids))
-    if not any(sorted(set(i.character_ids)) == ids and i.concern == concern for i in review.issues):
+    ids, places = sorted(set(character_ids)), sorted(set(location_ids))
+    if not any(_same_subject(i, ids, places) and i.concern == concern for i in review.issues):
         raise KeyError("No such note in the current character check.")
     dismissals = target.read_cast_review_dismissals()
     # Keep only dismissals that still match a current sheet set; old ones can never apply again.
     kept = [d for d in dismissals.dismissed
-            if d.sheets == _sheet_hashes(inputs, d.character_ids)
-            and not (sorted(set(d.character_ids)) == ids and d.concern == concern)]
-    kept.append(CastReviewDismissal(character_ids=ids, concern=concern, sheets=_sheet_hashes(inputs, ids)))
+            if d.sheets == _sheet_hashes(inputs, d.character_ids, d.location_ids)
+            and not (_same_subject(d, ids, places) and d.concern == concern)]
+    kept.append(CastReviewDismissal(character_ids=ids, location_ids=places, concern=concern,
+                                    sheets=_sheet_hashes(inputs, ids, places)))
     target.write_cast_review_dismissals(CastReviewDismissals(dismissed=kept))
 
 
-def _contact_sheets(project_dir, bible):
-    """Bound image dimensions without dropping any characters or comparisons."""
+def _png(image) -> tuple[bytes, str]:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue(), "image/png"
+
+
+def _labelled_pages(items, columns: int, cell: tuple[int, int]):
+    """Bound image dimensions without dropping any items or comparisons."""
     pages = []
-    for start in range(0, len(bible.characters), 12):
-        group = bible.characters[start:start + 12]
-        image = Image.new("RGB", (1536, ((len(group) + 3) // 4) * 420), "white")
+    per_page = columns * 3
+    width, height = cell
+    for start in range(0, len(items), per_page):
+        group = items[start:start + per_page]
+        image = Image.new("RGB", (columns * width, ((len(group) + columns - 1) // columns) * (height + 36)), "white")
         draw = ImageDraw.Draw(image)
-        for index, char in enumerate(group):
-            x, y = index % 4 * 384, index // 4 * 420
-            with Image.open(artifacts.character_ref_sheet_path(project_dir, char.id)) as sheet:
-                image.paste(ImageOps.contain(sheet.convert("RGB"), (384, 384)), (x, y))
-            draw.text((x + 4, y + 385), char.id, fill="black")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        pages.append((buffer.getvalue(), "image/png"))
+        for index, (label, path) in enumerate(group):
+            x, y = index % columns * width, index // columns * (height + 36)
+            with Image.open(path) as sheet:
+                image.paste(ImageOps.contain(sheet.convert("RGB"), (width, height)), (x, y))
+            draw.text((x + 4, y + height + 1), label, fill="black")
+        pages.append(_png(image))
+    return pages
+
+
+def _contact_sheets(project_dir, bible, proof=None):
+    """The proof first, then every character sheet, then every drawn plate."""
+    pages = []
+    if proof is not None:
+        with Image.open(proof) as image:
+            pages.append(_png(ImageOps.contain(image.convert("RGB"), (1024, 1024))))
+    characters = [(char.id, artifacts.character_ref_sheet_path(project_dir, char.id)) for char in bible.characters]
+    pages += _labelled_pages(characters, 4, (384, 384))
+    pages += _labelled_pages(list(_existing_plates(project_dir, bible).items()), 3, (512, 292))
     return tuple(pages)
 
 
@@ -507,7 +574,8 @@ async def run_cast_review(config, project_dir, bible, *, log, usage_sink) -> boo
     fingerprint = _digest(inputs)
     if target.cast_review_path.exists() and target.read_cast_review().input_sha256 == fingerprint:
         return False
-    log(f"Comparing {len(bible.characters)} character sheets for lookalikes and mismatches with their descriptions")
+    log(f"Comparing {len(bible.characters)} character sheets for lookalikes and mismatches with their "
+        "descriptions, and every reference with the selected Style proof")
     marker = target.cast_review_running_path
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
@@ -515,8 +583,9 @@ async def run_cast_review(config, project_dir, bible, *, log, usage_sink) -> boo
         result = await text.generate_json(
             config=config, model=config.effective_visual_review_model(), system_prompt=REVIEW_SYSTEM,
             user_content=json.dumps(inputs, ensure_ascii=False, default=str),
-            image_attachments=_contact_sheets(project_dir, bible),
-            max_output_tokens=max(4096, len(bible.characters) * 400), feature="cast.visual_review",
+            image_attachments=_contact_sheets(project_dir, bible, _style_proof(config, project_dir)),
+            max_output_tokens=max(4096, (len(bible.characters) + len(inputs["plates"])) * 400),
+            feature="cast.visual_review",
             retry_invalid_json=False, retry_transport=False,
             response_sink=lambda response: usage_sink(response.usage) if response.usage else None,
         )
@@ -525,7 +594,8 @@ async def run_cast_review(config, project_dir, bible, *, log, usage_sink) -> boo
     review = CastVisualReview(input_sha256=fingerprint, issues=result.value["issues"])
     known = {c.id for c in bible.characters}
     for issue in review.issues:
-        if not set(issue.character_ids) <= known or (issue.concern == "lookalike" and len(set(issue.character_ids)) < 2):
+        if (not set(issue.character_ids) <= known or not set(issue.location_ids) <= set(inputs["plates"])
+                or (issue.concern == "lookalike" and len(set(issue.character_ids)) < 2)):
             raise ValueError("Cast visual review returned invalid character identities; resume Cast.")
     # Do not publish a review of replaced pixels, even if a correction ran concurrently.
     if _digest(review_input(config, project_dir, bible)) != fingerprint:
@@ -552,9 +622,11 @@ def review_ready(config, project_dir, bible) -> bool:
 def estimate_review_cost(config, bible) -> float:
     context = json.dumps(design_context(config, bible), ensure_ascii=False, default=str)
     # Include visual input allowance and the designs supplied alongside it.
+    # The style proof and every plate are images too.
+    images = len(bible.characters) + len(bible.locations) + 1
     return estimate_text_cost(config.effective_visual_review_model(),
-                              len(REVIEW_SYSTEM + context) + len(bible.characters) * 10000,
-                              output_chars=len(bible.characters) * 1600)
+                              len(REVIEW_SYSTEM + context) + images * 10000,
+                              output_chars=images * 1600)
 
 
 def estimate_design_review(config, project_dir, bible) -> float:

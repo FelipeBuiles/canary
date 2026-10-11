@@ -679,6 +679,18 @@ _NAMED_STYLE_ATTRIBUTION_PATTERNS = (
 )
 
 
+STYLE_VARIATION_PREAMBLE = (
+    "Textual style notes; the approved visual style reference owns the intended rendering "
+    "language, subject to surface-fidelity constraints for incidental texture"
+)
+STYLE_WITH_REFERENCE_PREAMBLE = (
+    "Selected style; the approved style reference image shows how it is rendered. Draw in "
+    "that rendering language and apply this written direction in full, including its "
+    "character design and proportion system, subject to surface-fidelity constraints for "
+    "incidental texture"
+)
+
+
 def _demote_named_style_attributions(style_text: str) -> str:
     """Remove named-style priors once an approved visual reference exists.
 
@@ -822,14 +834,18 @@ def _build_sections(
     if cleaned_style:
         if has_style_reference:
             cleaned_style = _demote_named_style_attributions(cleaned_style)
+        if not has_style_reference:
+            style_line = cleaned_style
+        elif asset_kind == "style_sample":
+            style_line = f"{STYLE_VARIATION_PREAMBLE}: {cleaned_style}"
+        else:
+            # A demoted text let sheets keep the proof's surface but drop its
+            # character design, and Draw inherited that drift from the sheets.
+            style_line = f"{STYLE_WITH_REFERENCE_PREAMBLE}: {cleaned_style}"
         sections.append(CompiledPromptSection(
             kind="style",
-            title=("Secondary style notes" if has_style_reference else "Style"),
-            lines=((
-                "Secondary textual style notes; the approved visual style reference "
-                "owns the intended rendering language, subject to surface-fidelity constraints "
-                f"for incidental texture: {cleaned_style}"
-            ) if has_style_reference else cleaned_style,),
+            title="Style",
+            lines=(style_line,),
         ))
 
     # ── 4. Reference instructions (semantic, final order) ────────────────

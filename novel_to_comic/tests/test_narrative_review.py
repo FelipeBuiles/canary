@@ -681,6 +681,103 @@ def test_draw_admission_requires_both_current_reviews(tmp_path):
         require_draw_narrative_reviews(target)
 
 
+def _reviewed_draw_project(tmp_path):
+    from novel_to_comic.models.page import BookPlan, PlannedPageRevision
+
+    target = TargetArtifacts(tmp_path)
+    a, source, brief = _book_adaptation(), _source_document(), _approved_brief()
+    target.write_source(source)
+    target.write_brief(brief)
+    target.write_adaptation(a)
+    pages = canonical(a, draft_for(a))
+    for p in pages:
+        target.write_page(p)
+    target.write_plan(BookPlan(
+        revision=1, adaptation_revision=a.revision, adaptation_sha256=a.content_sha256,
+        target_page_min=1, target_page_max=2,
+        pages=[PlannedPageRevision(page_number=p.page_number, revision=p.revision,
+                                   content_sha256=p.content_sha256) for p in pages],
+    ))
+
+    async def generate(**request):
+        return ApiResult(value=verdict(request))
+
+    for stage, context in (("adapt", adaptation_context(source, brief, a)), ("plan", planning_context(a, pages))):
+        asyncio.run(review_narrative(context, generate=generate, ctx=runtime(tmp_path, stage),
+                                     artifacts=target, model="test"))
+    require_draw_narrative_reviews(target)
+    return target, generate
+
+
+def _from_earlier_contract(target):
+    for phase in ("adapt", "plan"):
+        target.write_narrative_review(phase, target.read_narrative_review(phase).model_copy(
+            update={"version": "narrative_v0"}))
+
+
+def test_reviews_from_an_earlier_contract_are_rechecked_without_rewriting_the_work(tmp_path):
+    from novel_to_comic.narrative_review import REVIEW_VERSION, draw_review_recheck_phases, recheck_draw_reviews
+
+    target, generate = _reviewed_draw_project(tmp_path)
+    assert draw_review_recheck_phases(target) == ()
+    _from_earlier_contract(target)
+    numbers = [entry.page_number for entry in target.read_plan().pages]
+    script, pages = target.read_adaptation(), [target.read_page(n) for n in numbers]
+
+    assert draw_review_recheck_phases(target) == ("adapt", "plan")
+    with pytest.raises(ValueError, match="Re-check them from Pages"):
+        require_draw_narrative_reviews(target)
+
+    reviewers = {phase: (generate, "test", 1) for phase in ("adapt", "plan")}
+    assert asyncio.run(recheck_draw_reviews(target, reviewers=reviewers)) == ()
+
+    require_draw_narrative_reviews(target)
+    assert draw_review_recheck_phases(target) == ()
+    assert {target.read_narrative_review(p).version for p in ("adapt", "plan")} == {REVIEW_VERSION}
+    assert (target.read_adaptation(), [target.read_page(n) for n in numbers]) == (script, pages)
+
+
+def test_a_recheck_that_finds_a_defect_keeps_drawing_paused(tmp_path, monkeypatch):
+    from novel_to_comic import narrative_review
+    from novel_to_comic.models.validation import InvariantFailure
+
+    target, generate = _reviewed_draw_project(tmp_path)
+    _from_earlier_contract(target)
+    earlier = target.read_narrative_review("adapt")
+
+    async def reject(context, *, artifacts, **_kwargs):
+        artifacts.write_narrative_review("adapt", earlier.model_copy(update={"verdicts": ()}))
+        return (InvariantFailure(id="adapt_review_1_1", owner_stage="adapt", code="narrative_review_gap",
+                                 message="The escape loses its cause.", evidence=["Beat 3 has no setup."]),)
+    monkeypatch.setattr(narrative_review, "review_narrative", reject)
+
+    reviewers = {phase: (generate, "test", 1) for phase in ("adapt", "plan")}
+    failures = asyncio.run(narrative_review.recheck_draw_reviews(target, reviewers=reviewers))
+
+    assert [f.message for f in failures] == ["The escape loses its cause."]
+    assert target.read_narrative_review("adapt") == earlier
+    assert narrative_review.draw_review_recheck_phases(target) == ("adapt", "plan")
+
+
+def test_no_recheck_is_offered_for_a_current_review_that_found_a_defect(tmp_path):
+    from novel_to_comic.models.validation import InvariantFailure
+    from novel_to_comic.narrative_review import REVIEW_VERSION, draw_review_recheck_phases
+
+    target, _generate = _reviewed_draw_project(tmp_path)
+    _from_earlier_contract(target)
+    current = target.read_narrative_review("plan")
+    target.write_narrative_review("plan", current.model_copy(update={
+        "version": REVIEW_VERSION,
+        "failures": (InvariantFailure(id="plan_review_1_1", owner_stage="plan", code="narrative_review_gap",
+                                      message="Gap.", evidence=["x"]),),
+    }))
+
+    # The plan's defect is Plan's to repair; a re-check of the script alone would not unblock Draw.
+    assert draw_review_recheck_phases(target) == ()
+    with pytest.raises(ValueError, match="failed or stale"):
+        require_draw_narrative_reviews(target)
+
+
 @pytest.mark.parametrize("entry", ["batch", "individual", "correction", "stage"])
 def test_draw_entry_points_stop_before_preparation_without_reviews(
     tmp_path, monkeypatch, entry

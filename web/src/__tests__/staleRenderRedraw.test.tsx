@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+import { ApiError } from "../api/errors";
 
 const estimate = vi.fn();
 const generate = vi.fn();
@@ -38,5 +39,23 @@ describe("StaleRenderRedraw", () => {
     fireEvent.click(within(drawer).getByRole("button", { name: "Redraw page 16" }));
     expect(generate).toHaveBeenCalledWith({ project: "demo", pageNumber: 16 }, expect.anything());
     expect(queued).toHaveBeenCalledWith("job-16");
+  });
+
+  it("shows a rejected estimate inside the sheet instead of a silently disabled button", async () => {
+    estimate.mockReset();
+    estimate.mockRejectedValue(new ApiError(409, "Narrative review is failed or stale. Choose Resume adaptation to check the saved script, then retry Plan."));
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider><StaleRenderRedraw project="demo" pageNumber={1} onJobQueued={vi.fn()} /></I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Redraw page 1" }));
+    const drawer = await screen.findByRole("alertdialog");
+    expect(within(drawer).getByRole("status").textContent).toBe("Loading estimate…");
+    const alert = await within(drawer).findByRole("alert");
+    expect(alert.textContent).toContain("Narrative review is failed or stale.");
+    expect((within(drawer).getByRole("button", { name: "Redraw page 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(drawer).getByRole("button", { name: "RETRY ESTIMATE" })).toBeTruthy();
   });
 });

@@ -105,8 +105,10 @@ STATE_LAYOUTS: dict[ReferenceForm, tuple[str, ...]] = {
 # formation keeps its shape, material and light and gains no face it lacks.
 IDENTITY_QUALITY: dict[ReferenceForm, str] = {
     "figure": (
-        "Preserve the active anchor's age, species, anatomy, and facial identity in the "
-        "selected rendering style; avoid accidental distortion, not intentional stylization"
+        "Preserve the active anchor's age, species, anatomy, and facial identity, drawn "
+        "through the selected style's character proportion system and facial abstraction; "
+        "the style's intended caricature, exaggeration or simplification is required, only "
+        "accidental distortion is avoided"
     ),
     "form": (
         "Preserve the active anchor's shape, material, light and anatomy in the selected "
@@ -136,8 +138,8 @@ CANONICAL_DIRECTION: dict[ReferenceForm, tuple[str, str]] = {
         "Wide turnaround reference sheet: in the left third, a three-quarter head-and-"
         "shoulders close-up above a side-profile close-up; in the right two thirds, "
         "full-body front, three-quarter, and back views. Neutral expression in every view. "
-        "Use the natural posture and complete anatomy specified by the character's visual "
-        "anchor, on a plain background.",
+        "Use the posture and complete anatomy specified by the character's visual "
+        "anchor, shaped by the selected style's proportion system, on a plain background.",
     ),
     "form": (
         "Wide form study reference sheet: one large hero depiction in the right two "

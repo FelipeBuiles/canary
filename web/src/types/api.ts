@@ -751,6 +751,8 @@ export interface PageGenerationFailure {
 
 export interface CompletePagesResponse {
   redraws?: Array<PageRedrawReasons & { page_number: number }>;
+  /** Reviews written under an earlier review contract; Draw waits for a re-check. */
+  review_recheck?: Array<"adapt" | "plan">;
   pages: CompletePageSummary[];
   issue_summary: PageIssueSummary;
 }

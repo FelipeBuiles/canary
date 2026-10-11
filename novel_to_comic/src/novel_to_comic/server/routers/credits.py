@@ -82,6 +82,7 @@ _FEATURE_LABELS = {
     "cast.character_ref_instruction_rewrite": "Instruction rewrite",
     "cast.location_plate": "Location reference",
     "cast.location_state_plate": "Location variant",
+    "cast.location_style_board": "Location style board",
     "cast.location_plate_instruction_rewrite": "Instruction rewrite",
     "cast.prop_ref": "Prop reference",
     "cast.prop_state_ref": "Prop variant",

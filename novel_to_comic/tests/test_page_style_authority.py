@@ -26,14 +26,19 @@ def test_proof_is_separate_rendering_authority_and_identity_pose_contract_surviv
     )
     request = compiled.request
     payload = _provider_brief(request.prompt)
-    assert [ref.id for ref in request.references] == ["ward-bloodied-ref", "idol-ref", "selected-style-proof"]
-    assert compiled.reference_bytes == (files["ward-bloodied-ref"].path.read_bytes(),
-                                       files["idol-ref"].path.read_bytes(), proof.read_bytes())
-    assert request.references[-1].entity_id is None
-    assert payload["selected_style_proof"]["image"] == "asset-C"
-    assert len(payload["approved_page_references"]) == 2
-    assert "facial abstraction" in payload["selected_style_proof"]["authority"]
-    assert "not their identities" in payload["selected_style_proof"]["authority"]
+    # The proof leads: it is the rendering every subject asset is redrawn in.
+    assert [ref.id for ref in request.references] == ["selected-style-proof", "ward-bloodied-ref", "idol-ref"]
+    assert compiled.reference_bytes == (proof.read_bytes(), files["ward-bloodied-ref"].path.read_bytes(),
+                                       files["idol-ref"].path.read_bytes())
+    assert request.references[0].entity_id is None
+    assert payload["selected_style_proof"]["image"] == "asset-A"
+    assert list(payload)[:2] == ["reference_scope", "selected_style_proof"]
+    assert [ref["image"] for ref in payload["approved_page_references"]] == ["asset-B", "asset-C"]
+    authority = payload["selected_style_proof"]["authority"]
+    assert "facial abstraction" in authority
+    assert "Where an asset's shading, modeling, line or texture differs from this proof, this proof wins" in authority
+    assert "Take no identities, hairstyles, costumes, rooms" in authority
+    assert "redrawn in the selected_style_proof's rendering language" in payload["reference_scope"]
     assert "do not default to the reference portrait's three-quarter view" in payload["reference_scope"]
     assert "not a fixed pose, facing direction, gaze, expression or camera angle" in payload["reference_scope"]
     assert "do not mirror asymmetric features" in payload["reference_scope"]
@@ -53,10 +58,10 @@ def test_proof_pixels_are_frozen_and_change_request_identity_without_rebinding_e
     Image.new("RGB", (32, 40), "blue").save(proof)
     after = compile_page_generation_request(*args, retry=RetryProvenance(attempt=1), style_reference_path=proof)
     assert before.request.request_sha256 != after.request.request_sha256
-    assert before.request.references[:-1] == after.request.references[:-1]
+    assert before.request.references[1:] == after.request.references[1:]
     assert before.request.profile_sha256 == after.request.profile_sha256
     assert before.request.edition_sha256 == after.request.edition_sha256
-    assert before.reference_bytes[-1] != proof.read_bytes()
+    assert before.reference_bytes[0] != proof.read_bytes()
     assert FrozenPageGenerationRequest.model_validate_json(saved) == before.request
 
 
@@ -86,22 +91,23 @@ def test_proof_and_edit_parent_reserve_slots_before_subject_packing(tmp_path, co
         style_reference_path=proof, **edits,
     )
     assert len(compiled.request.references) == 2
-    sheet, style = compiled.request.references
-    assert sheet.id.startswith("reference-sheet-")
+    style, sheet = compiled.request.references
+    assert sheet.id.startswith("reference-sheet-") and sheet.order == 2
     members = json.loads(sheet.visual_anchor)["members"]
     assert {member["authority"]["id"] for member in members} == {"ward-bloodied-ref", "idol-ref"}
-    assert style.id == "selected-style-proof" and style.order == 2
-    assert compiled.reference_bytes[-1] == proof.read_bytes()
+    assert style.id == "selected-style-proof" and style.order == 1
+    assert compiled.reference_bytes[0] == proof.read_bytes()
     if correction:
-        # Image 1 is the parent, so both sheet members bind upload 2.
+        # Image 1 is the parent, the proof is upload 2 and both sheet members bind upload 3.
         prompt = compiled.request.prompt
-        assert prompt.count("Image 2 (asset-A) = ") == 2
+        assert prompt.count("Image 3 (asset-B) = ") == 2
         assert "sheet binding" in prompt
-        assert "Image 3 (asset-B) = style proof" in prompt
+        assert "Image 2 (asset-A) = style proof" in prompt
+        assert prompt.index("Image 2 (asset-A) = style proof") < prompt.index("Image 3 (asset-B) = ")
     else:
         payload = _provider_brief(compiled.request.prompt)
-        assert {ref["image"] for ref in payload["approved_page_references"]} == {"asset-A"}
-        assert payload["selected_style_proof"]["image"] == "asset-B"
+        assert {ref["image"] for ref in payload["approved_page_references"]} == {"asset-B"}
+        assert payload["selected_style_proof"]["image"] == "asset-A"
     assert _prepare_complete_page(compiled, profile).edit_source_bytes == (parent if correction else None)
     profile = _profile(provider="openai", max_image_references=2 + int(correction))
     with pytest.raises(ValueError, match="Identity references will not be silently dropped"):
@@ -128,7 +134,7 @@ def test_gateway_labels_proof_by_authority_scope(tmp_path):
         _page(), _edition(), _inventory(), files, retry=RetryProvenance(attempt=1),
         style_reference_path=write_style_proof(tmp_path),
     )
-    parts = _exact_complete_page_contents(compiled.request.model_dump(mode="json"), ["cast", "prop", "proof"])
-    assert parts[4] == "proof"
-    assert "asset-C" in parts[5] and "authority scope" in parts[5]
+    parts = _exact_complete_page_contents(compiled.request.model_dump(mode="json"), ["proof", "cast", "prop"])
+    assert parts[0] == "proof"
+    assert "asset-A" in parts[1] and "authority scope" in parts[1]
     assert parts[-1] == compiled.request.prompt

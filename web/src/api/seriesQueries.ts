@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invalidateProject, splitProjectKey } from "./projectScope";
 import {
   addPart,
@@ -230,12 +230,29 @@ export function useDraftEntity() {
 
 // ── Cast references after edits ───────────────────────────────────────────────
 
-export function useCastFreshness(project: string | undefined, enabled = true) {
-  return useQuery({
-    queryKey: ["project", seriesKey(project), "cast-freshness"],
+export function castFreshnessKey(project: string | undefined) {
+  return ["project", seriesKey(project), "cast-freshness"];
+}
+
+/**
+ * ``poll`` while Cast runs: each reference turns current as soon as its new
+ * image lands. The last poll can predate the run's final image, so the report
+ * is reread once polling stops.
+ */
+export function useCastFreshness(project: string | undefined, enabled = true, poll = false) {
+  const query = useQuery({
+    queryKey: castFreshnessKey(project),
     queryFn: () => getCastFreshness(project!),
     enabled: !!project && enabled,
+    refetchInterval: poll ? 4000 : false,
   });
+  const { refetch } = query;
+  const polled = useRef(poll);
+  useEffect(() => {
+    if (polled.current && !poll) void refetch();
+    polled.current = poll;
+  }, [poll, refetch]);
+  return query;
 }
 
 export function useKeepReference() {

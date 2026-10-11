@@ -18,6 +18,7 @@ function mount(redrawing = new Set<string>()) {
   const use = vi.fn();
   render(<QueryClientProvider client={client}><I18nProvider>
     <CastIdentityReview projectId="demo" characters={[{ id: "a", name: "Armitage" }, { id: "b", name: "Rice" }]}
+      locations={[{ id: "parlour", name: "Parlour" }]}
       onResume={resume} onShowCharacter={show} onUseSuggestion={use} busy={false} redrawing={redrawing} />
   </I18nProvider></QueryClientProvider>);
   return { resume, show, use };
@@ -49,10 +50,10 @@ it("hands a suggestion to the chosen character without starting work", async () 
   const { resume, use } = mount();
   await userEvent.click(await screen.findByText("2 notes to review"));
   await userEvent.click(screen.getAllByRole("button", { name: "Use this suggestion · Armitage" })[0]);
-  expect(use).toHaveBeenLastCalledWith("a", "Scale Armitage down");
+  expect(use).toHaveBeenLastCalledWith("character", "a", "Scale Armitage down");
   expect(screen.getByRole("button", { name: "Use this suggestion · Rice" }).textContent).toContain("Use for Rice");
   await userEvent.click(screen.getByRole("button", { name: "Use this suggestion · Rice" }));
-  expect(use).toHaveBeenLastCalledWith("b", "Give Rice a broader face");
+  expect(use).toHaveBeenLastCalledWith("character", "b", "Give Rice a broader face");
   expect(resume).not.toHaveBeenCalled();
 });
 
@@ -88,7 +89,7 @@ it("marks a note fine for the current sheets and hides it", async () => {
   await userEvent.click(await screen.findByText("1 note to review"));
   await userEvent.click(screen.getByRole("button", { name: "This looks right" }));
   expect(apiFetch).toHaveBeenCalledWith("/projects/demo/cast/review/dismiss", {
-    method: "POST", body: JSON.stringify({ character_ids: ["a"], concern: "presentation" }),
+    method: "POST", body: JSON.stringify({ character_ids: ["a"], location_ids: [], concern: "presentation" }),
   });
   expect(await screen.findByText(/You marked 1 note as fine/)).toBeTruthy();
   expect(screen.queryByText("Too tall")).toBeNull();
@@ -109,4 +110,22 @@ it("hides a note while its character is being redrawn and says the check will ru
   expect(await screen.findByText(/Redrawing Armitage\. The check runs again/)).toBeTruthy();
   expect(screen.queryByText("Too tall")).toBeNull();
   expect(screen.queryByRole("button", { name: "RESUME CAST" })).toBeNull();
+});
+
+it("links a plate's style note to the plate and hands its suggestion to that plate", async () => {
+  const note = { character_ids: [], location_ids: ["parlour"], concern: "style",
+    evidence: "Flat digital shading", suggestion: "Use torn paper collage layers" };
+  vi.mocked(apiFetch).mockImplementation(async (_path, options) => (options?.method === "POST"
+    ? { status: "current", issues: [], dismissed: 1, reviewing: false }
+    : { status: "current", issues: [note], dismissed: 0, reviewing: false }));
+  const { use, resume } = mount();
+  await userEvent.click(await screen.findByText("1 note to review"));
+  expect(screen.getByRole("link", { name: "Parlour" }).getAttribute("href")).toBe("#cast-location-parlour");
+  await userEvent.click(screen.getByRole("button", { name: "Use this suggestion · Parlour" }));
+  expect(use).toHaveBeenLastCalledWith("location", "parlour", "Use torn paper collage layers");
+  await userEvent.click(screen.getByRole("button", { name: "This looks right" }));
+  expect(apiFetch).toHaveBeenCalledWith("/projects/demo/cast/review/dismiss", {
+    method: "POST", body: JSON.stringify({ character_ids: [], location_ids: ["parlour"], concern: "style" }),
+  });
+  expect(resume).not.toHaveBeenCalled();
 });

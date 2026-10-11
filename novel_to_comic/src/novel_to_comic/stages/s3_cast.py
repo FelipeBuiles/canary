@@ -40,6 +40,7 @@ from novel_to_comic.asset_generation import (
     CharacterStateReferenceInput,
     LocationStatePlateInput,
     PropReferenceInput,
+    StyleCalibrationInput,
     asset_matches_request,
     compile_non_panel_request,
     held_asset_failure,
@@ -374,11 +375,121 @@ _LOCATION_PLATE_DIRECTION = (
 )
 
 
-def _location_plate_reference_plan(config: Config):
-    """Canonical plates send no image: the Style proof depicts one story scene,
-    and its room carried into other locations despite instructions to ignore it.
-    The style text alone carries the rendering language."""
-    return style_reference_plan(config, None)
+LOCATION_STYLE_BOARD_LABEL = "selected style rendering board"
+
+
+def _location_style_board_path(project_dir: Path) -> Path:
+    return series_root(project_dir) / "refs" / "location_style_board.png"
+
+
+def _location_style_board_input(config: Config) -> StyleCalibrationInput:
+    """The proof's rendering language without any room, object or figure to copy.
+
+    Plates once took the proof directly and its room carried into other
+    locations; text alone then lost the proof's rendering, and Draw inherited
+    that drift from the plates.
+    """
+    return StyleCalibrationInput(
+        asset_identity="cast:location_style_board",
+        prompt=GenerationPromptInput(
+            visual_brief=(
+                "Rendering-only environment study. Translate the selected style into separate, "
+                "unrecognizable studies on one support: tonal fields from lightest to darkest, "
+                "contour and edge samples, cast-shadow and light-falloff studies on plain geometric "
+                "solids (cube, cylinder, sphere) standing on a bare ground plane, and material "
+                "swatches of plaster, wood grain, cloth folds, stone, glass and metal. Match its "
+                "artistic hand, palette, value range, line weight, medium, edge treatment, shadow "
+                "depth and degree of simplification. Show each material's distinct mark scale; keep "
+                "paper aging on the support rather than painting it into every material. Do not "
+                "magnify incidental mottling from the proof into an all-over stain pattern. Preserve "
+                "deliberate granulation and authored distress where the selected style calls for "
+                "them. Do not reproduce any recognizable subject, room or object from the reference."
+            ),
+            composition="Landscape arrangement of separate abstract rendering and material studies.",
+            constraints=(
+                "No people, faces, heads, bodies, silhouettes of beings, animals, creatures, costumes, "
+                "rooms, interiors, architecture, furniture, landscapes, scenery, text or labels. "
+                "Rendering evidence only."
+            ),
+            width=1344,
+            height=768,
+            generation_width=1344,
+            generation_height=768,
+            generation_shape="landscape",
+        ),
+        selected_style_text=_asset_style_text(config),
+        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
+    )
+
+
+def _location_style_board_request(config: Config, project_dir: Path, proof: Path):
+    return _compile_cast_request(
+        config, project_dir, _location_style_board_input(config),
+        reference_plan=style_reference_plan(config, proof),
+    )
+
+
+def _location_style_board(config: Config, project_dir: Path) -> Path | None:
+    """The board, only while it was made from the current proof and style."""
+    proof = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    if proof is None or not proof.is_file():
+        return None
+    board = _location_style_board_path(project_dir)
+    return board if asset_matches_request(board, _location_style_board_request(config, project_dir, proof)) else None
+
+
+def _require_location_style_board(config: Config, project_dir: Path) -> Path:
+    board = _location_style_board(config, project_dir)
+    if board is None:
+        raise ValueError(
+            "The location style board is missing or out of date. Resume Cast to prepare it "
+            "from the selected Style proof before redrawing location plates."
+        )
+    return board
+
+
+def _location_plate_reference_plan(config: Config, board: Path | None):
+    """Plates take the proof's rendering through the board, never the proof's scene."""
+    return style_reference_plan(config, board, label=LOCATION_STYLE_BOARD_LABEL)
+
+
+async def _ensure_location_style_board(config: Config, project_dir: Path, ctx: StageRuntime) -> Path | None:
+    """Generate the shared board once per proof; plates wait for it."""
+    proof = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    if proof is None or not proof.is_file():
+        raise ValueError("Select and generate a Style sample before running Cast.")
+    output_path = _location_style_board_path(project_dir)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    request = _location_style_board_request(config, project_dir, proof)
+    if asset_matches_request(output_path, request):
+        ctx.record_item_done(cost=0.0)
+        ctx.log("Using existing location style board", level="dim")
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+        return output_path
+    if _skip_held_failure(ctx, output_path, request, "location_style_board", "location style board"):
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+        return None
+    ctx.log("Preparing the location style board from the selected Style proof")
+    try:
+        async with _cast_semaphore(config):
+            record_asset_version(output_path, project_dir, reason="before_regenerate")
+            submission = await submit_non_panel_request(
+                config=config, project_dir=project_dir, request=request,
+                output_path=output_path, feature="cast.location_style_board",
+                kind="location_style_board",
+            )
+        result = submission.result
+        assert result is not None
+        ctx.record_item_done(usage=result.usage)
+        return output_path
+    except Exception as error:
+        cause = error.last_attempt.exception() if hasattr(error, "last_attempt") else error
+        console.print(f"[red]Failed location style board: {cause}[/red]")
+        ctx.record_item_failed("location_style_board")
+        ctx.log(f"Failed location style board: {cause}", level="error")
+        return None
+    finally:
+        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
 
 def _location_generation_input(
@@ -724,15 +835,15 @@ async def regenerate_location_plate(
     sem = semaphore or asyncio.Semaphore(1)
     output_path = series_root(project_dir) / "plates" / f"{plate_stem}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    board = _require_location_style_board(config, project_dir)
     if state_id:
-        spec = build_location_state_spec(config, project_dir, loc, state, style_path=style_ref)
+        spec = build_location_state_spec(config, project_dir, loc, state, style_path=board)
         request = _compile_state_asset_wire(config, spec, project_dir)
     else:
         addendum = _read_location_plate_addendum(project_dir, loc.id)
         input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
         request = _compile_cast_request(
-            config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config)
+            config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config, board)
         )
         spec = None
 
@@ -746,9 +857,10 @@ async def regenerate_location_plate(
         )
     result = submission.result
     assert result is not None
-    if not state_id:
-        mark_dependent_states_stale(project_dir, "location", loc.id)
-    return result
+    if state_id:
+        return result
+    mark_dependent_states_stale(project_dir, "location", loc.id)
+    return await _refresh_cast_review(config, project_dir, result)
 
 
 async def _generate_character_refs(
@@ -931,7 +1043,7 @@ async def _generate_character_state_refs(
 
 async def _generate_location_plates(
     config: Config, project_dir: Path, story_bible: StoryBible, ctx: StageRuntime,
-    loc_ids: list[str] | None = None,
+    loc_ids: list[str] | None = None, board: Path | None = None,
 ) -> None:
     """Part C: Generate location background plates — one per location state."""
     console.print("[bold]Generating location plates...[/bold]")
@@ -945,10 +1057,6 @@ async def _generate_location_plates(
         for loc in locs_to_gen
         for stem, anchor, state_id in _location_plate_jobs(loc)
     ]
-    style_ref = _cast_asset_style_ref(
-        config,
-        _find_style_ref(project_dir, config.style_template),
-    )
     semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
@@ -972,7 +1080,7 @@ async def _generate_location_plates(
                     return
                 state = next(s for s in loc.appearance_states if s.id == state_id)
                 spec = build_location_state_spec(
-                    config, project_dir, loc, state, style_path=style_ref
+                    config, project_dir, loc, state, style_path=board
                 )
                 # Build the conditioning plan up front so lineage metadata is
                 # (including request hashes) is available for the cache check.
@@ -983,7 +1091,7 @@ async def _generate_location_plates(
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
                 input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
                 wire = _compile_cast_request(
-                    config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config)
+                    config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config, board)
                 )
                 spec = None
             if asset_matches_request(output_path, wire):
@@ -1134,12 +1242,10 @@ async def run(
             total_items += 2  # ensemble design and visual review
         total_items += len(chars_for_count)
         total_items += sum(len(_character_state_jobs(c)) for c in chars_for_count)
-    if should_generate_plates:
-        total_items += sum(
-            len(_location_plate_jobs(loc))
-            for loc in story_bible.locations
-            if not loc_ids or loc.id in loc_ids
-        )
+    plate_locations = [loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids]
+    if should_generate_plates and plate_locations:
+        total_items += 1  # shared location style board
+        total_items += sum(len(_location_plate_jobs(loc)) for loc in plate_locations)
     if should_generate_prop_refs:
         total_items += sum(1 + sum(state.visually_significant and not state.canonical_equivalent for state in p.appearance_states) for p in story_bible.props if not prop_ids or p.id in prop_ids)
 
@@ -1171,7 +1277,13 @@ async def run(
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
-            await _generate_location_plates(config, project_dir, story_bible, ctx, loc_ids)
+            board = await _ensure_location_style_board(config, project_dir, ctx) if plate_locations else None
+            if plate_locations and board is None:
+                # Plates without the proof's rendering are the drift this board
+                # prevents; the board's own failure names what stopped Cast.
+                ctx.log("Location plates wait until the location style board is ready", level="error")
+            else:
+                await _generate_location_plates(config, project_dir, story_bible, ctx, loc_ids, board)
 
         if should_generate_prop_refs:
             await _generate_prop_refs(config, project_dir, story_bible, ctx, prop_ids)
@@ -1333,6 +1445,9 @@ def _failed_cast_asset(bible: StoryBible | None, project_dir: Path, item_id: str
                  "label": _state_label(loc) if state_id else loc.name},
                 artifacts.location_state_plate_path(project_dir, entity_id, state_id) if state_id
                 else artifacts.location_plate_path(project_dir, entity_id))
+    if item_id == "location_style_board":
+        return ({"asset_type": None, "entity_id": None, "state_id": None, "label": "Location style board"},
+                _location_style_board_path(project_dir))
     if entity_id in props:
         prop = props[entity_id]
         return ({"asset_type": "prop", "entity_id": entity_id, "state_id": state_id,
@@ -1455,6 +1570,7 @@ class _ReferenceRequests:
         self.config, self.project_dir, self.bible, self.design = config, project_dir, bible, design
         self.style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
         self.character_style_ref = _character_style_reference(config, project_dir, self.style_ref)
+        self.location_style_board = _location_style_board(config, project_dir)
 
     def path(self, kind: str, entity, appearance) -> Path:
         d = self.project_dir
@@ -1483,8 +1599,8 @@ class _ReferenceRequests:
             if appearance is None:
                 return _compile_cast_request(config, d, _location_generation_input(
                     config, entity, _read_location_plate_addendum(d, entity.id),
-                ), reference_plan=_location_plate_reference_plan(config))
-            spec = build_location_state_spec(config, d, entity, appearance, style_path=self.style_ref)
+                ), reference_plan=_location_plate_reference_plan(config, self.location_style_board))
+            spec = build_location_state_spec(config, d, entity, appearance, style_path=self.location_style_board)
         else:
             if appearance is None:
                 return _compile_cast_request(config, d, _prop_generation_input(
@@ -1694,12 +1810,17 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
                 dirty = not asset_matches_request(path, _compile_state_asset_wire(config, spec, project_dir))
             if dirty:
                 missing_state_refs.append((char.id, appearance.id))
+    if story_bible.locations and style_ref is not None and _location_style_board(config, project_dir) is None:
+        total += estimate_non_panel_request(
+            config, _location_style_board_input(config), reference_plan=style_plan,
+        ).cost_usd
     for loc in story_bible.locations:
         for stem, anchor, state_id in _location_plate_jobs(loc):
             if state_id is None and not (series_root(project_dir) / "plates" / f"{stem}.png").exists():
+                # The board stands in for itself before it exists: one style image either way.
                 total += estimate_non_panel_request(
                     config, _location_generation_input(config, loc, anchor=anchor),
-                    reference_plan=_location_plate_reference_plan(config),
+                    reference_plan=_location_plate_reference_plan(config, style_ref),
                 ).cost_usd
     for prop in story_bible.props:
         if not artifacts.prop_ref_path(project_dir, prop.id).exists():

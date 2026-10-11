@@ -36,8 +36,9 @@ def visual_review_operations(config: Config) -> Operations:
 
 
 def is_canonical_sheet_regen(kind: str, asset_id: str) -> bool:
-    """A character's main sheet: redrawing it re-runs the Character Check."""
-    return kind == "character_ref_regen" and ":" not in asset_id
+    """A character's main sheet or a canonical location plate: redrawing it
+    re-runs the Cast check, which compares both with the selected proof."""
+    return kind in {"character_ref_regen", "location_plate_regen"} and ":" not in asset_id
 
 
 def cast_asset_operations(config: Config, kind: str, asset_id: str) -> Operations:

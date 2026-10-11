@@ -1230,6 +1230,29 @@ def test_reference_entries_fall_back_without_approved_bytes(tmp_path: Path) -> N
     assert entries[0]["display_label"] == "ward"
 
 
+def test_reference_entries_show_the_style_proof_image_not_its_instruction(tmp_path: Path, monkeypatch) -> None:
+    from novel_to_comic import style_reference
+    from novel_to_comic.server.routers.pages import _reference_entries
+
+    project = tmp_path / "project"
+    proof = project / "samples" / "style_2.png"
+    proof.parent.mkdir(parents=True)
+    proof.write_bytes(b"png")
+    monkeypatch.setattr(style_reference, "find_style_reference",
+                        lambda project_dir, template: proof if template == "ink" else None)
+    style = {"order": 1, "id": "selected-style-proof", "entity_id": None, "appearance_state_id": None,
+             "label": "Selected Style proof", "visual_anchor": "Rendering authority for every panel…",
+             "media_type": "image/png"}
+
+    [entry] = _reference_entries(project, [style], "ink")
+    assert entry["kind"] == "style"
+    assert entry["display_label"] == "Selected style"
+    assert entry["visual_anchor"] is None
+    assert entry["image_path"] == "samples/style_2.png"
+    # No selected style: no thumbnail rather than a dead one.
+    assert _reference_entries(project, [style], "other")[0]["image_path"] is None
+
+
 def test_identical_request_shares_job_but_changed_instructions_are_busy(tmp_path: Path) -> None:
     from novel_to_comic.server.routers.pages import _select_active_correction_job
 

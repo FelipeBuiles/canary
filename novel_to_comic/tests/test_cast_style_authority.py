@@ -16,6 +16,8 @@ from novel_to_comic.stages import s3_cast
 from novel_to_comic.style_contract import style_template_for_suggestion
 from novel_to_comic.usage import ApiResult
 
+from .style_reference_support import write_location_style_board
+
 
 def _save_design(config, project_dir, bible):
     from novel_to_comic.cast_design import CastDesignPlan, CharacterDesign, character_fingerprint
@@ -68,6 +70,11 @@ def test_cast_wire_keeps_approved_style_and_canonical_identity(tmp_path, model):
     assert "do not treat every blotch, stain or speckle as an authored style feature" in prompt
     assert "match its exact" not in prompt
     assert "overrides any conflict" not in prompt
+    # The written style is primary: a demoted text let sheets drop the
+    # selected character design, and every Draw page inherited that drift.
+    assert "Secondary" not in prompt
+    assert "apply this written direction in full, including its character design" in prompt
+    assert "the style's intended caricature, exaggeration or simplification is required" in prompt
     assert "LETTERING STANDARD" not in prompt
 
 
@@ -160,17 +167,21 @@ def test_sunburst_cannot_silently_fall_back_to_text_only_cast(tmp_path):
 def test_location_plate_frames_the_place_at_its_true_scale_without_the_style_proof(tmp_path):
     """Regression for repeated tavern plates and a guild hall cloned from the
     proof's apartment: the proof's room carried into other locations, and a
-    fixed wide shot let small or sparse anchors grow into it."""
-    config, _bible, _proof = _project(tmp_path, "image-sunburst")
+    fixed wide shot let small or sparse anchors grow into it. Text alone then
+    lost the proof's rendering, so plates take it from a room-free board."""
+    config, _bible, proof = _project(tmp_path, "image-sunburst")
+    board = write_location_style_board(config, tmp_path)
     anchor = "tiny wood-paneled booth room with sliding pocket-door"
     location = SimpleNamespace(id="loc_snug", name="Snug", visual_anchor=anchor)
     request = compile_non_panel_request(
         config, s3_cast._location_generation_input(config, location),
-        reference_plan=s3_cast._location_plate_reference_plan(config),
+        reference_plan=s3_cast._location_plate_reference_plan(config, board),
     )
     prompt = request.compiled.final_prompt
-    assert request.wire.references == ()
-    assert "Secondary style notes" not in prompt and "rough ink and ochre palette" in prompt
+    assert [ref.path for ref in request.reference_plan.selected] == [board]
+    assert proof not in [ref.path for ref in request.reference_plan.selected]
+    assert s3_cast.LOCATION_STYLE_BOARD_LABEL in prompt
+    assert "Secondary" not in prompt and "rough ink and ochre palette" in prompt
     assert anchor in prompt
     assert "framed at the location's true scale and enclosure" in prompt
     # The whole brief survives text-safety hygiene (it strips "read as ..." clauses).
@@ -254,7 +265,7 @@ def test_only_figures_receive_the_character_proportion_system(tmp_path):
              style_reference_plan(config, proof)),
             ("plate", s3_cast._location_generation_input(
                 config, SimpleNamespace(id="loc", name="Void", visual_anchor="black void")),
-             s3_cast._location_plate_reference_plan(config)),
+             s3_cast._location_plate_reference_plan(config, proof)),
         )
     }
     assert "Squared cleft jaws." in prompts["figure"]
@@ -265,3 +276,74 @@ def test_only_figures_receive_the_character_proportion_system(tmp_path):
     assert reference_forms.IDENTITY_QUALITY["form"] in prompts["form"]
     assert "facial identity" not in prompts["form"]
     assert "light or face" not in prompts["form"]
+
+
+def test_location_style_board_carries_the_proof_rendering_without_its_scene(tmp_path):
+    config, _bible, proof = _project(tmp_path, "image-sunburst")
+    request = s3_cast._location_style_board_request(config, tmp_path, proof)
+    prompt = request.compiled.final_prompt
+    assert request.compiled.asset_kind == "style_calibration"
+    assert [ref.path for ref in request.reference_plan.selected] == [proof]
+    assert "rooms, interiors, architecture, furniture, landscapes, scenery" in prompt
+    assert "Do not reproduce any recognizable subject, room or object from the reference" in prompt
+    assert "rough ink and ochre palette" in prompt
+    # A changed proof makes the board, and so every plate, out of date.
+    board = write_location_style_board(config, tmp_path)
+    Image.new("RGB", (32, 40), "purple").save(proof)
+    assert s3_cast._location_style_board(config, tmp_path) is None
+    with pytest.raises(ValueError, match="location style board is missing or out of date"):
+        s3_cast._require_location_style_board(config, tmp_path)
+    assert board.exists()
+
+
+def test_plate_redraw_requires_a_current_board_before_spending(tmp_path):
+    config, bible, _proof = _project(tmp_path, "image-sunburst")
+    from novel_to_comic.models.story_bible import Location
+    bible.locations.append(Location(id="snug", name="Snug", visual_anchor="tiny booth room", mood="quiet"))
+    (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
+    with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as submit:
+        with pytest.raises(ValueError, match="Resume Cast to prepare it"):
+            asyncio.run(s3_cast.regenerate_location_plate(config, tmp_path, "snug"))
+    submit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("board_fails", [False, True])
+def test_cast_prepares_the_board_before_plates_and_plates_wait_for_it(tmp_path, board_fails):
+    from contextlib import ExitStack
+    from novel_to_comic.models.story_bible import Location
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state
+
+    config, bible, _proof = _project(tmp_path, "image-sunburst")
+    bible.locations.append(Location(id="snug", name="Snug", visual_anchor="tiny booth room", mood="quiet"))
+    (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
+    ctx = StageRuntime("cast", create_initial_state("test", "novel.txt"), tmp_path, on_event=lambda event: None)
+    plate_wires = []
+
+    async def submit(**kwargs):
+        if kwargs["kind"] == "location_style_board" and board_fails:
+            raise RuntimeError("provider down")
+        output = kwargs["output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (48, 27), "gray").save(output)
+        if kwargs["kind"] == "location_plate":
+            plate_wires.append(kwargs["request"])
+        return SimpleNamespace(result=ApiResult(value=output))
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(s3_cast, "submit_non_panel_request", side_effect=submit))
+        stack.enter_context(patch.object(s3_cast, "asset_matches_request",
+                                         side_effect=lambda path, _request: False))
+        stack.enter_context(patch.object(s3_cast, "_location_style_board",
+                                         return_value=None if board_fails else s3_cast._location_style_board_path(tmp_path)))
+        for name in ("ensure_design", "_generate_character_refs", "_generate_character_state_refs",
+                     "review_cast", "_generate_prop_refs"):
+            stack.enter_context(patch.object(s3_cast, name, new_callable=AsyncMock))
+        if board_fails:
+            with pytest.raises(ValueError, match="Location style board"):
+                asyncio.run(s3_cast.run(config, tmp_path, ctx, loc_ids=["snug"]))
+            assert plate_wires == []
+            return
+        asyncio.run(s3_cast.run(config, tmp_path, ctx, loc_ids=["snug"]))
+    board = s3_cast._location_style_board_path(tmp_path)
+    assert [[ref.path for ref in wire.reference_plan.selected] for wire in plate_wires] == [[board]]

@@ -188,11 +188,15 @@ export interface PageCorrectionBody {
   comic_page_sha256: string;
 }
 
+export type ReferenceKind = "style" | "character" | "location" | "prop";
+
 export interface PageCorrectionReference {
   order: number;
   id: string;
   entity_id: string;
   appearance_state_id: string | null;
+  /** Display group: the selected style proof, or the Story Bible entity type. */
+  kind?: ReferenceKind | null;
   label: string;
   display_label?: string | null;
   visual_anchor: string | null;
@@ -365,6 +369,8 @@ export interface VisualReviewReference {
   id: string;
   entity_id: string;
   appearance_state_id: string | null;
+  /** Display group: the selected style proof, or the Story Bible entity type. */
+  kind?: ReferenceKind | null;
   label: string;
   display_label?: string | null;
   visual_anchor: string | null;
@@ -418,6 +424,16 @@ export function getPageReplanEstimate(project: string, pageNumber: number): Prom
 /** Rewrite one page's plan; its artwork then needs a redraw from Pages. */
 export function replanPage(project: string, pageNumber: number): Promise<{ page_number: number; revision: number }> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { paidAction: true, method: "POST" });
+}
+
+/** Price reviewing the saved script and plan again; rejects when both reviews are current. */
+export function getReviewRecheckEstimate(project: string): Promise<CostEstimate & { phases: Array<"adapt" | "plan"> }> {
+  return apiFetch(`${projectPath(project)}/pages/review-recheck/estimate`);
+}
+
+/** Review the saved script and plan again so drawing can continue; neither is rewritten. */
+export function recheckReviews(project: string): Promise<{ status: "current" }> {
+  return apiFetch(`${projectPath(project)}/pages/review-recheck`, { paidAction: true, method: "POST" });
 }
 
 /** Choose retained artwork without generating or charging. */

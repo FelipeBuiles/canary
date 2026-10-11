@@ -1,4 +1,3 @@
-import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
@@ -7,6 +6,7 @@ import { useGenerateCompletePage } from "../../api/queries";
 import { useI18n } from "../../i18n";
 import { ConfirmDrawer } from "../composites";
 import { Button } from "../ui/Button";
+import { RedrawEstimateStatus } from "./RedrawEstimateStatus";
 
 /**
  * A page re-planned after it was drawn: its art belongs to an earlier plan
@@ -32,7 +32,6 @@ export function StaleRenderRedraw({ project, pageNumber, disabled, onJobQueued, 
   });
   const generate = useGenerateCompletePage();
   const label = `${t("Redraw page")} ${pageNumber}`;
-  const error = estimate.error ?? generate.error;
 
   return (
     <section role="region" aria-label={t("Redraw needed")} className={`border-l-[4px] ${changedLooks ? "border-narrator-gold" : "border-hero-red"} bg-bristol px-4 py-4 md:px-5`}>
@@ -52,7 +51,6 @@ export function StaleRenderRedraw({ project, pageNumber, disabled, onJobQueued, 
         <RotateCcw size={14} aria-hidden="true" />
         {generate.isPending ? t("Queuing redraw…") : label}
       </Button>
-      {error && <ErrorNotice error={error} operation="generate" />}
       <ConfirmDrawer
         open={open}
         title={label}
@@ -60,6 +58,7 @@ export function StaleRenderRedraw({ project, pageNumber, disabled, onJobQueued, 
           ? t("Draws this page again with the current references. The current version stays in the page’s history; lettering is rebuilt for the new art afterwards.")
           : t("Draws this page again from its revised plan. The current version stays in the page’s history; lettering is rebuilt for the new art afterwards.")}
         cost={estimate.data}
+        extraBody={<RedrawEstimateStatus estimate={estimate} error={generate.error} />}
         confirmLabel={label}
         busy={generate.isPending}
         disabled={!estimate.data}

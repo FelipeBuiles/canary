@@ -17,8 +17,8 @@ import type { PageCorrectionPreview } from "../api/pages";
 import type { PageIssue } from "../types/api";
 
 // Controllable preview result: the component only shows the preview surface
-// (and SELECT ALL OPEN) once the preview hash matches the draft body, so the
-// mock mutate resolves onSuccess exactly like the real query would.
+// once the preview hash matches the draft body, so the mock mutate resolves
+// onSuccess exactly like the real query would.
 const previewState = vi.hoisted(() => ({
   data: undefined as PageCorrectionPreview | undefined,
   mutate: vi.fn(),
@@ -77,7 +77,6 @@ function storedDraft(overrides: Partial<PersistedRevisionDraft> = {}): Persisted
     parentRenderRevision: 1,
     comicPageSha256: SHA,
     changes: [],
-    note: "",
     contextSourceUnitIds: [],
     updatedAt: new Date("2026-09-01T00:00:00.000Z").toISOString(),
     ...overrides,
@@ -97,6 +96,17 @@ const FACE_ISSUE: PageIssue = {
   resolution_revision: null,
 };
 
+/** A minimal checks rail: a finding shows its change card once included, or a Fix button. */
+function checksRail(issues: PageIssue[]): ComponentProps<typeof RevisionDraft>["checks"] {
+  return (draft) => (
+    <ul aria-label="Checks">
+      {issues.filter((issue) => issue.status === "open").map((issue) => <li key={issue.id}>
+        {draft.included(issue.id) ?? <button type="button" onClick={() => draft.include(issue)}>Fix {issue.requested_correction}</button>}
+      </li>)}
+    </ul>
+  );
+}
+
 function renderDraft(overrides: Partial<ComponentProps<typeof RevisionDraft>> = {}) {
   const client = new QueryClient();
   const draft = (props: Partial<ComponentProps<typeof RevisionDraft>>) => (
@@ -110,9 +120,6 @@ function renderDraft(overrides: Partial<ComponentProps<typeof RevisionDraft>> = 
           comicPageSha256={SHA}
           compareRevision={null}
           issues={[]}
-          seeds={[]}
-          onSeedsConsumed={vi.fn()}
-         
           onJobQueued={vi.fn()}
           {...props}
         />
@@ -179,10 +186,8 @@ describe("revision draft storage scoping", () => {
         id: "issue:issue-9",
         issue_id: "issue-9",
         instruction: "Restore the approved face",
-        selected: true,
         annotations: [{ id: "m1", kind: "pin", points: [{ x: 0.2, y: 0.3 }], note: "glow spills past the panel" }],
       }],
-      note: "overall guidance",
     }));
 
     expect(draftStorageKey(PROJECT, PAGE, target(2, 1))).not.toBe(
@@ -192,7 +197,6 @@ describe("revision draft storage scoping", () => {
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
     // The original target still reads its own draft back intact.
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))?.changes).toHaveLength(1);
-    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))?.note).toBe("overall guidance");
   });
 
   it("offers the older draft for explicit rebase instead of migrating it", () => {
@@ -201,7 +205,6 @@ describe("revision draft storage scoping", () => {
         id: "issue:issue-9",
         issue_id: "issue-9",
         instruction: "Restore the approved face",
-        selected: true,
         annotations: [{ id: "m1", kind: "pin", points: [{ x: 0.2, y: 0.3 }], note: "glow spills past the panel" }],
       }],
     }));
@@ -216,10 +219,10 @@ describe("revision draft storage scoping", () => {
 
   it("never offers suggestions alone, or a sent draft a newer render replaced", () => {
     saveRevisionDraft(storedDraft({
-      changes: [{ id: "issue:issue-9", issue_id: "issue-9", instruction: "Restore the approved face", selected: true, annotations: [] }],
+      changes: [{ id: "issue:issue-9", issue_id: "issue-9", instruction: "Restore the approved face", annotations: [] }],
     }));
     expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
-    saveRevisionDraft(storedDraft({ submittedJobId: "job-1", pendingRequest: "", note: "sent with the job" }));
+    saveRevisionDraft(storedDraft({ submittedJobId: "job-1", pendingRequest: "" }));
     expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
     // Both were cleaned up rather than kept around.
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))).toBeNull();
@@ -235,13 +238,13 @@ describe("revision draft storage scoping", () => {
   });
 
   it("clears only the targeted draft", () => {
-    saveRevisionDraft(storedDraft({ note: "old render note" }));
-    saveRevisionDraft(storedDraft({ parentRenderRevision: 2, note: "new render note" }));
+    saveRevisionDraft(storedDraft({ pendingRequest: "old render request" }));
+    saveRevisionDraft(storedDraft({ parentRenderRevision: 2, pendingRequest: "new render request" }));
 
     clearRevisionDraft(PROJECT, PAGE, target(2, 1));
 
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))).toBeNull();
-    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))?.note).toBe("new render note");
+    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))?.pendingRequest).toBe("new render request");
   });
 });
 
@@ -251,19 +254,19 @@ describe("RevisionDraft across render targets", () => {
   });
 
   it.each(["dismissed", "accepted", "resolved", "removed"] as const)(
-    "excludes a %s finding when fixing another issue after the checks refresh",
+    "drops a %s finding the author was fixing when the checks refresh",
     (status) => {
       const glowIssue: PageIssue = { ...FACE_ISSUE, id: "issue-10", requested_correction: "Fix the background glow" };
-      const { rerenderDraft } = renderDraft({ issues: [FACE_ISSUE, glowIssue] });
+      const { rerenderDraft } = renderDraft({ issues: [FACE_ISSUE, glowIssue], checks: checksRail([FACE_ISSUE, glowIssue]) });
+      fireEvent.click(screen.getByRole("button", { name: "Fix Restore the approved face" }));
+      expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face");
 
       // The checks update while the draft remains mounted beside the artwork.
       const issues = status === "removed" ? [glowIssue] : [{ ...FACE_ISSUE, status }, glowIssue];
-      rerenderDraft({ issues });
-      rerenderDraft({ issues, seeds: [{ key: "issue:issue-10", issueId: glowIssue.id, instruction: glowIssue.requested_correction }] });
-
-      expect(screen.queryByRole("checkbox", { name: /restore the approved face/i })).toBeNull();
-      expect(screen.getByRole("checkbox", { name: /background glow/i })).toHaveProperty("checked", true);
-      fireEvent.click(screen.getByRole("button", { name: /review changes/i }));
+      rerenderDraft({ issues, checks: checksRail(issues) });
+      expect(screen.queryByDisplayValue("Restore the approved face")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Fix Fix the background glow" }));
+      fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
       expect(previewState.mutate.mock.calls[0][0].body.changes).toEqual([
         { id: "issue:issue-10", issue_id: glowIssue.id, instruction: glowIssue.requested_correction, annotations: [] },
       ]);
@@ -276,28 +279,23 @@ describe("RevisionDraft across render targets", () => {
     saveRevisionDraft(storedDraft({
       parentRenderRevision: 2,
       changes: [
-        { id: "issue:issue-9", issue_id: FACE_ISSUE.id, instruction: FACE_ISSUE.requested_correction, selected: true, annotations: [] },
-        { id: "issue:issue-10", issue_id: glowIssue.id, instruction: "Dim the glow without changing the cape", selected: false, annotations },
-        { id: "manual-1", instruction: "Keep the hands visible", selected: true, annotations: [] },
+        { id: "issue:issue-9", issue_id: FACE_ISSUE.id, instruction: FACE_ISSUE.requested_correction, annotations: [] },
+        { id: "issue:issue-10", issue_id: glowIssue.id, instruction: "Dim the glow without changing the cape", annotations },
+        { id: "manual-1", instruction: "Keep the hands visible", annotations: [] },
       ],
-      note: "Keep the scene warm",
       pendingRequest: "Keep the framing",
     }));
-    renderDraft({
-      issues: [{ ...FACE_ISSUE, status: "dismissed" }, glowIssue],
-      // A stale seed must not restore the dismissed issue either.
-      seeds: [{ key: "issue:issue-9", issueId: FACE_ISSUE.id, instruction: FACE_ISSUE.requested_correction }],
-    });
+    renderDraft({ issues: [{ ...FACE_ISSUE, status: "dismissed" }, glowIssue] });
 
-    expect(screen.queryByRole("checkbox", { name: /restore the approved face/i })).toBeNull();
-    expect(screen.getByRole("checkbox", { name: /dim the glow/i })).toHaveProperty("checked", false);
-    expect(screen.getByRole("checkbox", { name: /hands visible/i })).toHaveProperty("checked", true);
+    expect(screen.queryByDisplayValue("Restore the approved face")).toBeNull();
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Dim the glow without changing the cape");
+    expect(screen.getByLabelText("Change 2")).toHaveProperty("value", "Keep the hands visible");
+    expect(screen.getByLabelText("Describe a change")).toHaveProperty("value", "Keep the framing");
     const saved = loadRevisionDraft(PROJECT, PAGE, target(2, 2));
     expect(saved?.changes).toEqual([
-      { id: "issue:issue-10", issue_id: glowIssue.id, instruction: "Dim the glow without changing the cape", selected: false, annotations },
-      { id: "manual-1", instruction: "Keep the hands visible", selected: true, annotations: [] },
+      { id: "issue:issue-10", issue_id: glowIssue.id, instruction: "Dim the glow without changing the cape", annotations },
+      { id: "manual-1", instruction: "Keep the hands visible", annotations: [] },
     ]);
-    expect(saved?.note).toBe("Keep the scene warm");
     expect(saved?.pendingRequest).toBe("Keep the framing");
   });
 
@@ -307,81 +305,56 @@ describe("RevisionDraft across render targets", () => {
         id: "issue:issue-9",
         issue_id: "issue-9",
         instruction: "Restore the approved face",
-        selected: true,
         annotations: [{ id: "m1", kind: "pin", points: [{ x: 0.2, y: 0.3 }], note: "glow spills past the panel" }],
       }],
-      note: "overall guidance",
     }));
 
-    const { container } = renderDraft({ issues: [FACE_ISSUE] });
+    renderDraft({ issues: [FACE_ISSUE] });
 
-    // The earlier-draft notice shows beside the artwork; requests stay closed.
+    // Nothing from the earlier version is included until the author asks.
     expect(screen.getByText("You have unsent changes from an earlier version of this page.")).toBeTruthy();
-    expect(screen.queryByDisplayValue("Restore the approved face")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-
-    // Fresh draft: the suggestion is present but carries no inherited marks.
-    expect(screen.getAllByDisplayValue("Restore the approved face")).toHaveLength(1);
+    expect(screen.queryByLabelText("Change 1")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /use on this version/i }));
 
-    // The copied wording arrives as a second, collapsed request: only the focused one stays editable.
-    expect(screen.getAllByDisplayValue("Restore the approved face")).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: /edit request/i })).toHaveLength(1);
+    // The copied wording arrives without the old render's marks.
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face");
+    expect(screen.queryByRole("button", { name: /mark for change/i })).toBeNull();
     expect(screen.queryByText("You have unsent changes from an earlier version of this page.")).toBeNull();
     // Used once, the earlier draft is gone for good.
     expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
-
-    // Expanding the copy shows the retained wording with no marks, excluded by default.
-    fireEvent.click(screen.getByRole("button", { name: /edit request/i }));
-    expect(screen.getByDisplayValue("Restore the approved face")).toBeTruthy();
-    const boxes = screen.getAllByRole("checkbox", { name: /include fix/i });
-    expect(boxes).toHaveLength(2);
-    expect((boxes[0] as HTMLInputElement).checked).toBe(true);
-    expect((boxes[1] as HTMLInputElement).checked).toBe(false);
-    expect(container.querySelectorAll('[id^="mark-note-"]')).toHaveLength(0);
-    expect(screen.queryByDisplayValue("glow spills past the panel")).toBeNull();
-
-    // The overall guidance carries over behind its optional-note disclosure.
-    fireEvent.click(container.querySelector("details summary")!);
-    expect(screen.getByDisplayValue("overall guidance")).toBeTruthy();
+    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))?.changes).toEqual([
+      { id: "rebased:issue:issue-9", instruction: "Restore the approved face", annotations: [] },
+    ]);
   });
 
-  it("restores pending wording only for the same render and copies it unselected on request", () => {
+  it("restores pending wording only for the same render and copies it on request", () => {
     const pending = "Keep the hands in view without changing the face";
     const first = renderDraft({ parentRenderRevision: 1 });
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-    fireEvent.change(screen.getByLabelText(/What would you like to change/), {
-      target: { value: pending },
-    });
+    fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: pending } });
     first.unmount();
 
     const reopened = renderDraft({ parentRenderRevision: 1 });
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", pending);
+    expect(screen.getByLabelText("Describe a change")).toHaveProperty("value", pending);
     reopened.unmount();
 
-    const next = renderDraft({ parentRenderRevision: 2 });
+    renderDraft({ parentRenderRevision: 2 });
     expect(screen.getByText(pending, { selector: "li" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", "");
+    expect(screen.getByLabelText("Describe a change")).toHaveProperty("value", "");
     expect(screen.queryByDisplayValue(pending)).toBeNull();
-    expect(screen.queryByRole("checkbox", { name: /include fix/i })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /use on this version/i }));
 
-    expect(screen.getByRole("checkbox", { name: `Include fix: ${pending}` })).toHaveProperty("checked", false);
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", pending);
     const copied = loadRevisionDraft(PROJECT, PAGE, target(2, 2));
     expect(copied?.changes).toHaveLength(1);
     expect(copied?.changes[0]?.instruction).toBe(pending);
-    expect(copied?.changes[0]?.selected).toBe(false);
     expect(copied?.changes[0]?.annotations).toHaveLength(0);
-    expect(next.container.querySelectorAll('[id^="mark-note-"]')).toHaveLength(0);
   });
 
   it("lets the author compare real revisions without changing the correction draft", () => {
-    renderDraft({ parentRenderRevision: 2, compareRevision: 1, issues: [FACE_ISSUE] });
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-    fireEvent.change(screen.getByDisplayValue("Restore the approved face"), {
+    renderDraft({ parentRenderRevision: 2, compareRevision: 1, issues: [FACE_ISSUE], checks: checksRail([FACE_ISSUE]) });
+    fireEvent.click(screen.getByRole("button", { name: "Fix Restore the approved face" }));
+    fireEvent.change(screen.getByLabelText("Change 1"), {
       target: { value: "Restore the approved face without changing the cape" },
     });
     fireEvent.click(screen.getByText(/compare with previous render/i));
@@ -400,16 +373,13 @@ describe("RevisionDraft across render targets", () => {
     expect(after.getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("img", { name: "Complete page 1, previous revision 1" }).getAttribute("src"))
       .toContain("/renders/1/");
-    expect(screen.getByDisplayValue("Restore the approved face without changing the cape")).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: /include fix/i })).toHaveProperty("checked", true);
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face without changing the cape");
 
     fireEvent.click(after);
     expect(after.getAttribute("aria-pressed")).toBe("true");
-    expect(before.getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
       .toContain("/renders/2/");
-    expect(screen.getByDisplayValue("Restore the approved face without changing the cape")).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: /include fix/i })).toHaveProperty("checked", true);
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face without changing the cape");
   });
 
   it("steps through every saved version and selects the viewed one", async () => {
@@ -456,25 +426,29 @@ describe("RevisionDraft across render targets", () => {
     pageState.renders = [{ revision: 1 }, { revision: 2 }];
     renderDraft({ parentRenderRevision: 2 });
     fireEvent.click(screen.getByRole("button", { name: "Previous version" }));
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+    expect(screen.getAllByRole("img", { name: /render revision 1/i }).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: "Darker sky" } });
+    fireEvent.click(screen.getByRole("button", { name: "ADD" }));
     expect(screen.queryByRole("button", { name: /use this version/i })).toBeNull();
     expect(screen.getAllByRole("img", { name: /render revision 2/i }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("img", { name: /render revision 1/i })).toBeNull();
   });
 
-  it("offers only findings the selected render can link and sends the rest as new requests", async () => {
+  it("sends a finding the selected render cannot link as a new request", async () => {
     const laterIssue: PageIssue = { ...FACE_ISSUE, id: "issue-later", render_revision: 2, requested_correction: "Close the upper eye" };
     renderDraft({
       parentRenderRevision: 1,
       issues: [FACE_ISSUE, laterIssue],
       correctableIssueIds: [FACE_ISSUE.id],
-      // Fix pressed on a finding from render 2 after reselecting render 1.
-      seeds: [{ key: "issue:issue-later", issueId: laterIssue.id, instruction: laterIssue.requested_correction }],
+      checks: checksRail([FACE_ISSUE, laterIssue]),
     });
-    expect(screen.getByRole("checkbox", { name: /restore the approved face/i })).toHaveProperty("checked", true);
-    expect(screen.getByRole("checkbox", { name: /close the upper eye/i })).toHaveProperty("checked", true);
+    // Fix pressed on a finding from render 2 after reselecting render 1: it still shows in place.
+    fireEvent.click(screen.getByRole("button", { name: "Fix Close the upper eye" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fix Restore the approved face" }));
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face");
+    expect(screen.getByLabelText("Change 2")).toHaveProperty("value", "Close the upper eye");
 
-    fireEvent.click(screen.getByRole("button", { name: /review changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: "REVIEW 2 CHANGES" }));
     await vi.waitFor(() => expect(previewState.mutate).toHaveBeenCalled());
     const changes = previewState.mutate.mock.calls[0][0].body.changes;
     expect(changes.find((change: { instruction: string }) => change.instruction === "Close the upper eye").issue_id).toBeUndefined();
@@ -486,8 +460,8 @@ describe("RevisionDraft across render targets", () => {
     saveRevisionDraft(storedDraft({
       parentRenderRevision: 1,
       changes: [
-        { id: "issue:issue-later", issue_id: laterIssue.id, instruction: "Close the upper eye fully", selected: true, annotations: [] },
-        { id: "issue:untouched", issue_id: "issue-untouched", instruction: "Dim the lamp", selected: true, annotations: [] },
+        { id: "issue:issue-later", issue_id: laterIssue.id, instruction: "Close the upper eye fully", annotations: [] },
+        { id: "issue:untouched", issue_id: "issue-untouched", instruction: "Dim the lamp", annotations: [] },
       ],
     }));
     renderDraft({
@@ -495,58 +469,21 @@ describe("RevisionDraft across render targets", () => {
       issues: [laterIssue, { ...laterIssue, id: "issue-untouched", requested_correction: "Dim the lamp" }],
       correctableIssueIds: [],
     });
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-    expect(screen.getByDisplayValue("Close the upper eye fully")).toBeTruthy();
+    expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Close the upper eye fully");
     expect(screen.queryByDisplayValue("Dim the lamp")).toBeNull();
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))?.changes).toEqual([
-      { id: "issue:issue-later", instruction: "Close the upper eye fully", selected: true, annotations: [] },
+      { id: "issue:issue-later", instruction: "Close the upper eye fully", annotations: [] },
     ]);
   });
 
-  it("select all open reselects kept fixes and adds missing suggestions", () => {
+  it("notes findings left out of the review without adding them", () => {
     const glowIssue: PageIssue = { ...FACE_ISSUE, id: "issue-10", requested_correction: "Fix the background glow" };
-    saveRevisionDraft(storedDraft({
-      parentRenderRevision: 2,
-      changes: [{
-        id: "issue:issue-9",
-        issue_id: "issue-9",
-        instruction: "Restore the approved face",
-        selected: true,
-        annotations: [{ id: "m1", kind: "pin", points: [{ x: 0.2, y: 0.3 }], note: "glow spills past the panel" }],
-      }],
-    }));
-    previewState.data = previewStub({ unselected_open_issue_ids: ["issue-9", "issue-10"] });
-
-    renderDraft({ parentRenderRevision: 2, issues: [FACE_ISSUE, glowIssue] });
-    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
-
-    // A manual request keeps the draft previewable after the kept fix is deselected.
-    fireEvent.change(screen.getByLabelText(/what would you like to change/i), {
-      target: { value: "Check the cape edge" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /add request/i }));
-    const faceBox = screen.getByRole("checkbox", { name: /include fix: restore the approved face/i });
-    fireEvent.click(faceBox);
-    expect((faceBox as HTMLInputElement).checked).toBe(false);
-
-    // Explicit preview makes the left-out findings actionable.
-    fireEvent.click(screen.getByRole("button", { name: /review changes/i }));
-    fireEvent.click(screen.getByRole("button", { name: /select all open/i }));
-
-    // Every fix ends up selected; the missing suggestion joins the draft.
-    const boxes = screen.getAllByRole("checkbox", { name: /include fix/i });
-    expect(boxes).toHaveLength(3);
-    for (const box of boxes) expect((box as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("button", { name: /edit request.*background glow/i })).toBeTruthy();
-
-    // The kept fix is reselected with its edited wording and marks intact.
-    const stored = loadRevisionDraft(PROJECT, PAGE, target(2, 2));
-    const face = stored?.changes.find((change) => change.issue_id === "issue-9");
-    expect(face?.selected).toBe(true);
-    expect(face?.instruction).toBe("Restore the approved face");
-    expect(face?.annotations).toHaveLength(1);
-    const glow = stored?.changes.find((change) => change.issue_id === "issue-10");
-    expect(glow?.selected).toBe(true);
-    expect(glow?.instruction).toBe("Fix the background glow");
+    previewState.data = previewStub({ unselected_open_issue_ids: ["issue-10"] });
+    renderDraft({ issues: [FACE_ISSUE, glowIssue], checks: checksRail([FACE_ISSUE, glowIssue]) });
+    fireEvent.click(screen.getByRole("button", { name: "Fix Restore the approved face" }));
+    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    expect(screen.getByText("1 other check stays open.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Fix Fix the background glow" })).toBeTruthy();
+    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))?.changes.map((change) => change.issue_id)).toEqual(["issue-9"]);
   });
 });

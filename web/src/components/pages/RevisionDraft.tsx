@@ -1,12 +1,10 @@
 import { ErrorNotice } from "../composites/ErrorNotice";
-import { isOcrIssue } from "./lettering";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { PageIssue } from "../../types/api";
 import {
   clearRevisionDraft,
-  draftHasUnsentWork,
   findStaleRevisionDraft,
   loadRevisionDraft,
   newChangeId,
@@ -31,7 +29,8 @@ import { PageArtwork } from "./PageArtwork";
 import { BeforeAfterWipe } from "./BeforeAfterWipe";
 import { Loupe } from "../ui/Loupe";
 import { InspectButton } from "../ui/InspectButton";
-import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
+import { PageMarker, type EditorAnnotation } from "./PageMarker";
+import { SectionHeader } from "../composites";
 import {
   annotationProblem,
   MAX_CORRECTION_CHANGES,
@@ -39,7 +38,6 @@ import {
   MAX_CORRECTION_MARKS,
   serializeAnnotation,
 } from "./correctionValidation";
-import type { DraftSeed } from "./PageChecks";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useCompletePage } from "../../api/queries";
 import { RevisionSwitcher, type RevisionOption } from "./RevisionSwitcher";
@@ -48,7 +46,6 @@ interface DraftChange {
   id: string;
   issueId?: string;
   instruction: string;
-  selected: boolean;
   annotations: EditorAnnotation[];
 }
 /**
@@ -109,6 +106,15 @@ function SubmittedCorrection({
   );
 }
 
+/** What the page's checks need from the revision being built. */
+export interface DraftControls {
+  locked: boolean;
+  /** The finding's change card when it is in the next revision; null otherwise. */
+  included: (issueId: string) => ReactNode | null;
+  /** Adds the finding to the next revision (or focuses it when already there). */
+  include: (issue: PageIssue) => void;
+}
+
 interface RevisionDraftProps {
   project: string;
   pageNumber: number;
@@ -122,14 +128,15 @@ interface RevisionDraftProps {
   issues: PageIssue[];
   /** Issue IDs this render's correction may link; omitted means every open draw issue. */
   correctableIssueIds?: string[];
-  /** Seeds pushed from the visual review panel; consumed once merged. */
-  seeds: DraftSeed[];
-  onSeedsConsumed: () => void;
   onJobQueued: (jobId: string) => void;
   disabled?: boolean;
   onArtworkLoaded?: () => void;
-  /** Shown beside the artwork when not editing, e.g. the page's checks. */
-  aside?: ReactNode;
+  /** The page's checks, shown above your own changes; included findings render inside them. */
+  checks?: (draft: DraftControls) => ReactNode;
+}
+
+function isOpen(issue: PageIssue) {
+  return issue.status === "open" || issue.status === "revised";
 }
 
 function suggestibleIssues(issues: PageIssue[], correctable?: string[]): PageIssue[] {
@@ -137,78 +144,21 @@ function suggestibleIssues(issues: PageIssue[], correctable?: string[]): PageIss
   // link; an older reselected render cannot fix issues found on later ones.
   const linkable = correctable ? new Set(correctable) : null;
   return issues.filter(
-    (issue) =>
-      (issue.status === "open" || issue.status === "revised")
-      && issue.correction_owner === "draw"
-      && (!linkable || linkable.has(issue.id)),
+    (issue) => isOpen(issue) && issue.correction_owner === "draw" && (!linkable || linkable.has(issue.id)),
   );
 }
 
-function changeFromIssue(issue: PageIssue): DraftChange {
-  return {
-    id: `issue:${issue.id}`,
-    issueId: issue.id,
-    instruction: issue.requested_correction,
-    selected: !isOcrIssue(issue),
-    annotations: [],
-  };
-}
-
-function mergeSeeds(current: DraftChange[], seeds: DraftSeed[]): DraftChange[] {
-  const byKey = new Map(current.map((change) => [change.id, change]));
-  const byIssue = new Map(
-    current.filter((change) => change.issueId).map((change) => [change.issueId!, change]),
-  );
-  const next = [...current];
-  for (const seed of seeds) {
-    if (seed.issueId && byIssue.has(seed.issueId)) {
-      const existing = byIssue.get(seed.issueId)!;
-      if (!existing.selected) {
-        next.splice(next.indexOf(existing), 1, { ...existing, selected: true });
-      }
-      continue;
-    }
-    if (byKey.has(seed.key)) continue;
-    next.push({
-      id: seed.key,
-      issueId: seed.issueId,
-      instruction: seed.instruction,
-      selected: true,
-      annotations: [],
-    });
-  }
-  return next;
-}
-
-
-
-/**
- * Scroll a newly revealed panel into view inside the nearest scrollable
- * ancestor (the modal body), never the page: entering editing/marking must
- * not leave the fresh controls clipped above the fold.
- */
-function scrollLocalIntoView(node: HTMLElement | null) {
-  if (!node || typeof window === "undefined") return;
-  let container: HTMLElement | null = node.parentElement;
-  while (container) {
-    const overflowY = window.getComputedStyle(container).overflowY;
-    if ((overflowY === "auto" || overflowY === "scroll") && container.scrollHeight > container.clientHeight) break;
-    container = container.parentElement;
-  }
-  if (container) {
-    const delta = node.getBoundingClientRect().top - container.getBoundingClientRect().top - 8;
-    if (delta !== 0) container.scrollTop += delta;
-  } else if (typeof node.scrollIntoView === "function") {
-    node.scrollIntoView({ block: "start" });
-  }
+/** A finding's change keeps the finding's key even when it cannot link to this render. */
+function belongsTo(change: DraftChange, issueId: string) {
+  return change.issueId === issueId || change.id === `issue:${issueId}`;
 }
 
 /**
- * Text-first correction draft. Locations are optional context attached to a
- * request, never a second required writing task. Requests submit after an
- * explicit preview. Persisted per
- * project/page/canonical-revision/edit-source-render; queued drafts lock
- * until the target changes.
+ * The next revision, built in one place: findings the author chose to fix and
+ * their own requests, each optionally pointed at on the page. Nothing is
+ * included until the author adds it. Requests submit after an explicit
+ * preview. Persisted per project/page/canonical-revision/edit-source-render;
+ * queued drafts lock until the target changes.
  */
 export function RevisionDraft({
   project,
@@ -219,12 +169,10 @@ export function RevisionDraft({
   compareRevision,
   issues,
   correctableIssueIds,
-  seeds,
-  onSeedsConsumed,
   onJobQueued,
   disabled,
   onArtworkLoaded,
-  aside,
+  checks,
 }: RevisionDraftProps) {
   const { t } = useI18n();
   const preview = useCorrectionPreview();
@@ -234,26 +182,18 @@ export function RevisionDraft({
   const suggestions = useMemo(() => suggestibleIssues(issues, correctableIssueIds), [issues, correctableIssueIds]);
   const suggestionIds = useMemo(() => new Set(suggestions.map((issue) => issue.id)), [suggestions]);
 
-  const [changes, setChanges] = useState<DraftChange[]>(() => {
-    const persisted = loadRevisionDraft(project, pageNumber, target);
-    if (persisted && persisted.changes.length > 0) {
-      return persisted.changes.map((change) => ({
-        id: change.id,
-        issueId: change.issue_id,
-        instruction: change.instruction,
-        selected: change.selected,
-        annotations: (change.annotations ?? []).map((mark) => ({ ...mark })),
-      }));
-    }
-    return suggestions.map(changeFromIssue);
-  });
-  const [note, setNote] = useState(
-    () => loadRevisionDraft(project, pageNumber, target)?.note ?? "",
+  const [changes, setChanges] = useState<DraftChange[]>(() =>
+    (loadRevisionDraft(project, pageNumber, target)?.changes ?? []).map((change) => ({
+      id: change.id,
+      issueId: change.issue_id,
+      instruction: change.instruction,
+      annotations: (change.annotations ?? []).map((mark) => ({ ...mark })),
+    })),
   );
   const [manualInput, setManualInput] = useState(
     () => loadRevisionDraft(project, pageNumber, target)?.pendingRequest ?? "",
   );
-  const [focusId, setFocusId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [previewHash, setPreviewHash] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<Error | string | null>(null);
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(() => loadRevisionDraft(project, pageNumber, target)?.submittedJobId ?? null);
@@ -270,17 +210,7 @@ export function RevisionDraft({
   const redraw = submittedJobId != null && !completed && !canRetry
     ? submittedJob.error || (submittedJob.data && !job) ? "unconfirmed" : job?.status === "queued" ? "queued" : "running"
     : null;
-  const focused = changes.find((change) => change.id === focusId)
-    ?? changes.find((change) => change.selected)
-    ?? changes[0]
-    ?? null;
 
-  // Editing stays closed until asked for or a visual-review seed arrives;
-  // stored drafts are preserved but never force the rail open.
-  const [editing, setEditing] = useState(() => seeds.length > 0);
-  // Whether the page annotator is shown for the focused request; false keeps
-  // the artwork a plain fitted image so controls never crowd it.
-  const [marking, setMarking] = useState(false);
   const [comparison, setComparison] = useState<"wipe" | "before" | "after">("wipe");
   // Any saved render can be viewed and compared; corrections always start
   // from the selected render (parentRenderRevision).
@@ -294,30 +224,15 @@ export function RevisionDraft({
   const [viewRevision, setViewRevision] = useState(parentRenderRevision);
   const [compareChoice, setCompareChoice] = useState<number | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  // Scroll only on explicit mode transitions (start editing, start marking,
-  // hide editing). Mark updates and note edits never scroll: the intent flag
-  // is consumed once by the effect below, so later renders stay put.
-  const sectionRef = useRef<HTMLElement | null>(null);
-  const artRef = useRef<HTMLElement | null>(null);
-  const railRef = useRef<HTMLDivElement | null>(null);
-  const markTopRef = useRef<HTMLDivElement | null>(null);
-  const makeChangesWrapRef = useRef<HTMLDivElement | null>(null);
-  const scrollIntentRef = useRef<"edit" | "mark" | "hide" | null>(null);
-  useEffect(() => {
-    const intent = scrollIntentRef.current;
-    if (!intent) return;
-    scrollIntentRef.current = null;
-    if (intent === "edit") {
-      scrollLocalIntoView(railRef.current);
-      railRef.current?.querySelector<HTMLTextAreaElement>("textarea:not([disabled])")?.focus({ preventScroll: true });
-    } else if (intent === "mark") {
-      scrollLocalIntoView(markTopRef.current);
-      markTopRef.current?.querySelector<HTMLButtonElement>('[role="toolbar"] button:not([disabled])')?.focus({ preventScroll: true });
-    } else {
-      scrollLocalIntoView(artRef.current ?? sectionRef.current);
-      makeChangesWrapRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
-    }
-  }, [editing, marking]);
+
+  // A finished redraw of a deliberately reselected older render: start a fresh draft.
+  if (completed) {
+    setSubmittedJobId(null);
+    setChanges([]);
+    setManualInput("");
+    setActiveId(null);
+    setPreviewHash(null);
+  }
 
   // Checks can clear findings without changing the page/render target. Reconcile
   // both mounted and restored drafts before displaying or previewing them, while
@@ -345,41 +260,9 @@ export function RevisionDraft({
     }
   }
 
-  // Merge visual-review seeds once: current issues become selections, the rest new changes.
-  // Own-state merge happens during render (the supported derived-state pattern);
-  // parent notification stays in an effect since it sets parent state.
-  const [lastSeeds, setLastSeeds] = useState<DraftSeed[]>([]);
-  if (seeds !== lastSeeds && seeds.length > 0) {
-    setLastSeeds(seeds);
-    // An open finding that cannot be linked to this render (it was found on
-    // a later one) still carries the author's request: send it as a new
-    // change. Dismissed or settled findings stay dropped.
-    const unlinkable = new Set(suggestibleIssues(issues).map((issue) => issue.id));
-    setChanges((current) => mergeSeeds(current, seeds.flatMap((seed) => (
-      !seed.issueId || suggestionIds.has(seed.issueId) ? [seed]
-        : unlinkable.has(seed.issueId) ? [{ ...seed, issueId: undefined }] : []
-    ))));
-    setEditing(true);
-  }
-  useEffect(() => {
-    if (seeds.length > 0) onSeedsConsumed();
-  }, [seeds, onSeedsConsumed]);
-
   // Retain the exact change IDs through failure and reload, including queued work.
   useEffect(() => {
-    const draft = {
-      changes: changes.map((change) => ({
-        id: change.id,
-        ...(change.issueId ? { issue_id: change.issueId } : {}),
-        instruction: change.instruction,
-        selected: change.selected,
-        annotations: change.annotations,
-      })),
-      note,
-      pendingRequest: manualInput,
-    };
-    // Keep only what the author wrote or sent; untouched suggestions are rebuilt from the findings.
-    if (job?.status === "complete" || (!submittedJobId && !draftHasUnsentWork(draft))) {
+    if (job?.status === "complete" || (!submittedJobId && changes.length === 0 && !manualInput.trim())) {
       clearRevisionDraft(project, pageNumber, target);
       return;
     }
@@ -390,18 +273,22 @@ export function RevisionDraft({
       comicPageRevision,
       parentRenderRevision,
       comicPageSha256,
-      ...draft,
+      changes: changes.map((change) => ({
+        id: change.id,
+        ...(change.issueId ? { issue_id: change.issueId } : {}),
+        instruction: change.instruction,
+        annotations: change.annotations,
+      })),
+      pendingRequest: manualInput,
       // No manual story-context selection: the backend assembles whole-book
       // context automatically. Stored passage ids from older drafts are
       // never re-submitted silently.
       contextSourceUnitIds: [],
       updatedAt: new Date().toISOString(),
     });
-  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput, submittedJobId, job?.status, target]);
+  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, manualInput, submittedJobId, job?.status, target]);
 
-  const selectedChanges = useMemo(() => changes.filter((change) => change.selected), [changes]);
-
-  function buildBody(draftChanges = selectedChanges): { body: PageCorrectionBody; problems: string[] } {
+  function buildBody(draftChanges = changes): { body: PageCorrectionBody; problems: string[] } {
     const problems: string[] = [];
     const bodyChanges: PageCorrectionChange[] = [];
     if (draftChanges.length > MAX_CORRECTION_CHANGES) {
@@ -413,7 +300,7 @@ export function RevisionDraft({
     for (const change of draftChanges) {
       const instruction = change.instruction.trim();
       if (!instruction) {
-        problems.push(t("One selected fix has no instruction yet."));
+        problems.push(t("One change has no description yet."));
         continue;
       }
       if (instruction.length > MAX_CORRECTION_INSTRUCTION) {
@@ -424,25 +311,19 @@ export function RevisionDraft({
         problems.push(`${t("Location")} ${change.annotations.indexOf(invalidMark) + 1}: ${t(annotationProblem(invalidMark)!)}`);
         continue; // The problem blocks preview/submit; invalid context is never silently sent.
       }
-      const submitted = change.annotations.map(serializeAnnotation);
       bodyChanges.push({
         id: change.id,
         ...(change.issueId ? { issue_id: change.issueId } : {}),
         instruction,
-        annotations: submitted,
+        annotations: change.annotations.map(serializeAnnotation),
       });
     }
-    const trimmedNote = note.trim();
-    if (trimmedNote.length > MAX_CORRECTION_INSTRUCTION) {
-      problems.push(t("Shorten the overall note to 1000 characters."));
-    }
-    if (bodyChanges.length === 0 && trimmedNote.length === 0 && problems.length === 0) {
-      problems.push(t("Describe what you would like to change. Marking the page is optional."));
+    if (bodyChanges.length === 0 && problems.length === 0) {
+      problems.push(t("Describe what you would like to change."));
     }
     return {
       body: {
         changes: bodyChanges,
-        ...(trimmedNote ? { note: trimmedNote } : {}),
         parent_render_revision: parentRenderRevision,
         comic_page_revision: comicPageRevision,
         comic_page_sha256: comicPageSha256,
@@ -462,18 +343,19 @@ export function RevisionDraft({
     if (locked) return;
     setSubmitError(null);
     const pendingRequest: DraftChange | null = manualInput.trim()
-      ? { id: newChangeId(), instruction: manualInput.trim(), selected: true, annotations: [] }
+      ? { id: newChangeId(), instruction: manualInput.trim(), annotations: [] }
       : null;
-    const { body, problems } = buildBody(pendingRequest ? [...selectedChanges, pendingRequest] : selectedChanges);
+    const { body, problems } = buildBody(pendingRequest ? [...changes, pendingRequest] : changes);
     if (problems.length > 0) {
       setSubmitError(problems[0] ?? t("The draft is not ready to preview."));
       return;
     }
     if (pendingRequest) {
       setChanges((current) => [...current, pendingRequest]);
-      setFocusId(pendingRequest.id);
       setManualInput("");
     }
+    // A failed or cancelled redraw is retried as a fresh submission of the same changes.
+    if (canRetry) setSubmittedJobId(null);
     setPreviewHash(null);
     preview.mutate(
       { project, pageNumber, body },
@@ -499,8 +381,7 @@ export function RevisionDraft({
         onSuccess: ({ job }) => {
           setPreviewHash(null);
           setSubmittedJobId(job.id);
-          setEditing(false);
-          setMarking(false);
+          setActiveId(null);
           onJobQueued(job.id);
         },
         onError: (error) => {
@@ -514,26 +395,43 @@ export function RevisionDraft({
     );
   }
 
-  function addManual() {
-    const instruction = manualInput.trim();
-    if (!instruction || locked) return null;
-    const change: DraftChange = {
-      id: newChangeId(),
-      instruction,
-      selected: true,
-      annotations: [],
-    };
+  function addChange(change: DraftChange) {
     setChanges((current) => [...current, change]);
-    setFocusId(change.id);
-    setManualInput("");
-    return change.id;
+    setActiveId(change.id);
+    // Changes are drafted against the selected render.
+    setViewRevision(parentRenderRevision);
   }
 
-  function markPendingRequest() {
-    const id = addManual();
-    if (!id) return;
-    scrollIntentRef.current = "mark";
-    setMarking(true);
+  function addManual() {
+    const instruction = manualInput.trim();
+    if (!instruction || locked) return;
+    addChange({ id: newChangeId(), instruction, annotations: [] });
+    setManualInput("");
+  }
+
+  function include(issue: PageIssue) {
+    if (locked) return;
+    const existing = changes.find((change) => belongsTo(change, issue.id));
+    if (existing) {
+      setActiveId(existing.id);
+      return;
+    }
+    // A finding this render cannot link still travels as the author's request.
+    addChange({
+      id: `issue:${issue.id}`,
+      ...(suggestionIds.has(issue.id) ? { issueId: issue.id } : {}),
+      instruction: issue.requested_correction,
+      annotations: [],
+    });
+  }
+
+  function updateChange(id: string, patch: Partial<DraftChange>) {
+    setChanges((current) => current.map((change) => change.id === id ? { ...change, ...patch } : change));
+  }
+
+  function removeChange(id: string) {
+    setChanges((current) => current.filter((change) => change.id !== id));
+    if (activeId === id) setActiveId(null);
   }
 
   function rebaseStale(copy: boolean) {
@@ -543,28 +441,14 @@ export function RevisionDraft({
         const known = new Set(current.map((change) => change.id));
         const rebased: DraftChange[] = staleDraft.changes
           .filter((change) => !known.has(`rebased:${change.id}`))
-          .map((change) => ({
-            id: `rebased:${change.id}`,
-            instruction: change.instruction,
-            selected: false,
-            // Marks never migrate across renders: geometry belongs to the old image.
-            annotations: [],
-          }));
+          // Marks never migrate across renders: geometry belongs to the old image.
+          .map((change) => ({ id: `rebased:${change.id}`, instruction: change.instruction, annotations: [] }));
         if (typeof staleDraft.pendingRequest === "string" && staleDraft.pendingRequest.trim()) {
-          rebased.push({ id: newChangeId(), instruction: staleDraft.pendingRequest, selected: false, annotations: [] });
+          rebased.push({ id: newChangeId(), instruction: staleDraft.pendingRequest, annotations: [] });
         }
-        const next = [...current, ...rebased];
-        const knownIssues = new Set(next.filter((change) => change.issueId).map((change) => change.issueId!));
-        for (const change of staleDraft.changes) {
-          if (change.issue_id && suggestionIds.has(change.issue_id) && !knownIssues.has(change.issue_id)) {
-            next.push({ ...changeFromIssue(suggestions.find((issue) => issue.id === change.issue_id)!), selected: false });
-            knownIssues.add(change.issue_id);
-          }
-        }
-        return next;
+        return [...current, ...rebased];
       });
-      if (staleDraft.note && !note) setNote(staleDraft.note);
-      setEditing(true);
+      setViewRevision(parentRenderRevision);
     }
     // Copied or discarded, the earlier draft is done with: never offer it again.
     clearRevisionDraft(project, pageNumber, staleDraft);
@@ -584,9 +468,6 @@ export function RevisionDraft({
           {staleRequests.length > 3 && <li className="list-none text-ink-muted">{t("{count, plural, one {and # more} other {and # more}}", { count: staleRequests.length - 3 })}</li>}
         </ul>
       )}
-      <p className="mt-2 font-body text-xs leading-5 text-ink-muted">
-        {t("Use them on this version, or discard them. Marks drawn on the earlier version stay behind.")}
-      </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="xs" onClick={() => rebaseStale(true)} disabled={locked}>{t("USE ON THIS VERSION")}</Button>
         <Button size="xs" variant="outline" onClick={() => rebaseStale(false)}>{t("DISCARD")}</Button>
@@ -594,9 +475,66 @@ export function RevisionDraft({
     </Surface>
   );
 
-  const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
-  // Requests are drafted against the selected render, so editing always shows it.
-  const shownRevision = editing ? parentRenderRevision : viewRevision;
+  // Findings shown by the checks hold their own change cards; everything else is listed as yours.
+  const openIssues = issues.filter(isOpen);
+  const checkChanges = checks
+    ? openIssues.flatMap((issue) => changes.filter((change) => belongsTo(change, issue.id)).slice(0, 1))
+    : [];
+  const inChecks = new Set(checkChanges.map((change) => change.id));
+  const ownChanges = changes.filter((change) => !inChecks.has(change.id));
+  const numbers = new Map([...checkChanges, ...ownChanges].map((change, index) => [change.id, index + 1]));
+  const markCount = changes.reduce((total, change) => total + change.annotations.length, 0);
+  const reviewCount = changes.length + (manualInput.trim() ? 1 : 0);
+
+  function changeCard(change: DraftChange) {
+    const number = numbers.get(change.id) ?? 0;
+    const active = change.id === activeId && !locked;
+    const marks = change.annotations.length;
+    return (
+      <div className={`space-y-2 border-l-[3px] pl-3 ${active ? "border-hero-red" : "border-ink-black/20"}`}
+        onFocusCapture={() => !locked && setActiveId(change.id)} onClick={() => !locked && setActiveId(change.id)}>
+        <div className="flex items-start gap-2">
+          <span aria-hidden="true" className={`mt-2 flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-ink-black font-meta text-xs font-bold ${active ? "bg-hero-red text-bristol" : "bg-pulp-paper"}`}>
+            {number}
+          </span>
+          <TextAreaField
+            aria-label={t("Change {number}", { number })}
+            className="min-h-0"
+            value={change.instruction}
+            disabled={locked}
+            rows={2}
+            maxLength={MAX_CORRECTION_INSTRUCTION}
+            onChange={(event) => updateChange(change.id, { instruction: event.target.value })}
+          />
+        </div>
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 pl-8">
+          <p className="font-body text-xs text-ink-muted">
+            {marks > 0 && t("{count, plural, one {# mark} other {# marks}}", { count: marks })}
+            {marks > 0 && active && " · "}
+            {active && t("Click or drag on the page to show where.")}
+          </p>
+          {!locked && (
+            <Button size="xs" variant="outline" onClick={(event) => { event.stopPropagation(); removeChange(change.id); }}>
+              {t("REMOVE")}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const controls: DraftControls = {
+    locked,
+    include,
+    included: (issueId) => {
+      const change = checkChanges.find((candidate) => belongsTo(candidate, issueId));
+      return change ? changeCard(change) : null;
+    },
+  };
+
+  // While changes are being drafted, the page shows the selected render and becomes the marking surface.
+  const drafting = changes.length > 0 && !redraw;
+  const shownRevision = changes.length > 0 ? parentRenderRevision : viewRevision;
   const canvasSrc = pageRenderPreviewUrl(project, pageNumber, shownRevision, "reader");
   const canvasAlt = `${t("Complete page")} ${pageNumber}, ${t("render revision")} ${shownRevision}`;
   const otherRevisions = revisions.filter((option) => option.revision !== shownRevision);
@@ -605,93 +543,46 @@ export function RevisionDraft({
     : [...otherRevisions].reverse().find((option) => option.revision < shownRevision)?.revision ?? otherRevisions[0]?.revision ?? null;
   const beforeRevision = compareChoice != null && compareChoice !== shownRevision
     && revisions.some((option) => option.revision === compareChoice) ? compareChoice : fallbackCompare;
-  function startEditing() {
-    if (locked) return;
-    if (completed) {
-      // New requests against a deliberately reselected older render need new IDs.
-      setChanges([]);
-      setNote("");
-      setManualInput("");
-      setFocusId(null);
-      setSubmitError(null);
-    }
-    if (completed || canRetry) {
-      setSubmittedJobId(null);
-      setPreviewHash(null);
-    }
-    scrollIntentRef.current = "edit";
-    setViewRevision(parentRenderRevision);
-    setEditing(true);
-    setMarking(false);
-  }
-  function hideEditing() {
-    scrollIntentRef.current = "hide";
-    setEditing(false);
-    setMarking(false);
-  }
-  function toggleMarking(changeId: string) {
-    setFocusId(changeId);
-    if (!marking) scrollIntentRef.current = "mark";
-    setMarking(!marking);
-  }
+  const leftOut = previewResult?.unselected_open_issue_ids.length ?? 0;
+  const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
 
   return (
-    <section ref={sectionRef} aria-label={t("Page corrections")} className="space-y-4 lg:flex lg:h-full lg:flex-col">
-
-      {submittedJobId && canRetry && (
-        <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
-          <p className="font-body text-sm font-bold">{t("The correction did not finish. Your original requests are saved.")}</p>
-          {job?.user_message && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{job.user_message}</p>}
-          <p className="mt-1 font-body text-sm leading-6 text-ink-muted">
-            {t("Choose Make changes to review your saved requests and the cost before trying again.")}
-          </p>
-        </Surface>
-      )}
-
-      {/* Artwork left, a working rail right: the page's checks, or the change request while editing. */}
+    <section aria-label={t("Page corrections")} className="space-y-4 lg:flex lg:h-full lg:flex-col">
+      {/* Artwork left, the next revision right: the page's checks, then your own changes. */}
       <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)]">
         <div className="min-w-0 space-y-4 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
-          {editing && focused && (marking || focused.annotations.length > 0) ? (
-            <div ref={markTopRef} className="space-y-3">
-              <p className="font-body text-sm leading-6 text-ink-muted">
-                <span className="font-meta text-xs font-bold">{t("Locations for")}: </span>{focused.instruction}
-              </p>
-              <AnnotationEditor
-                key={`${comicPageRevision}:${parentRenderRevision}:${focused.id}`}
+          {changes.length === 0 && (
+            <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions}
+              selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
+              onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
+          )}
+          <figure className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1">
+            {drafting ? (
+              <PageMarker
+                key={`${comicPageRevision}:${parentRenderRevision}`}
                 imageSrc={canvasSrc}
                 alt={canvasAlt}
-                value={focused.annotations}
-                onChange={(annotations) => setChanges((current) => current.map((candidate) => candidate.id === focused.id
-                  ? { ...candidate, annotations }
-                  : candidate))}
-                disabled={locked || !focused.selected}
-                readOnly={!marking}
-                maxMarks={Math.max(0, MAX_CORRECTION_MARKS - selectedChanges
-                  .filter((change) => change.id !== focused.id)
-                  .reduce((total, change) => total + change.annotations.length, 0))}
+                groups={[...checkChanges, ...ownChanges].map((change) => ({ id: change.id, number: numbers.get(change.id) ?? 0, marks: change.annotations }))}
+                activeId={locked ? null : activeId}
+                onChange={(id, annotations) => updateChange(id, { annotations })}
+                onActivate={setActiveId}
+                remaining={MAX_CORRECTION_MARKS - markCount}
+                disabled={locked}
+                onLoaded={onArtworkLoaded}
               />
-            </div>
-          ) : (
-            <>
-            {!editing && (
-              <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions}
-                selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
-                onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
-            )}
-            <figure ref={artRef} className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1">
+            ) : (
               <Loupe className={`flex h-full w-full justify-center transition-opacity ${redraw ? "opacity-60" : ""}`}>
                 <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
               </Loupe>
-              <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} />
-              {redraw && (
-                <figcaption role="status" className="pointer-events-none absolute left-1/2 top-4 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-xs font-bold uppercase tracking-wider shadow-ink">
-                  {redraw !== "unconfirmed" && <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />}
-                  {t(redraw === "queued" ? "Redraw waiting to start" : redraw === "running" ? "Redrawing this page" : "Can’t confirm the redraw yet")}
-                </figcaption>
-              )}
-            </figure>
-            </>
-          )}
+            )}
+            <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} />
+            {redraw && (
+              <figcaption role="status" className="pointer-events-none absolute left-1/2 top-4 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-xs font-bold uppercase tracking-wider shadow-ink">
+                {redraw !== "unconfirmed" && <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />}
+                {t(redraw === "queued" ? "Redraw waiting to start" : redraw === "running" ? "Redrawing this page" : "Can’t confirm the redraw yet")}
+              </figcaption>
+            )}
+          </figure>
           {beforeRevision != null && (
             <details className="border border-ink-black/20 px-3 py-2" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
               <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
@@ -784,284 +675,94 @@ export function RevisionDraft({
           )}
         </div>
 
-        {!editing && (
-          <div className="min-w-0 space-y-6 border-t border-ink-black/15 pt-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-            {staleNotice}
-            <div ref={makeChangesWrapRef} className="space-y-2">
-              <Button className="w-full" size="sm" variant="outline" onClick={startEditing} disabled={locked}>
-                {t(redraw ? "REDRAWING…" : "MAKE CHANGES")}
+        {/* Room at the end for button shadows and their 1px hover nudge, so hovering never adds a scrollbar. */}
+        <div className="min-w-0 space-y-6 border-t border-ink-black/15 pt-5 lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden lg:border-l lg:border-t-0 lg:pb-2 lg:pl-6 lg:pr-2 lg:pt-0">
+          {submittedJobId && canRetry && (
+            <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
+              <p className="font-body text-sm font-bold">{t("The redraw didn’t finish. Your changes are still here.")}</p>
+              {job?.user_message && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{job.user_message}</p>}
+            </Surface>
+          )}
+          {staleNotice}
+          {redraw && (
+            <p role="status" className="font-body text-sm leading-6 text-ink-muted">
+              {t(redraw === "unconfirmed"
+                ? "Your changes are saved. This page updates once the redraw is confirmed."
+                : "You can close this page. The new version replaces it here when ready.")}
+            </p>
+          )}
+
+          {checks?.(controls)}
+
+          {(ownChanges.length > 0 || !locked) && (
+            <section aria-label={t("Your changes")} className="space-y-3">
+              <SectionHeader variant="underline" title={t("YOUR CHANGES")} />
+              {ownChanges.length > 0 && (
+                <ol className="space-y-3">
+                  {ownChanges.map((change) => <li key={change.id}>{changeCard(change)}</li>)}
+                </ol>
+              )}
+              {!locked && (
+                <div className="space-y-2">
+                  <FieldLabel htmlFor="draft-manual" className="sr-only">{t("Describe a change")}</FieldLabel>
+                  <TextAreaField
+                    id="draft-manual"
+                    className="min-h-0"
+                    value={manualInput}
+                    maxLength={MAX_CORRECTION_INSTRUCTION}
+                    rows={2}
+                    placeholder={t("Describe a change, e.g. in panel 2 make his hair pink; keep his face and the lighting.")}
+                    onChange={(event) => setManualInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        addManual();
+                      }
+                    }}
+                  />
+                  <div className="flex justify-end">
+                    <Button size="xs" variant="outline" onClick={addManual} disabled={!manualInput.trim()}>
+                      {t("ADD")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {!previewFresh && !redraw && (
+            <div className="space-y-2 border-t border-ink-black/15 pt-4">
+              <Button className="w-full" size="sm" onClick={runPreview} disabled={locked || preview.isPending || reviewCount === 0}>
+                {preview.isPending ? t("Reviewing…") : t("{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}", { count: reviewCount })}
               </Button>
-              {redraw && (
-                <p className="font-body text-xs leading-5 text-ink-muted">
-                  {t(redraw === "unconfirmed"
-                    ? "Your requests are saved. This page keeps checking and updates once the redraw is confirmed."
-                    : "You can close this page. The new version replaces it here when ready, and you can make changes again.")}
-                </p>
+              {preview.data && !submittedJobId && reviewCount > 0 && (
+                <p role="status" className="font-body text-xs text-ink-muted">{t("Changed since your last review.")}</p>
               )}
             </div>
-            {aside}
-          </div>
-        )}
-
-        {editing && (
-        <div ref={railRef} className={`min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:order-none lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 ${marking ? "" : "order-first"}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-display text-2xl font-black">{t("Request changes")}</h3>
-            <Button size="sm" variant="outline" onClick={hideEditing}>
-              {t("Back to page")}
-            </Button>
-          </div>
-          {staleNotice}
-          <p className="font-body text-sm leading-6 text-ink-muted">
-            {t("Text is enough. Optionally add a pin, area or highlight to show where. You’ll review the cost before generating.")}
-          </p>
-          <p className="font-body text-sm leading-6 text-ink-muted">
-            {t("For motion or orientation, name the panel, what points left or right, which end leads, and what should stay unchanged. Choose your best starting image in Versions first.")}
-          </p>
-          {(!marking || !focused) && <div>
-            <FieldLabel htmlFor="draft-manual">{t("What would you like to change?")}</FieldLabel>
-            <div className="flex flex-col gap-2">
-              <TextAreaField
-                id="draft-manual"
-                value={manualInput}
-                disabled={locked}
-                maxLength={MAX_CORRECTION_INSTRUCTION}
-                rows={4}
-                placeholder={t("For example: make his hair pink in the first panel, keeping his face and the lighting unchanged.")}
-                onChange={(event) => setManualInput(event.target.value)}
-              />
-              <p className="font-body text-xs leading-5 text-ink-muted">
-                {t("Go straight to Review changes, or add context below.")}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button size="xs" variant="outline" onClick={markPendingRequest} disabled={locked || !manualInput.trim()}>
-                  {t("Add location (optional)")}
-                </Button>
-                <Button size="xs" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
-                  {t("Add request")}
-                </Button>
-              </div>
-            </div>
-          </div>}
-
-          {changes.length > 0 && (
-            <div className="border-t border-ink-black/15 pt-4">
-              <h4 className="font-meta text-xs font-bold uppercase tracking-wider">{t("Requests to include")}</h4>
-              <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{t("Checked requests will be included. Select any request to edit it.")}</p>
-            </div>
-          )}
-          {suggestions.filter((issue) => !changes.some((change) => change.issueId === issue.id)).map((issue) => (
-            <div key={issue.id} className="flex flex-wrap items-center justify-between gap-2 border border-dashed border-ink-black/30 px-3 py-2">
-              <span className="font-body text-xs">{issue.requested_correction}</span>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={locked}
-                onClick={() => setChanges((current) => [...current, changeFromIssue(issue)])}
-              >
-                {t("ADD TO DRAFT")}
-              </Button>
-            </div>
-          ))}
-
-          {changes.length === 0 ? (
-            <p className="font-body text-sm text-ink-muted">
-              {t("Your requests will appear here once added.")}
-            </p>
-          ) : (
-            <ol className="space-y-2">
-              {changes.map((change) => {
-                const summary = change.instruction.trim() || t("Empty request");
-                if (focused?.id !== change.id) {
-                  return (
-                    <li key={change.id} className="flex items-start gap-2 border border-ink-black/20 px-2 py-2">
-                      <label className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={change.selected}
-                        disabled={locked}
-                        onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
-                          ? { ...candidate, selected: event.target.checked }
-                          : candidate))}
-                        aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
-                        className="h-4 w-4 shrink-0 accent-hero-red"
-                      />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setFocusId(change.id)}
-                        aria-label={`${t("Edit request")}: ${change.instruction.slice(0, 80)}`}
-                        className="min-h-11 min-w-0 flex-1 py-2 text-left font-body text-sm leading-6 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red"
-                      >
-                        {summary}
-                      </button>
-                      {change.annotations.length > 0 && (
-                        <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
-                          {change.annotations.length} {t("{count, plural, one {location} other {locations}}", { count: change.annotations.length })}
-                        </span>
-                      )}
-                    </li>
-                  );
-                }
-                return (
-                <li key={change.id}>
-                  <Surface tone={change.selected ? "bristol" : "container"} border="soft" shadow="none" padding="md">
-                    <div className="flex items-start gap-3">
-                      <label className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={change.selected}
-                        disabled={locked}
-                        onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
-                          ? { ...candidate, selected: event.target.checked }
-                          : candidate))}
-                        aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
-                        className="h-4 w-4 shrink-0 accent-hero-red"
-                      />
-                      </label>
-                      <div className="min-w-0 flex-1 space-y-2">
-                        {change.annotations.length > 0 && (
-                          <p className="font-meta text-xs font-bold text-ink-muted">
-                            {change.annotations.length} {t("{count, plural, one {location} other {locations}}", { count: change.annotations.length })}
-                          </p>
-                        )}
-                        <FieldLabel htmlFor={`draft-instruction-${change.id}`}>
-                          {t("Request")}
-                        </FieldLabel>
-                        <TextAreaField
-                          id={`draft-instruction-${change.id}`}
-                          value={change.instruction}
-                          disabled={locked || !change.selected}
-                          rows={3}
-                          maxLength={MAX_CORRECTION_INSTRUCTION}
-                          onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
-                            ? { ...candidate, instruction: event.target.value }
-                            : candidate))}
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant={marking ? undefined : "outline"}
-                            disabled={locked || (!change.selected && !marking)}
-                            aria-pressed={marking}
-                            onClick={() => toggleMarking(change.id)}
-                          >
-                            {t(marking ? "DONE MARKING" : "MARK ON PAGE (OPTIONAL)")}
-                          </Button>
-                          {!change.issueId && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={locked}
-                              onClick={() => setChanges((current) => current.filter((candidate) => candidate.id !== change.id))}
-                            >
-                              {t("REMOVE")}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </Surface>
-                </li>
-                );
-              })}
-            </ol>
-          )}
-
-          <p className="font-body text-xs leading-5 text-ink-muted">
-            {t("Approved style and character references are included automatically. Review changes to see the exact reference images before generating.")}
-          </p>
-          <details>
-            <summary className="cursor-pointer py-3 font-meta text-xs font-bold text-ink-muted">
-              {t("Overall note (optional)")}
-            </summary>
-            <div className="mt-2">
-              <FieldLabel htmlFor="draft-note" className="sr-only">{t("Overall note (optional)")}</FieldLabel>
-              <TextAreaField
-                id="draft-note"
-                maxLength={MAX_CORRECTION_INSTRUCTION}
-                value={note}
-                disabled={locked}
-                placeholder={t("Guidance the individual fixes do not cover.")}
-                onChange={(event) => setNote(event.target.value)}
-              />
-            </div>
-          </details>
-
-
-          {!previewFresh && !submittedJobId && (
-            <div className="space-y-2 border-t border-ink-black/15 pt-4">
-              <Button className="w-full" size="sm" onClick={runPreview} disabled={locked || preview.isPending}>
-                {t(preview.isPending ? "Reviewing…" : "Review changes")}
-              </Button>
-              <p className="font-body text-xs leading-5 text-ink-muted">
-                {t("Review the estimate and included requests before you confirm.")}
-              </p>
-            </div>
-          )}
-          {preview.data && !previewFresh && !submittedJobId && (
-            <p role="status" className="font-body text-xs font-bold text-hero-red">
-              {t("Your requests changed. Review them again before generating.")}
-            </p>
           )}
 
           {previewResult && (
             <Surface tone="container" border="soft" shadow="none" padding="md" aria-live="polite">
-              <h4 className="font-display text-lg font-bold">{t("Ready to generate")}</h4>
-              <p className="mt-2 font-body text-lg font-bold">
-                {t("Estimated cost:")} ~{previewResult.estimate.estimate_credits} {t("credits")}
+              <p className="font-body text-lg font-bold">
+                ~{previewResult.estimate.estimate_credits} {t("credits")}
               </p>
-              <p className="mt-1 font-body text-xs text-ink-muted">
-                {previewResult.changes.length} {t("{count, plural, one {selected fix} other {selected fixes}}", { count: previewResult.changes.length })}
-              </p>
-              {previewResult.unselected_open_issue_ids.length > 0 && (
-                <div className="mt-2">
-                  <p className="font-body text-xs leading-5">
-                    <span className="font-bold">{t("Left out:")} </span>
-                    {previewResult.unselected_open_issue_ids.length} {t("{count, plural, one {open finding stays open after this revision.} other {open findings stay open after this revision.}}", { count: previewResult.unselected_open_issue_ids.length })}
-                    <Button
-                      className="ml-2"
-                      size="xs"
-                      variant="outline"
-                      disabled={locked}
-                      onClick={() => setChanges((current) => {
-                        const leftOut = new Set(previewResult.unselected_open_issue_ids);
-                        const known = new Set(current.filter((change) => change.issueId).map((change) => change.issueId!));
-                        const additions = suggestions
-                          .filter((issue) => leftOut.has(issue.id) && !known.has(issue.id))
-                          .map(changeFromIssue);
-                        return [
-                          ...current.map((change) => change.issueId && leftOut.has(change.issueId) && !change.selected
-                            ? { ...change, selected: true }
-                            : change),
-                          ...additions,
-                        ];
-                      })}
-                    >
-                      {t("SELECT ALL OPEN")}
-                    </Button>
-                  </p>
-                  <ul className="mt-1 space-y-1">
-                    {previewResult.unselected_open_issue_ids.map((issueId) => {
-                      const issue = issues.find((candidate) => candidate.id === issueId);
-                      return (
-                        <li key={issueId} className="font-body text-xs leading-5 text-ink-muted">
-                          {issue ? issue.requested_correction : t("An open finding with no cached summary.")}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+              {leftOut > 0 && (
+                <p className="mt-1 font-body text-xs text-ink-muted">
+                  {t("{count, plural, one {# other check stays open.} other {# other checks stay open.}}", { count: leftOut })}
+                </p>
               )}
               {previewResult.context.truncated && (
                 <p className="mt-2 font-body text-xs font-bold">{t("Context truncated to fit.")}</p>
               )}
-              <details className="mt-4 border-t border-ink-black/15 pt-3">
+              {previewResult.warnings.length > 0 && (
+                <ul className="mt-2 space-y-1 font-body text-xs leading-5 text-hero-red">
+                  {previewResult.warnings.map((warning, index) => <li key={`warning:${index}`}>{warning}</li>)}
+                </ul>
+              )}
+              <details className="mt-3">
                 <summary className="cursor-pointer py-2 font-meta text-xs font-bold text-ink-muted">{t("Reference images and instructions")}</summary>
-              {previewResult.references.length > 0 && (
-                <div className="mt-2">
-                  <p className="font-meta text-xs font-bold text-ink-muted">{t("REFERENCES COMPARED")}</p>
-                  <ul className="mt-1 space-y-2">
+                {previewResult.references.length > 0 && (
+                  <ul className="mt-2 space-y-2">
                     {previewResult.references.map((reference) => (
                       <li key={reference.id} className="flex items-center gap-2 font-body text-xs leading-5">
                         {reference.image_path && (
@@ -1077,42 +778,17 @@ export function RevisionDraft({
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
-              <div className="mt-4">
-                <p className="font-meta text-xs font-bold text-ink-muted">
-                  {t("COMPILED INSTRUCTION")} ({previewResult.prompt_characters} {t("characters")}, {previewResult.lettering_count} {t("lettering")})
-                </p>
-                <p className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-body text-xs leading-5">
+                )}
+                <p className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-body text-xs leading-5">
                   {previewResult.instruction}
                 </p>
-                <details className="mt-2">
-                  <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
-                    {t("Technical details")}
-                  </summary>
-                  <ul className="mt-1 space-y-1 font-mono text-[0.65rem] leading-4 text-ink-muted">
-                    <li>{t("reserved")}: {previewResult.estimate.reserved_credits} · {previewResult.estimate.confidence}</li>
-                    <li>{previewManualCount} {t("{count, plural, one {manual request} other {manual requests}}", { count: previewManualCount })}</li>
-                    <li>Mode: {previewResult.mode}</li>
-                    <li>Selected issues: {previewResult.selected_issue_ids.join(", ") || "—"}</li>
-                    <li>Manual change ids: {previewResult.pending_manual_change_ids.join(", ") || "—"}</li>
-                    <li>Left-out issues: {previewResult.unselected_open_issue_ids.join(", ") || "—"}</li>
-                  </ul>
-                </details>
-              </div>
+                <ul className="mt-2 space-y-1 font-mono text-[0.65rem] leading-4 text-ink-muted">
+                  <li>{previewResult.prompt_characters} {t("characters")} · {previewResult.lettering_count} {t("lettering")} · {t("reserved")}: {previewResult.estimate.reserved_credits} · {previewResult.estimate.confidence}</li>
+                  <li>{previewManualCount} {t("{count, plural, one {manual request} other {manual requests}}", { count: previewManualCount })} · Mode: {previewResult.mode}</li>
+                </ul>
               </details>
-              {previewResult.warnings.length > 0 && (
-                <div className="mt-2">
-                  <p className="font-meta text-xs font-bold text-hero-red">{t("WARNINGS")}</p>
-                  <ul className="mt-1 space-y-1 font-body text-xs leading-5">
-                    {previewResult.warnings.map((warning, index) => (
-                      <li key={`warning:${index}`}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
               <Button
-                className="mt-5 w-full"
+                className="mt-4 w-full"
                 size="sm"
                 onClick={runSubmit}
                 disabled={locked || submit.isPending || !previewFresh || submittedJobId != null || !!manualInput.trim()}
@@ -1126,7 +802,6 @@ export function RevisionDraft({
             <ErrorNotice error={submitError ?? preview.error} operation={submitError ? "generate" : "estimate"} />
           )}
         </div>
-        )}
       </div>
     </section>
   );
