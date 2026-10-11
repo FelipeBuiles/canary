@@ -18,13 +18,18 @@ that build. A failed check exits nonzero and stops the
 gate. It does not start development servers, build Docker images, or run the
 separate real PostgreSQL contracts.
 
-Every command shows a numbered RUN and PASS/FAIL line with elapsed time. Terminals
-show a live spinner; redirected output and Git GUI clients receive a heartbeat
-every ten seconds while a check runs. Successful command output stays in a
-per-run temporary `canary-checks-*` directory, printed at the start and finish.
-It contains numbered command logs and `summary.log` with each result and duration;
+The gate first plans every check, so prerequisites block before anything runs and
+progress knows the total. Interactive terminals group checks into sections with a
+one-line outcome each (test counts, vulnerability results), a live bar for the
+running check (pytest's own percentage when available) and an overall bar with an
+ETA learned from earlier passing runs (`~/.cache/canary/check-durations.json`).
+A failure shows the last 40 log lines in place. `NO_COLOR` disables color.
+Redirected output and Git GUI clients get stable numbered RUN and PASS/FAIL lines
+(`[03/23] Section · check`) with a heartbeat every ten seconds and the full log on
+failure. Command output stays in a per-run temporary `canary-checks-*` directory
+with numbered command logs and `summary.log` holding each result and duration;
 logs remain available until the system cleans its temporary directory. A failure
-prints its diagnostics immediately and stops the gate. Use
+stops the gate. Use
 `./scripts/check_all.sh --verbose` to stream all command output too, including
 passing frontend test console diagnostics. The same flag is supported by
 `scripts/check_release.py` components.

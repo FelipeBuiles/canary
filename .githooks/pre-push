@@ -6,5 +6,5 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # create disposable repositories, so their Git commands cannot mutate this one.
 while IFS= read -r name; do unset "$name"; done < <(git rev-parse --local-env-vars)
 
-echo "[pre-push] Running the complete local checks; a failure blocks this push."
+export CANARY_CHECK_CONTEXT=pre-push
 exec "$REPO_ROOT/scripts/check_all.sh" </dev/null
