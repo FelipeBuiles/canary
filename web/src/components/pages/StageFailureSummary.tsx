@@ -49,7 +49,7 @@ const checks: { group: Group; codes: string[]; explanation: string }[] = [
     explanation: msg("A change in time, place, or a character’s situation is not clear enough.") },
   { group: "pages", codes: ["upstream_adaptation_granularity"],
     explanation: msg("The story needs more visual moments to fill the planned pages.") },
-  { group: "pages", codes: ["beat_allocation", "page_order", "page_spread_order", "reading_order"],
+  { group: "pages", codes: ["beat_allocation", "page_order", "reading_order"],
     explanation: msg("Some story moments or pages are missing, repeated, or out of reading order.") },
   { group: "pages", codes: ["missing_panel_camera", "staging_authority", "canonical_page_contract"],
     explanation: msg("Some scenes need clearer directions for what the artwork should show and how it should be framed.") },

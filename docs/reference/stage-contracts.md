@@ -774,7 +774,7 @@ Before publishing Adapt, a separate structured editorial call reviews source
 windows, including omitted units, alongside global beat summaries and neighboring
 beats. Supporting source units accompany the exact beat and lettering provenance
 in each detailed window. Identical ledger decisions are grouped losslessly for
-transport. Review contract `narrative_v5` also supplies the exact lettering outside
+transport. Review contract `narrative_v6` also supplies the exact lettering outside
 the detailed window as compact `reader_context`, with no duplicate local copy.
 Together these contain the full adapted text in global story order. Reviewers
 must check earlier publishable words before requesting a repeated date, identity,
@@ -825,12 +825,65 @@ protocol correction stops new admission and records all completed invalid
 windows; admitted siblings finish checkpointing and are reusable on Resume.
 This changes scheduling, not review scope, evidence, or repair allowances.
 
-Review contract `narrative_v5` separates advisory preferences from substantiated
-blockers. Padding, pacing, emphasis, panel variety, and weak page turns never
+Review contract `narrative_v6` separates advisory preferences from substantiated
+blockers. Padding, pacing, emphasis, panel variety, weak page turns, and
+`redundant_caption` (a caption that only narrates what its panel shows) never
 block or trigger automatic polishing. Negative signal assessments are advisory;
 they cannot manufacture a missing-context blocker. Advisory findings are saved
 in the review record, stage validation, and accepted Adapt/Plan editorial notes,
 and shown as optional notes in their reading views.
+
+### Comics craft guidance
+
+Adapt and Plan carry craft guidance for every text model, not only Gemini's
+checklist ([research](../research/2026-10-10-adapt-plan-comics-craft.md)).
+Adapt's word-writing passes ask for about 25 words per balloon or caption,
+splits at sentence boundaries, the author's own dialogue over paraphrase, and
+captions that add voice, time, interiority or causal links rather than narrate
+what the panel shows. A protected passage stays whole in one item. Adapt notes
+`long_lettering_items` (over 30 words, excluding quoted text, SFX and protected
+passages that fill the item) as one grouped editorial note. A short protected
+phrase does not exempt surrounding unprotected copy; remedies must preserve
+the protected passage whole and verbatim.
+
+Page sides are derived, not authored: page 1 and every odd page is right-hand,
+matching the combined export, and canonical pages set `spread_role` from the
+page number. A page side a model still returns is dropped before validation.
+Plan prompts teach that a turn happens only after an odd page, so setups and
+cliffhangers belong at the end of odd pages and turn reveals at the top of even
+pages; they also give panel-count and word-load guidance (about five panels a
+page as a descriptive reference, 50 words a panel) and ask for an orienting shot
+when the story moves to a new place. Plan computes these advisory notes:
+`reveal_on_right_page`, `turn_setup_on_left_page`, `uniform_panel_count` (four
+or more consecutive pages with one count), `unestablished_location_change`
+(the first two panels after a place transition, across beat/page boundaries
+but stopping at another place transition, are all close shots), and, for
+editable editions, one grouped `crowded_lettering` note (a panel over 50 words
+or a page over 210). Integrated editions keep `dense_integrated_lettering`. None of these block,
+repair or alter lettering. Repeated counts invite review, not mandatory variation.
+
+Page allocation uses the edition's advisory budget before locking lettering IDs:
+editable pages aim for at most about 210 words; integrated pages for about 110
+words and 10 items, matching their density signal. Protected items remain whole.
+The Gemini checklist reinforces the same budgets rather than supplying a
+conflicting cap.
+
+Plan's generation and estimate prompts receive the approved Brief's tone.
+`rhythm_summary` carries a coherent layout vocabulary; page `rhythm_intent`
+carries motivated changes, shared with neighboring pages in parallel detail
+batches. `layout_intent` describes ordered panel proportions and row grouping.
+Clear rectangles and gutters are the default; steady grids remain valid.
+Wide, tall or larger panels are optional story-driven choices, not a rotation
+or quota. Unusual shapes require a narrative purpose and clear reading order.
+No generated geometry, new layout artifact or automatic variety repair is added.
+Draw receives that direction under existing selected-style, reading-order and
+author-pin authority; editable art still receives no lettering reservations.
+Local replans retain the accepted map's layout direction and the Brief's tone. Tests establish the
+handoff, not visual adherence or storytelling quality.
+
+Changed prompts require new matching generation requests. A `narrative_v6`
+refresh is one review pass, potentially multiple window calls plus protocol
+corrections or missing-context confirmations, not necessarily one paid call.
 
 A substantive finding must state a concrete consequence and reader impact and
 quote exact passages from their cited supplied artifacts. Contradictions and

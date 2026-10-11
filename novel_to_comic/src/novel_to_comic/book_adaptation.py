@@ -46,6 +46,7 @@ from novel_to_comic.protected_language import (
     contains_protected_language,
     protected_caption_text,
     protected_language_key,
+    protected_language_pattern,
     protected_language_realized,
     protected_source_key,
     protected_source_unit_ids,
@@ -1682,6 +1683,26 @@ _NARRATION_THOUGHT_GUIDANCE = (
 )
 
 
+# Craft counterweight to the completeness rules: professional adapters cut
+# description the art carries and keep the author's dialogue. See
+# docs/research/2026-10-10-adapt-plan-comics-craft.md.
+_LETTERING_ECONOMY_GUIDANCE = (
+    "Comics lettering is economical. One lettering item is one balloon or caption "
+    "of at most about 25 words; split longer speech or narration into consecutive "
+    "items with the same speaker and kind, only at sentence boundaries. A protected "
+    "passage stays whole in one item even when longer. Cut speech tags ('he said') "
+    "and stage directions that the art shows. When the source gives a character's "
+    "spoken line for this moment, letter that character's own words, shortening by "
+    "selecting sentences rather than rewording; paraphrase only speech the source "
+    "summarizes or a line too long for its balloons. Captions carry what a picture "
+    "cannot: the narrator's voice and judgment, time and place, interiority, and "
+    "causal or expository links. They never merely narrate the action, appearance, "
+    "or setting the panel already shows: keep a narration sentence for what it adds "
+    "beyond the picture and let the drawn beat carry the rest. A source unit whose "
+    "only content is drawn stays cited on its beat. "
+)
+
+
 def build_book_adaptation_prompt(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -1801,6 +1822,7 @@ def build_book_adaptation_prompt(
         "delivery='display'. Never use a slash-separated or combined speaker to "
         "stand for multiple possible owners. "
         + _NARRATION_THOUGHT_GUIDANCE
+        + _LETTERING_ECONOMY_GUIDANCE
         + "Cite source-unit provenance. Do not restate the full source ledger: code "
         "derives depicted, dialogue, thought, and caption dispositions from beats "
         "and lettering. Author ledger_exceptions only for "
@@ -1971,6 +1993,7 @@ def build_locked_lettering_prompt(
         "kind, text, speaker, speaker_entity_id, presentation, and source_unit_ids on every item, using null for "
         "speaker fields only when no character speaks. "
         + _NARRATION_THOUGHT_GUIDANCE
+        + _LETTERING_ECONOMY_GUIDANCE
         + "presentation specifies how the words appear on the page, never tone or acting "
         "direction. Values such as 'listless', 'quiet, sincere', or 'whisper' are invalid. "
         "Use exactly onscreen, offscreen, narration, quoted_text, or display. "
@@ -4441,6 +4464,57 @@ def _best_requirement_beat(
     return max(candidates, key=score)
 
 
+# Editors cap a balloon at about 25 words (Weisinger's DC rule, Dark Horse's
+# script guide). The note flags only items well past that, so "about" holds.
+_LONG_LETTERING_WORDS = 30
+_LONG_LETTERING_LISTED = 8
+
+
+def _long_lettering_issues(
+    lettering: list[LetteringItem],
+    wordings: tuple[str, ...],
+    brief: AdaptationBrief,
+) -> list[EditorialIssue]:
+    """One advisory note naming balloons and captions that will read as text walls.
+
+    Quoted documents and protected passages are exempt: their length is the
+    source's, and splitting them is not the remedy. Extra surrounding copy
+    still warrants a note; a short protected phrase cannot exempt a text wall.
+    """
+
+    protected_patterns = [
+        pattern for phrase in brief.protected_language
+        for wording in (phrase, protected_caption_text(phrase))
+        if (pattern := protected_language_pattern(wording)) is not None
+    ]
+    long_items = [
+        item for item, wording in zip(lettering, wordings, strict=True)
+        if item.kind != "sfx" and item.delivery != "quoted_text"
+        and len(item.text.split()) > _LONG_LETTERING_WORDS
+        and not any(pattern.fullmatch(wording) for pattern in protected_patterns)
+    ]
+    if not long_items:
+        return []
+    listed = long_items[:_LONG_LETTERING_LISTED]
+    more = len(long_items) - len(listed)
+    return [EditorialIssue(
+        id="adapt_issue_long_lettering_items",
+        owner_stage="adapt",
+        code="long_lettering_items",
+        message="Some balloons or captions are much longer than a comic balloon holds.",
+        source_unit_ids=list(dict.fromkeys(unit for item in long_items for unit in item.source_unit_ids)),
+        artifact_ids=[item.id for item in long_items],
+        evidence=[
+            f"{len(long_items)} balloons or captions run past {_LONG_LETTERING_WORDS} words; "
+            "comics editors aim for about 25 per balloon.",
+            *(f"{item.id} ({len(item.text.split())} words): {item.text}" for item in listed),
+            *([f"…and {more} more."] if more else []),
+            "Trim unprotected description or move it to another item at a sentence break; "
+            "keep each protected passage whole and verbatim.",
+        ],
+    )]
+
+
 def validate_book_adaptation(
     source: SourceDocument,
     brief: AdaptationBrief,
@@ -4721,6 +4795,7 @@ def validate_book_adaptation(
                     "Check that it reads naturally and does not repeat a balloon.",
                 ],
             ))
+    issues.extend(_long_lettering_issues(lettering, complete_wording, brief))
 
     # The approved Brief is the sole requirement text registry.
     registry = _requirement_registry(brief)

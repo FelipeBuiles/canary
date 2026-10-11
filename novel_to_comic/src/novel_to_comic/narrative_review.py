@@ -19,7 +19,7 @@ from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.usage import estimate_text_cost
 
-REVIEW_VERSION = "narrative_v5"
+REVIEW_VERSION = "narrative_v6"
 
 
 class NarrativePassage(BaseModel):
@@ -36,6 +36,7 @@ class NarrativeFinding(BaseModel):
         "unsupported_event",
         "padding",
         "rushed_sequence",
+        "redundant_caption",
     ]
     repair_stage: Literal["adapt", "plan"]
     artifact_ids: tuple[str, ...] = Field(min_length=1)
@@ -380,7 +381,10 @@ def _prompt(context):
         "at least one reader-facing passage and an explanation of the indispensable gap. "
         "An explicit requirement violation must cite its supplied requirement ID. "
         "A repeated image, recap, or weak transition alone is not a consequential contradiction. "
-        "padding and rushed_sequence never block; if there is a separate factual or "
+        "Report a caption that only narrates the action, appearance or setting its panel "
+        "already shows, adding no voice, time, interiority or causal link, as "
+        "redundant_caption with the lettering ID and a suggested cut or trim. "
+        "padding, rushed_sequence and redundant_caption never block; if there is a separate factual or "
         "comprehension defect, report it under the appropriate substantive code with evidence. "
         "A negative signal assessment is an advisory note, not an automatic blocker. "
         "Do not invent evidence or rewrite text. "
@@ -493,8 +497,12 @@ def _passage_texts(window: dict) -> dict[str, list[str]]:
     return texts
 
 
+# Editorial preferences: shown to the author, never repaired automatically.
+_ADVISORY_CODES = frozenset({"padding", "rushed_sequence", "redundant_caption"})
+
+
 def _substantiated_blocker(finding: NarrativeFinding, window: dict) -> bool:
-    if (finding.code in {"padding", "rushed_sequence"}
+    if (finding.code in _ADVISORY_CODES
             or finding.consequence == "editorial_preference" or not finding.reader_impact):
         return False
     if (finding.consequence == "explicit_requirement_violation"

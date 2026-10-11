@@ -249,6 +249,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         generate=generate,
         max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
+        story_tone=brief.tone,
         concurrency=config.effective_text_concurrency(),
         integrated_lettering=config.lettering_mode == "integrated",
     )
@@ -273,6 +274,8 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         ),
         model=config.effective_plan_model(),
         story_instruction=directive.instruction if directive is not None else "",
+        story_tone=brief.tone,
+        integrated_lettering=config.lettering_mode == "integrated",
     )
 
 

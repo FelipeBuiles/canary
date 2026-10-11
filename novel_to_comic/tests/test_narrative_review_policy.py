@@ -13,7 +13,7 @@ from .test_narrative_review import runtime
 
 
 @pytest.mark.parametrize("change,blocking", [
-    ("valid", True), ("padding", False), ("rushed_sequence", False),
+    ("valid", True), ("padding", False), ("rushed_sequence", False), ("redundant_caption", False),
     ("unquoted", False), ("fabricated_quote", False), ("misattributed_quote", False),
     ("no_impact", False), ("preference", False), ("missing_requirement", False),
 ])
@@ -32,7 +32,7 @@ def test_review_blocking_threshold_is_enforced_by_code(tmp_path, change, blockin
         "passages": [{"artifact_id": item.id, "quote": item.text},
                      {"artifact_id": source.units[0].id, "quote": context["units"][0]["text"]}],
     }
-    if change in {"padding", "rushed_sequence"}:
+    if change in {"padding", "rushed_sequence", "redundant_caption"}:
         finding["code"] = change  # Even a claimed severe consequence cannot promote pacing.
     elif change == "unquoted":
         finding["passages"] = []
