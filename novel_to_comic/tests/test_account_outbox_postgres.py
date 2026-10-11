@@ -82,3 +82,32 @@ def test_boundary_and_legacy_duplicate_are_preserved(signup_db):
     result = json.loads(db.query("select public.reconcile_account_created_events();"))
     assert result == {"recovered": 0, "remaining": 0, "legacy_observed": 1}
     assert db.query(f"select count(*) from public.product_events where user_id='{user}';") == "1"
+
+
+def test_ga4_migration_excludes_existing_signups_and_claims_new_signup_once(signup_db):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    db, user = signup_db
+    new_user = str(uuid.uuid4())
+    db.query(f"insert into auth.users(id) values ('{user}');")
+    migration = Path(__file__).resolve().parents[2] / "docs/migrations/2026-10-11-ga4-signup-claim.sql"
+    try:
+        db.query(migration.read_text())
+        assert db.query(f"select ga4_signup_claimed_at is not null from public.product_events where user_id='{user}';") == "t"
+        db.query(f"insert into auth.users(id) values ('{new_user}');")
+        barrier = Barrier(2)
+
+        def claim(_):
+            barrier.wait()
+            return db.query(f"""update public.product_events set ga4_signup_claimed_at=now()
+                where event_name='account_created' and user_id='{new_user}'
+                and occurred_at >= now()-interval '24 hours' and occurred_at <= now()
+                and ga4_signup_claimed_at is null returning id;""")
+
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(claim, range(2)))
+        assert sum(bool(result) for result in results) == 1
+        assert db.query(f"select count(*) from public.product_events where user_id='{new_user}' and event_name='account_created';") == "1"
+    finally:
+        db.query(f"delete from public.product_events where user_id='{new_user}'; delete from auth.users where id='{new_user}';")

@@ -109,6 +109,7 @@ create table if not exists public.product_events (
   source                text        not null default 'server'
                                       check (source in ('server', 'web')),
   posthog_exported_at    timestamptz,
+  ga4_signup_claimed_at  timestamptz,
   properties_json       jsonb       not null default '{}'::jsonb
                                       check (jsonb_typeof(properties_json) = 'object')
 );

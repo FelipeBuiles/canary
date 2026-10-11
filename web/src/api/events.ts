@@ -34,3 +34,11 @@ export async function recordAccountSeen(): Promise<void> {
     // Best-effort, like other product analytics.
   }
 }
+
+/** Called only after GA4 loads with consent; the server verifies a new signup. */
+export async function claimGa4Signup(): Promise<boolean> {
+  try {
+    const result = await apiFetch<{ signup: boolean }>("/events/ga4-signup", { method: "POST" });
+    return result.signup === true;
+  } catch { return false; }
+}

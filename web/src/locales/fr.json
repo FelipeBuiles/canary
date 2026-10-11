@@ -3465,5 +3465,13 @@
   "earlier plan": "plan précédent",
   "Back to selected": "Revenir à la sélection",
   "Compare with": "Comparer avec",
-  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Aperçu uniquement. Les modifications et les exports utilisent la version sélectionnée jusqu’à ce que vous choisissiez celle-ci. Ce choix ne coûte aucun crédit."
+  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Aperçu uniquement. Les modifications et les exports utilisent la version sélectionnée jusqu’à ce que vous choisissiez celle-ci. Ce choix ne coûte aucun crédit.",
+  "Google Analytics preferences": "Préférences Google Analytics",
+  "Optional Google Analytics": "Google Analytics facultatif",
+  "Allow Google Analytics to measure visits and completed signups? It uses analytics cookies. Your stories, artwork, and account details stay out of Google Analytics.": "Autoriser Google Analytics à mesurer les visites et les inscriptions terminées ? Il utilise des cookies de mesure. Vos histoires, illustrations et informations de compte ne sont pas envoyées à Google Analytics.",
+  "Google Analytics is enabled.": "Google Analytics est activé.",
+  "Google Analytics is disabled.": "Google Analytics est désactivé.",
+  "Decline Google Analytics": "Refuser Google Analytics",
+  "Allow Google Analytics": "Autoriser Google Analytics",
+  "Privacy Policy": "Politique de confidentialité"
 }

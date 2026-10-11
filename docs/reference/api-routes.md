@@ -60,6 +60,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/projects/{project}/parts/{part_id}/story-changes/{proposal_id}/apply` | `apply_story_change` | `editorial.py` |
 | `POST` | `/api/events` | `ingest_web_event` | `events.py` |
 | `POST` | `/api/events/account` | `observe_account` | `events.py` |
+| `POST` | `/api/events/ga4-signup` | `claim_ga4_signup` | `events.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/export/preflight` | `get_preflight` | `export.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/export/preflight` | `run_preflight` | `export.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/export` | `trigger_export` | `export.py` |
