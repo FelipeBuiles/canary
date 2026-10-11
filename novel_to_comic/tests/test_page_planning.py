@@ -509,7 +509,7 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
         )
         attempt = detail_attempts.get(page_numbers, 0)
         detail_attempts[page_numbers] = attempt + 1
-        if attempt and defect != "rewound_beats":
+        if page_numbers == (9,):
             assert "reference_authority" in request["user_content"]
             assert "page_009_content_001" in request["user_content"]
             assert "PREVIOUS DETAIL" in request["user_content"]
@@ -550,7 +550,7 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
             if defect != "rewound_beats":
                 content[0]["entity_ids"] = ["character_johansen", "location_alert"]
                 content[0]["appearance_states"] = [{"entity_id": "character_johansen", "state_id": "wet"}]
-                if attempt == 0 and page_number == 9:
+                if page_number == 9 and page_numbers != (9,):
                     if defect == "unknown_entity":
                         content[0]["entity_ids"].append("invented_character")
                     else:
@@ -596,7 +596,9 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
     assert "110 words and 10 lettering items" in calls[0]["user_content"]
     assert len(plan.pages) == 12
     assert detail_attempts[tuple(range(1, 9))] == (2 if invalid_batch_start == 1 else 1)
-    assert detail_attempts[tuple(range(9, 13))] == (2 if invalid_batch_start == 9 else 1)
+    # A defect on one page of a compiled batch re-details only that page.
+    assert detail_attempts[tuple(range(9, 13))] == 1
+    assert detail_attempts.get((9,), 0) == (1 if invalid_batch_start == 9 else 0)
     assert [call["feature"] for call in calls].count("plan.map") == 1
     map_call = next(call for call in calls if call["feature"] == "plan.map")
     assert map_call["max_output_tokens"] == _PAGE_MAP_MAX_OUTPUT_TOKENS
@@ -4704,3 +4706,14 @@ def test_dense_lettering_is_flagged_only_for_integrated_lettering(integrated) ->
                                     pages, integrated_lettering=integrated)
     codes = {issue.code for issue in validation.editorial_issues}
     assert ("dense_integrated_lettering" in codes) is integrated
+
+
+@pytest.mark.parametrize("zone", ["middle-center", "center"])
+def test_a_centred_lettering_zone_reads_as_top_center_instead_of_regenerating(zone: str) -> None:
+    from novel_to_comic.page_planning import _LetteringPlacementDraft
+
+    placement = _LetteringPlacementDraft.model_validate(
+        {"panel_number": 1, "preferred_zone": zone, "footprint": "standard", "line_budget": 2}
+    )
+
+    assert placement.preferred_zone == "top-center"

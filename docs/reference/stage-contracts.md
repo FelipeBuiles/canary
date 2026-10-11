@@ -653,7 +653,10 @@ the main reference: retain the entity citation and omit its state binding.
 Both whole-book and detail request schemas constrain entity citations and explicit
 entity/state pairs to the approved inventory. Detail batches validate these
 citations locally before merge and use the existing bounded correction attempt
-for invalid output. Reference failures include canonical page/panel locations,
+for invalid output. When a compiled batch's failures all cite specific pages,
+only those pages are re-detailed, in parallel, each with its own bounded attempts;
+the batch's accepted pages and cached response are kept. Rejection reasons are
+written to the stage log. Reference failures include canonical page/panel locations,
 so final validation can route concerns to their owning batch. No unknown state is
 silently dropped or mapped to a different approved appearance.
 State conditioning uses explicit `changed_facets` and `replaces_identity`.
@@ -910,7 +913,7 @@ Adapt normally permits one repair of the cited source scope. One final bounded
 repair is allowed when blocking codes strictly decrease or the repaired candidate
 exposes a changed narrative-review finding. Repeated failures do not extend the
 loop. Plan permits at most one narrative repair pass. Plan repairs the compact
-map before detail, or the affected detail batches after composition; a narrative map revision consumes that
+map before detail, or the affected detail batches (in parallel) after composition; a narrative map revision consumes that
 allowance. It never escalates an unresolved detail finding into whole-book
 regeneration. Map, whole-book, and detail schema corrections retain a separate
 bounded allowance and preserve the current repair feedback. Plan evicts completed
