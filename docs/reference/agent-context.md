@@ -225,8 +225,9 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 
 Frontend: Pages room (`web/src/pages/rooms/PagesRoom.tsx`) exposes the page
 gallery with per-page detail; `InspectDrawer.tsx` is read-only adaptation
-and plan. Optional correction tools are `components/pages/RevisionDraft.tsx`
-(with `AnnotationEditor.tsx`) and `VisualReviewPanel.tsx`. There is no
+and plan. Corrections are built in `components/pages/RevisionDraft.tsx`: findings
+the author fixes from `PageChecks.tsx` plus written changes, optionally marked
+directly on the page with `PageMarker.tsx` (click for a pin, drag for an area). There is no
 storyboard editing and no page story context UI. API ownership in
 `web/src/api/pageRevisions.ts` (drafts, preview, submit, cached review,
 render history) and `web/src/api/pages.ts` (including check recovery); shared types in

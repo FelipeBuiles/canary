@@ -803,7 +803,22 @@ def require_narrative_review(artifacts, phase, context):
         )
 
 
+def _draw_review_contexts(artifacts) -> dict[str, dict]:
+    adaptation = artifacts.read_adaptation()
+    plan = artifacts.read_plan()
+    pages = [artifacts.read_page(p.page_number) for p in plan.pages]
+    return {
+        "adapt": adaptation_context(artifacts.read_source(), artifacts.read_brief(), adaptation),
+        "plan": planning_context(adaptation, pages),
+    }
+
+
 def require_draw_narrative_reviews(artifacts):
+    if draw_review_recheck_phases(artifacts):
+        # Adapt and Plan are finished by now, so the way back is a re-check, not a stage rerun.
+        raise ValueError(
+            "The script and plan reviews are out of date. Re-check them from Pages before drawing."
+        )
     adaptation = artifacts.read_adaptation()
     require_narrative_review(
         artifacts,
@@ -813,3 +828,72 @@ def require_draw_narrative_reviews(artifacts):
     plan = artifacts.read_plan()
     pages = [artifacts.read_page(p.page_number) for p in plan.pages]
     require_narrative_review(artifacts, "plan", planning_context(adaptation, pages))
+
+
+def draw_review_recheck_phases(artifacts) -> tuple[str, ...]:
+    """Reviews of unchanged work written under an earlier review contract.
+
+    A contract change says nothing about the saved script and plan, but it
+    stops Draw, and finished stages are not rerun. Reviewing the saved work
+    again settles it without rewriting either. A missing review, one whose
+    input changed, or a current one that found a defect belongs to its
+    owning stage, so no re-check is offered while any exists.
+    """
+    from novel_to_comic.target_artifacts import ArtifactMissing, ArtifactInvalid
+
+    try:
+        contexts = _draw_review_contexts(artifacts)
+        reviews = {phase: artifacts.read_narrative_review(phase) for phase in contexts}
+    except (ArtifactMissing, ArtifactInvalid):
+        return ()
+    outdated = []
+    for phase, context in contexts.items():
+        review = reviews[phase]
+        if review.input_sha256 != review_digest(context):
+            return ()
+        if review.version != REVIEW_VERSION:
+            outdated.append(phase)
+        elif review.failures or not review.verdicts:
+            return ()
+    return tuple(outdated)
+
+
+def estimate_draw_review_recheck(artifacts, models: dict[str, str]) -> float:
+    # One review per window, as Adapt prices re-reviewing a published script.
+    contexts = _draw_review_contexts(artifacts)
+    return sum(
+        estimate_narrative_review(models[phase], contexts[phase], passes=1)
+        for phase in draw_review_recheck_phases(artifacts)
+    )
+
+
+async def recheck_draw_reviews(artifacts, *, reviewers: dict[str, tuple]) -> tuple[InvariantFailure, ...]:
+    """Review the saved script, then the saved plan, without changing either.
+
+    ``reviewers`` maps each phase to its owning stage's ``(generate, model,
+    concurrency)``. A review that finds a defect is not kept: the previous
+    record stays, and the failures are returned for the author.
+    """
+    from novel_to_comic.page_planning import _UsageSink
+    from novel_to_comic.target_artifacts import ArtifactMissing, ArtifactInvalid
+
+    phases = draw_review_recheck_phases(artifacts)
+    if not phases:
+        raise ValueError("The script and plan reviews already cover the saved work.")
+    contexts = _draw_review_contexts(artifacts)
+    sink = _UsageSink()
+    for phase in phases:
+        try:
+            previous = artifacts.read_narrative_review(phase)
+        except (ArtifactMissing, ArtifactInvalid):
+            previous = None
+        generate, model, concurrency = reviewers[phase]
+        failures = await review_narrative(
+            contexts[phase], generate=generate, ctx=sink, artifacts=artifacts, model=model,
+            instruction=previous.instruction if previous is not None else "", concurrency=concurrency,
+        )
+        if failures:
+            if previous is not None:
+                artifacts.write_narrative_review(phase, previous)
+            return failures
+    return ()

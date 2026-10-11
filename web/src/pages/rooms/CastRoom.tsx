@@ -30,7 +30,8 @@ import {
   useImageGenerationMeta,
   useResetStale,
 } from "../../api/queries";
-import { useFillVisualAnchor } from "../../api/seriesQueries";
+import { useCastFreshness, useFillVisualAnchor } from "../../api/seriesQueries";
+import { referencesToUpdate } from "../../components/story/castReferences";
 import { ApprovalBar, ConfirmDrawer, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useLiveStageAsset } from "../../hooks/useLiveStageAsset";
@@ -148,6 +149,8 @@ export function StateRefRow({
   const { data: jobs } = useGenerationJobs(projectName, [], significant.length > 0);
   const { data: status } = useProjectStatus(projectName);
   const stateFailure = (stateId: string) => castFailureFor(status?.stages?.cast?.failures, entityId, stateId);
+  const updating = useContext(CastUpdatingContext);
+  const stateUpdating = (stateId: string) => updating.has(updatingKey(kind === "character" ? "characters" : "locations", entityId, stateId));
   if (significant.length === 0) return null;
   const stateJob = (stateId: string) => (jobs?.jobs ?? []).filter((job) =>
     job.payload[kind === "character" ? "char_id" : "loc_id"] === `${entityId}:${stateId}`,
@@ -155,7 +158,8 @@ export function StateRefRow({
     !latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at) ? job : latest, undefined);
   const version = (stateId: string) => {
     const job = stateJob(stateId);
-    return encodeURIComponent(`${refreshToken ?? "current"}${restoredAt[stateId] ? `-restored-${restoredAt[stateId]}` : ""}${job ? `-${job.id}-${job.status}` : ""}`);
+    // The pending marker drops when the running Cast redraws this look, so the tile reloads then.
+    return encodeURIComponent(`${refreshToken ?? "current"}${restoredAt[stateId] ? `-restored-${restoredAt[stateId]}` : ""}${job ? `-${job.id}-${job.status}` : ""}${stateUpdating(stateId) ? "-updating" : ""}`);
   };
 
   const base = `/api${seriesPath(projectName)}/files`;
@@ -177,7 +181,8 @@ export function StateRefRow({
         {significant.map((s) => {
           const src = thumbUrl(s.id);
           const job = stateJob(s.id);
-          const generating = stageRegenerating || job?.status === "queued" || job?.status === "running";
+          // A missing look is drawn by any Cast run; an existing one only while it is still pending update.
+          const generating = (stageRegenerating && (failed[src] || stateUpdating(s.id))) || job?.status === "queued" || job?.status === "running";
           const failure = generating ? undefined : stateFailure(s.id);
           const frameClass = `${imgAspect} bg-surface-container`;
           const labelClass = "block min-w-0 break-words text-left font-body text-sm leading-snug text-ink-black";
@@ -220,16 +225,17 @@ export function StateRefRow({
               onClick={() => setViewer(s)}
               className={`${tileWidth} overflow-hidden border-[2px] border-ink-black/15 transition-colors hover:border-ink-black/50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red`}
             >
-              <div className={frameClass}>
+              <div className={`${frameClass} relative`}>
                 <img
                   src={src}
                   alt={`${s.label} ${t("reference")}`}
                   loading="lazy"
-                  className="h-full w-full object-cover"
+                  className={`h-full w-full object-cover ${generating ? "opacity-40" : ""}`}
                   onError={() => setFailed((f) => ({ ...f, [src]: true }))}
                 />
+                {generating && <LoaderCircle size={18} aria-hidden="true" className="absolute inset-0 m-auto text-ink-black motion-safe:animate-spin" />}
               </div>
-              <span className={labelClass}><span className="line-clamp-2" title={s.label}>{s.label}</span><span className="mt-1 block text-xs text-ink-muted">{t("Review & adjust")}</span></span>
+              <span className={labelClass}><span className="line-clamp-2" title={s.label}>{s.label}</span><span role={generating ? "status" : undefined} className="mt-1 block text-xs text-ink-muted">{generating ? t("Updating…") : t("Review & adjust")}</span></span>
             </button>
           );
         })}
@@ -536,6 +542,14 @@ type CastSuggestion = { kind: "character" | "location" | "prop"; entityId: strin
 const CastSuggestionContext = createContext<{ suggestion?: CastSuggestion; clear: () => void }>({ clear: () => undefined });
 
 /**
+ * References the running Cast stage has yet to redraw. An existing image is
+ * not proof of a finished reference: while Cast updates changed entries,
+ * their old images stay on disk until each new one lands.
+ */
+const CastUpdatingContext = createContext<ReadonlySet<string>>(new Set());
+const updatingKey = (kind: EntityKind, entityId: string, stateId: string | null = null) => `${kind}:${entityId}:${stateId ?? ""}`;
+
+/**
  * Opens one reference's review with suggested direction, once per suggestion.
  * Opening never spends: the author still reviews the direction and its cost.
  * `states` targets the entity's appearance states instead of its main image.
@@ -580,14 +594,16 @@ function CharacterCastCard({
   );
 
 
+  const pendingUpdate = useContext(CastUpdatingContext).has(updatingKey("characters", character.id));
+  // Reload once this reference's new image lands, not only when the whole run ends.
   useEffect(() => {
-    if (!stageRegenerating) {
+    if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, setTimestamp]);
 
   const startRegen = () => {
     setRegenError(null);
@@ -640,9 +656,9 @@ function CharacterCastCard({
 
   const { t } = useI18n();
   const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
-  // A card hides its asset only while that asset is genuinely absent or
-  // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenRef.isPending || isInstructionBusy || !!activeJob;
+  // A card shows drawing while its asset is absent, still waiting for the
+  // running Cast to redraw it, or while this card's own regeneration is in flight.
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenRef.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -796,14 +812,16 @@ function LocationPlateCard({
   );
 
 
+  const pendingUpdate = useContext(CastUpdatingContext).has(updatingKey("locations", location.id));
+  // Reload once this reference's new image lands, not only when the whole run ends.
   useEffect(() => {
-    if (!stageRegenerating) {
+    if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, setTimestamp]);
 
   const startRegen = () => {
     setLocalRegenError(null);
@@ -856,9 +874,9 @@ function LocationPlateCard({
 
   const { t } = useI18n();
   const { hasImage, imageSrc, probe } = useLiveStageAsset(plateUrl, timestamp, stageRegenerating);
-  // A card hides its asset only while that asset is genuinely absent or
-  // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenPlate.isPending || isInstructionBusy || !!activeJob;
+  // A card shows drawing while its asset is absent, still waiting for the
+  // running Cast to redraw it, or while this card's own regeneration is in flight.
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenPlate.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -979,14 +997,16 @@ function PropRefCard({
   );
 
 
+  const pendingUpdate = useContext(CastUpdatingContext).has(updatingKey("props", prop.id));
+  // Reload once this reference's new image lands, not only when the whole run ends.
   useEffect(() => {
-    if (!stageRegenerating) {
+    if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
         setTimestamp(Date.now());
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, setTimestamp]);
 
   const startRegen = () => {
     setLocalRegenError(null);
@@ -1040,9 +1060,9 @@ function PropRefCard({
   const { t } = useI18n();
   const firstSceneLabel = prop.first_appearance_scene ? firstSceneTitle || sceneLabel(prop.first_appearance_scene, t) : undefined;
   const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
-  // A card hides its asset only while that asset is genuinely absent or
-  // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenProp.isPending || isInstructionBusy || !!activeJob;
+  // A card shows drawing while its asset is absent, still waiting for the
+  // running Cast to redraw it, or while this card's own regeneration is in flight.
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenProp.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -1250,6 +1270,37 @@ export function CastFailureNotice({ failures, onResume, resumeDisabled = false, 
   );
 }
 
+/**
+ * The Cast run's progress in its own room. The floating indicator stays out
+ * of the running stage's screen, so this is the only progress shown here.
+ */
+function CastRunProgress({ done, total, remaining }: { done: number; total: number; remaining: number }) {
+  const { t } = useI18n();
+  const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  return (
+    <section role="status" aria-label={t("Cast progress")} className="space-y-2 border-[2px] border-ink-black bg-bristol p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="flex items-center gap-2 font-meta text-xs font-bold uppercase tracking-[0.08em]">
+          <LoaderCircle size={14} aria-hidden="true" className="motion-safe:animate-spin" />
+          {t("Drawing cast references")}
+        </p>
+        {total > 0 && <span className="font-meta text-xs tabular-nums text-ink-muted">{done} / {total}</span>}
+      </div>
+      {total > 0 && (
+        <div className="relative h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">
+          <div className="absolute inset-0 origin-left bg-narrator-gold transition-transform duration-[var(--motion-settle)]"
+            style={{ transform: `scaleX(${percent / 100})` }} />
+        </div>
+      )}
+      {remaining > 0 && (
+        <p className="font-body text-xs text-ink-muted">
+          {t("{count, plural, one {# changed reference still to redraw. Its current image stays until the new one lands.} other {# changed references still to redraw. Their current images stay until the new ones land.}}", { count: remaining })}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function CastRoom() {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -1291,6 +1342,10 @@ export function CastRoom() {
   // Character Check notes are advice; approval never waits on them.
   const openCastNotes = castReview?.status === "current" && !castReview.reviewing ? castReview.issues.length : 0;
   const { data: castResumeEstimate } = useStageEstimate(id, "cast", !isCastStageRunning);
+  const { data: freshness } = useCastFreshness(id, true, stageRegenerating);
+  const updating = useMemo(() => new Set(stageRegenerating
+    ? referencesToUpdate(freshness?.references).map((ref) => updatingKey(ref.kind, ref.entity_id, ref.state_id))
+    : []), [stageRegenerating, freshness]);
 
   function startCast() {
     if (!id || !status?.style_selected || !castResumeEstimate) return;
@@ -1461,6 +1516,9 @@ export function CastRoom() {
         />
       )}
 
+      {stageRegenerating && stageInfo && <CastRunProgress done={stageInfo.items_done} total={stageInfo.items_total} remaining={updating.size} />}
+
+      <CastUpdatingContext.Provider value={updating}>
       <CastSuggestionContext.Provider value={suggestionContext}>
       <section className="space-y-10">
         <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
@@ -1469,8 +1527,9 @@ export function CastRoom() {
             title="CHARACTER REFS"
             description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
-          {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
-            onUseSuggestion={(characterId, text) => { setSearch(""); setCastSuggestion({ kind: "character", entityId: characterId, text, nonce: Date.now() }); }}
+          {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} locations={bible.locations}
+            onShowCharacter={() => setSearch("")}
+            onUseSuggestion={(kind, entityId, text) => { setSearch(""); setCastSuggestion({ kind, entityId, text, nonce: Date.now() }); }}
             onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected}
             redrawing={redrawingCharacters} />}
           <div className={`${CAST_GRID} grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))]`}>
@@ -1524,6 +1583,7 @@ export function CastRoom() {
         )}
       </section>
       </CastSuggestionContext.Provider>
+      </CastUpdatingContext.Provider>
 
       {resetError && <ErrorNotice error={resetError} operation="save" />}
       {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}

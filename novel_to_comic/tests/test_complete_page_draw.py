@@ -750,6 +750,38 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
         )
 
 
+def test_a_fresh_redraw_of_a_drawn_page_is_a_later_render_without_a_parent(tmp_path: Path) -> None:
+    # A page re-planned (or redrawn for new references) after it was drawn is
+    # drawn fresh: no correction, no edit parent. The paid image must be kept.
+    artifacts = TargetArtifacts(tmp_path / "project")
+    first = asyncio.run(draw_complete_page(
+        _compile(tmp_path), adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=_page(),
+    ))
+    replanned = _page(revision=3, visual_intent="Ward drops the idol.")
+
+    redrawn = asyncio.run(draw_complete_page(
+        _compile(tmp_path, page=replanned), adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=replanned,
+    ))
+
+    assert (first.render.revision, redrawn.render.revision) == (1, 2)
+    assert redrawn.render.parent_revision is None
+    assert redrawn.render.comic_page_revision == 3
+    assert artifacts.read_provenance(7, 2) == redrawn
+
+
+def test_render_lineage_allows_fresh_redraws_and_rejects_impossible_parents() -> None:
+    from novel_to_comic.models.draw import check_render_lineage
+
+    with pytest.raises(ValueError, match="initial page render"):
+        check_render_lineage(1, 1)
+    with pytest.raises(ValueError, match="must precede"):
+        check_render_lineage(2, 2)
+    check_render_lineage(2, None)
+    check_render_lineage(3, 1)
+
+
 def _make_app(tmp_path):
     from tests.queue_fixtures import create_app
     from novel_to_comic.state import create_initial_state, save_state

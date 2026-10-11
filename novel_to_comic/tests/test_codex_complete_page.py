@@ -446,11 +446,11 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert runtime.call_args.kwargs["reasoning_model"] == (reasoner or "gpt-5.5")
     assert runtime.await_count == 1
     assert runtime.call_args.kwargs["prompt"] == compiled.request.prompt
-    assert runtime.call_args.kwargs["references"] == tuple(
+    assert runtime.call_args.kwargs["references"] == ((proof.read_bytes(), "image/png"),) + tuple(
         (files[ref.id].path.read_bytes(), "image/png") for ref in inventory.references
-    ) + ((proof.read_bytes(), "image/png"),)
-    assert runtime.call_args.kwargs["reference_roles"] == ("approved_asset", "approved_asset", "style")
-    assert runtime.call_args.kwargs["reference_instructions"][-1] == compiled.request.references[-1].visual_anchor
+    )
+    assert runtime.call_args.kwargs["reference_roles"] == ("style", "approved_asset", "approved_asset")
+    assert runtime.call_args.kwargs["reference_instructions"][0] == compiled.request.references[0].visual_anchor
     assert runtime.call_args.kwargs["edit_parent_indices"] == ()
     provenance = artifacts.read_provenance(page.page_number, 1)
     assert artifacts.read_render(page.page_number, 1) == native

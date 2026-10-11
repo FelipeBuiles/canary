@@ -69,6 +69,10 @@ class BookEdition(RevisionedArtifact):
     capability_profile: PageCapabilityProfile
 
 
+# The one reference that carries the selected Style proof rather than a subject.
+STYLE_PROOF_REFERENCE_ID = "selected-style-proof"
+
+
 class PageReference(BaseModel):
     """One approved page-scoped reference in provider upload order."""
 
@@ -87,7 +91,7 @@ class PageReference(BaseModel):
 
     @model_validator(mode="after")
     def _validate_style_scope(self) -> "PageReference":
-        if self.id == "selected-style-proof":
+        if self.id == STYLE_PROOF_REFERENCE_ID:
             if self.entity_id is not None or self.appearance_state_id is not None:
                 raise ValueError("Style proof references cannot bind a subject or appearance state")
         elif self.entity_id is None:
@@ -224,6 +228,19 @@ class PageRenderSelection(BaseModel):
     image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+def check_render_lineage(revision: int, parent_revision: int | None) -> None:
+    """A correction names the render it edited; a fresh drawing names none.
+
+    A page redrawn from a new plan or new references is a later revision
+    without a parent. Draw checks this before the paid call, so a lineage
+    mistake never discards a generated image.
+    """
+    if revision == 1 and parent_revision is not None:
+        raise ValueError("initial page render cannot have a parent revision")
+    if parent_revision is not None and parent_revision >= revision:
+        raise ValueError("parent render revision must precede its child")
+
+
 class PageRenderRevision(BaseModel):
     """One immutable complete-page image and its request lineage."""
 
@@ -245,12 +262,7 @@ class PageRenderRevision(BaseModel):
 
     @model_validator(mode="after")
     def _validate_lineage(self) -> "PageRenderRevision":
-        if self.revision == 1 and self.parent_revision is not None:
-            raise ValueError("initial page render cannot have a parent revision")
-        if self.revision > 1 and self.parent_revision is None:
-            raise ValueError("corrected page render requires a parent revision")
-        if self.parent_revision is not None and self.parent_revision >= self.revision:
-            raise ValueError("parent render revision must precede its child")
+        check_render_lineage(self.revision, self.parent_revision)
         return self
 
     def is_stale_for(self, page: ComicPage) -> bool:

@@ -29,8 +29,11 @@ def reference_display_members(reference):
                  for member in manifest["members"])
 
 
-def pack_page_references(references, images, slots):
+def pack_page_references(references, images, slots, *, first_order=1):
     """Keep every authority; never crop, rescale, or synthesize subject pixels.
+
+    Packed sheets take upload orders from ``first_order``, after any images
+    the caller uploads ahead of the subject authorities.
 
     Frozen sheet metadata retains the original reference hashes and authorities.
     Prompt bindings map each original subject to its actual uploaded image/region.
@@ -56,7 +59,7 @@ def pack_page_references(references, images, slots):
         members = references[offset:offset + count]
         data = images[offset:offset + count]
         offset += count
-        order = index + 1
+        order = index + first_order
         if count == 1:
             packed.append(members[0].model_copy(update={"order": order}))
             payloads.append(data[0])

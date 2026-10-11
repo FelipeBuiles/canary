@@ -229,14 +229,16 @@ def test_design_requires_characters_in_provider_schema_and_rejects_missing_key(t
 
 def test_visual_review_uses_images_is_cached_and_expires_on_replacement(tmp_path):
     config, bible, _ = _cast(tmp_path)
-    result = {"issues": [{"character_ids": ["sailor", "doctor"], "concern": "lookalike",
+    result = {"issues": [{"character_ids": ["sailor", "doctor"], "location_ids": [], "concern": "lookalike",
                           "evidence": "Same narrow jaw and hairline", "suggestion": "Broaden the doctor's jaw"}]}
     with patch.object(design.text, "generate_json", new_callable=AsyncMock,
                       return_value=ApiResult(value=result)) as generate:
         asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
         asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
     assert generate.await_count == 1
-    assert len(generate.call_args.kwargs["image_attachments"]) == 1
+    # The selected proof leads as rendering authority, then the character contact sheet.
+    assert len(generate.call_args.kwargs["image_attachments"]) == 2
+    assert "Image 1 is the selected style proof" in generate.call_args.kwargs["system_prompt"]
     assert generate.call_args.kwargs["retry_transport"] is False
     assert design.review_status(config, tmp_path) == {
         "status": "current", **result, "dismissed": 0, "reviewing": False}
@@ -253,8 +255,9 @@ def _review_with(config, tmp_path, bible, issues):
 
 def test_dismissed_note_stays_hidden_for_the_same_sheet_and_returns_when_it_changes(tmp_path):
     config, bible, _ = _cast(tmp_path)
-    note = {"character_ids": ["doctor"], "concern": "presentation", "evidence": "Too tall", "suggestion": "Shrink"}
-    other = {"character_ids": ["sailor"], "concern": "wardrobe", "evidence": "x", "suggestion": "y"}
+    note = {"character_ids": ["doctor"], "location_ids": [], "concern": "presentation",
+            "evidence": "Too tall", "suggestion": "Shrink"}
+    other = {"character_ids": ["sailor"], "location_ids": [], "concern": "wardrobe", "evidence": "x", "suggestion": "y"}
     _review_with(config, tmp_path, bible, [note, other])
 
     design.dismiss_review_issue(config, tmp_path, ["doctor"], "presentation")
@@ -358,6 +361,57 @@ def test_contact_sheets_include_large_cast_without_dropping_characters(tmp_path)
         path.parent.mkdir()
         Image.new("RGB", (64, 64), "blue").save(path)
     assert len(design._contact_sheets(tmp_path, bible)) == 3
+
+
+def _plate(tmp_path, bible, color="gray"):
+    from types import SimpleNamespace
+    bible.locations.append(SimpleNamespace(id="parlour", name="Parlour", visual_anchor="small parlour",
+                                           appearance_states=[]))
+    path = artifacts.location_plate_path(tmp_path, "parlour")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (96, 54), color).save(path)
+    return path
+
+
+def test_check_compares_sheets_and_plates_with_the_selected_proof(tmp_path):
+    """Regression for drawn pages inheriting Cast's drift from the proof: a sheet
+    or plate rendered off-style must be flagged at Cast, before pages are paid for."""
+    config, bible, _ = _cast(tmp_path)
+    plate = _plate(tmp_path, bible)
+    sheet_note = {"character_ids": ["doctor"], "location_ids": [], "concern": "style",
+                  "evidence": "Painterly modeled face; the proof uses flat black cut-paper silhouettes",
+                  "suggestion": "Redraw as a flat black cardstock silhouette with a caricatured profile"}
+    plate_note = {"character_ids": [], "location_ids": ["parlour"], "concern": "style",
+                  "evidence": "Flat digital shading", "suggestion": "Use torn paper collage layers"}
+    with patch.object(design, "read_cast_story_bible", return_value=bible), \
+         patch.object(design.text, "generate_json", new_callable=AsyncMock,
+                      return_value=ApiResult(value={"issues": [sheet_note, plate_note]})) as generate:
+        asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
+        # Proof, the character contact sheet, then the plate contact sheet.
+        assert len(generate.call_args.kwargs["image_attachments"]) == 3
+        assert design.review_status(config, tmp_path)["issues"] == [sheet_note, plate_note]
+
+        design.dismiss_review_issue(config, tmp_path, [], "style", ["parlour"])
+        assert design.review_status(config, tmp_path)["issues"] == [sheet_note]
+        # A redrawn plate makes the check out of date until Cast compares it again.
+        Image.new("RGB", (96, 54), "blue").save(plate)
+        assert design.review_status(config, tmp_path)["status"] == "stale"
+
+
+@pytest.mark.parametrize("issue", [
+    {"character_ids": [], "location_ids": ["parlour"], "concern": "wardrobe", "evidence": "x", "suggestion": "y"},
+    {"character_ids": ["doctor"], "location_ids": ["parlour"], "concern": "style", "evidence": "x", "suggestion": "y"},
+    {"character_ids": [], "location_ids": ["cellar"], "concern": "style", "evidence": "x", "suggestion": "y"},
+])
+def test_check_rejects_plate_notes_outside_style_or_known_plates(tmp_path, issue):
+    config, bible, _ = _cast(tmp_path)
+    _plate(tmp_path, bible)
+    with patch.object(design, "read_cast_story_bible", return_value=bible), \
+         patch.object(design.text, "generate_json", new_callable=AsyncMock,
+                      return_value=ApiResult(value={"issues": [issue]})):
+        with pytest.raises(ValueError):
+            asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
+    assert not TargetArtifacts(tmp_path).cast_review_path.exists()
 
 
 def test_incompatible_artifact_requires_rerun(tmp_path):
@@ -661,7 +715,8 @@ def test_dismiss_route_returns_the_filtered_check_and_maps_errors(tmp_path):
     from fastapi import HTTPException
     from novel_to_comic.server.routers.cast_assets import DismissReviewNoteRequest, dismiss_cast_review_note
     config, bible, _ = _cast(tmp_path)
-    note = {"character_ids": ["doctor"], "concern": "presentation", "evidence": "Too tall", "suggestion": "Shrink"}
+    note = {"character_ids": ["doctor"], "location_ids": [], "concern": "presentation",
+            "evidence": "Too tall", "suggestion": "Shrink"}
     _review_with(config, tmp_path, bible, [note])
     body = DismissReviewNoteRequest(character_ids=["doctor"], concern="presentation")
     status = dismiss_cast_review_note(body, (tmp_path, config, None), "user")
@@ -680,3 +735,6 @@ def test_only_main_sheet_redraws_carry_the_character_check():
     assert cast_asset_operations(config, "character_ref_regen", "doctor")[-1] == visual_review_operations(config)[0]
     assert cast_asset_operations(config, "character_ref_regen", "doctor:burned") == (("image", "img"),)
     assert cast_asset_operations(config, "prop_ref_regen", "key") == (("image", "img"),)
+    # Canonical plates are compared with the proof too; state plates are not.
+    assert cast_asset_operations(config, "location_plate_regen", "parlour")[-1] == visual_review_operations(config)[0]
+    assert cast_asset_operations(config, "location_plate_regen", "parlour:flooded") == (("image", "img"),)

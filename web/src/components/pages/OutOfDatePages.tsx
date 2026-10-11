@@ -8,6 +8,7 @@ import { useI18n } from "../../i18n";
 import { ConfirmDrawer } from "../composites";
 import { describeRedrawChanges } from "./redrawChanges";
 import { Button } from "../ui/Button";
+import { RedrawEstimateStatus } from "./RedrawEstimateStatus";
 
 type Redraws = NonNullable<CompletePagesResponse["redraws"]>;
 
@@ -27,7 +28,7 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const estimate = useQuery({
     queryKey: ["project", project, "page-redraws-estimate", redraws.map((page) => page.page_number).join(",")],
     queryFn: () => getPageRedrawEstimate(project),
@@ -55,7 +56,7 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
       onQueued(result.jobs);
       await invalidateProject(client, project);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause);
       await invalidateProject(client, project);
     } finally {
       setBusy(false);
@@ -75,14 +76,12 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
         <RotateCcw size={14} aria-hidden="true" />
         {busy ? t("Queuing redraw…") : label}
       </Button>
-      {(error || estimate.error) && (
-        <ErrorNotice error={error ?? estimate.error} operation={error ? "generate" : "estimate"} />
-      )}
       <ConfirmDrawer
         open={open}
         title={label}
         body={t("Draws these pages again from their current plan and references. Each current version stays in its page’s history; lettering is rebuilt for the new art afterwards.")}
         cost={estimate.data}
+        extraBody={<RedrawEstimateStatus estimate={estimate} error={error} />}
         confirmLabel={label}
         busy={busy}
         disabled={!estimate.data}
@@ -92,4 +91,3 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
     </section>
   );
 }
-import { ErrorNotice } from "../composites/ErrorNotice";

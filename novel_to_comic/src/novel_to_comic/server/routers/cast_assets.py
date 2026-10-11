@@ -55,7 +55,8 @@ def cast_review(project_id: str, project=Depends(get_project),
 
 class DismissReviewNoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    character_ids: list[str] = Field(min_length=1, max_length=20)
+    character_ids: list[str] = Field(default_factory=list, max_length=20)
+    location_ids: list[str] = Field(default_factory=list, max_length=20)
     concern: str = Field(min_length=1, max_length=40)
 
 
@@ -66,7 +67,7 @@ def dismiss_cast_review_note(body: DismissReviewNoteRequest, project=Depends(get
     from novel_to_comic.cast_design import dismiss_review_issue, review_status
     project_dir, config, _state = project
     try:
-        dismiss_review_issue(config, project_dir, body.character_ids, body.concern)
+        dismiss_review_issue(config, project_dir, body.character_ids, body.concern, body.location_ids)
     except KeyError as exc:
         raise HTTPException(404, exc.args[0]) from exc
     except ValueError as exc:

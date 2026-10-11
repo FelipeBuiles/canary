@@ -38,7 +38,7 @@ _SECTIONS: dict[str, TriggerSource] = {
     "Your art direction": "direction",
     "Scene direction": "direction",
     "User constraint notes": "direction",
-    "Secondary style notes": "style",
+    "Style": "style",
 }
 
 

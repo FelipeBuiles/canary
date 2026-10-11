@@ -115,7 +115,7 @@ export function useCorrectionPreview() {
   });
 }
 
-/** The single submission: changes + note + marks -> one correction. */
+/** The single submission: changes + marks -> one correction. */
 export function useSubmitCorrections() {
   const qc = useQueryClient();
   return useMutation({
@@ -143,7 +143,6 @@ export interface PersistedDraftChange {
   id: string;
   issue_id?: string;
   instruction: string;
-  selected: boolean;
   annotations: PageCorrectionAnnotation[];
 }
 
@@ -155,7 +154,6 @@ export interface PersistedRevisionDraft {
   parentRenderRevision: number;
   comicPageSha256: string;
   changes: PersistedDraftChange[];
-  note: string;
   /** Unreviewed wording in the main request field, scoped to this exact render. */
   pendingRequest?: string;
   contextSourceUnitIds: string[];
@@ -193,7 +191,6 @@ export function loadRevisionDraft(
     ) {
       return null;
     }
-    if (typeof parsed.note !== "string") parsed.note = "";
     if (typeof parsed.pendingRequest !== "string") parsed.pendingRequest = "";
     if (!Array.isArray(parsed.contextSourceUnitIds)) parsed.contextSourceUnitIds = [];
     return parsed;
@@ -203,9 +200,9 @@ export function loadRevisionDraft(
 }
 
 /** Something the author wrote or marked that has not been sent. Suggested findings alone are not work. */
-export function draftHasUnsentWork(draft: Pick<PersistedRevisionDraft, "submittedJobId" | "changes" | "note" | "pendingRequest">): boolean {
+export function draftHasUnsentWork(draft: Pick<PersistedRevisionDraft, "submittedJobId" | "changes" | "pendingRequest">): boolean {
   if (draft.submittedJobId) return false;
-  return !!draft.pendingRequest?.trim() || !!draft.note?.trim()
+  return !!draft.pendingRequest?.trim()
     || draft.changes.some((change) => !change.issue_id || change.annotations.length > 0);
 }
 

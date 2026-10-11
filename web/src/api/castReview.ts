@@ -5,6 +5,8 @@ import { seriesPath } from "./projectScope";
 
 export type ReviewIssue = {
   character_ids: string[];
+  /** Location plates a style note names; character notes leave this empty. */
+  location_ids?: string[];
   concern: string;
   evidence: string;
   suggestion: string;

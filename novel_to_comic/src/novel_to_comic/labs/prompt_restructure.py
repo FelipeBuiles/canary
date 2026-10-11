@@ -21,6 +21,7 @@ import json
 import re
 from typing import Any
 
+from novel_to_comic.compiled_request import STYLE_VARIATION_PREAMBLE, STYLE_WITH_REFERENCE_PREAMBLE
 from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_CONSTRAINTS, RENDERING_FIDELITY_MARKER
 
 _HANDLE = re.compile(r"\b(asset|subject)-([A-Z]+)\b")
@@ -177,9 +178,10 @@ def asset_sections(prompt: str) -> dict[str, str]:
 
 
 def _asset_style(sections: dict[str, str]) -> str:
-    style = sections.get("Style") or sections.get("Secondary style notes", "")
-    if style.startswith("Secondary textual style notes"):
-        style = style.split(": ", 1)[1]
+    style = sections.get("Style", "")
+    for preamble in (STYLE_WITH_REFERENCE_PREAMBLE, STYLE_VARIATION_PREAMBLE):
+        if style.startswith(f"{preamble}: "):
+            style = style.removeprefix(f"{preamble}: ")
     return style.strip()
 
 

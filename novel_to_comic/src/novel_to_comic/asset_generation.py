@@ -73,7 +73,9 @@ class EntityStyleProofInput(AbstractStyleProofInput):
 
 
 @dataclass(frozen=True, slots=True)
-class CharacterStyleCalibrationInput(AssetGenerationInput):
+class StyleCalibrationInput(AssetGenerationInput):
+    """Rendering-only board derived from the selected proof, with no subjects."""
+
     asset_kind: AssetKind = field(default="style_calibration", init=False)
 
 
@@ -171,6 +173,7 @@ def style_reference_plan(
     config: Config, style_path: Path | None, *,
     mode: Literal["faithful", "variation"] = "faithful",
     preserve_facets: tuple[str, ...] = (),
+    label: str = "selected style",
 ) -> ReferencePlan:
     """Resolve one optional style reference without filename-based inference."""
     if style_path is None:
@@ -181,7 +184,7 @@ def style_reference_plan(
         authority_scope=AuthorityScope.CONTEXTUAL, preserve_facets=preserve_facets,
         ignore_facets=("candidate-controlled rendering facets",) if mode == "variation" else (),
         pose=None, content_sha256=digest, lineage_parent_sha256=None,
-        label="selected style",
+        label=label,
     )
     return reference_plan_for_assets(config, [reference])
 

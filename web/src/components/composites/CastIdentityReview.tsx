@@ -6,12 +6,21 @@ import { Button } from "../ui/Button";
 import { seriesPath } from "../../api/projectScope";
 import { castReviewKey, useCastReview, type CastReview, type ReviewIssue } from "../../api/castReview";
 
-export function CastIdentityReview({ projectId, characters, onShowCharacter, onUseSuggestion, onResume, busy, redrawing = new Set() }: {
+type Subject = { kind: "character" | "location"; id: string };
+
+const subjectsOf = (issue: ReviewIssue): Subject[] => [
+  ...issue.character_ids.map((id) => ({ kind: "character" as const, id })),
+  ...(issue.location_ids ?? []).map((id) => ({ kind: "location" as const, id })),
+];
+
+export function CastIdentityReview({ projectId, characters, locations = [], onShowCharacter, onUseSuggestion, onResume, busy, redrawing = new Set() }: {
   projectId: string;
   characters: { id: string; name: string }[];
+  /** Plates the check compares with the selected Style proof. */
+  locations?: { id: string; name: string }[];
   onShowCharacter: () => void;
-  /** Opens the character's Review & adjust with the suggestion prefilled; never spends. */
-  onUseSuggestion: (characterId: string, suggestion: string) => void;
+  /** Opens the reference's Review & adjust with the suggestion prefilled; never spends. */
+  onUseSuggestion: (kind: Subject["kind"], id: string, suggestion: string) => void;
   onResume: () => void;
   busy: boolean;
   /** Characters whose main sheet is being redrawn; their notes wait for the re-check. */
@@ -23,16 +32,16 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onU
   const dismiss = useMutation({
     mutationFn: (issue: ReviewIssue) => apiFetch<CastReview>(`${seriesPath(projectId)}/cast/review/dismiss`, {
       method: "POST",
-      body: JSON.stringify({ character_ids: issue.character_ids, concern: issue.concern }),
+      body: JSON.stringify({ character_ids: issue.character_ids, location_ids: issue.location_ids ?? [], concern: issue.concern }),
     }),
     onSuccess: (review) => queryClient.setQueryData(castReviewKey(projectId), review),
   });
-  const names = new Map(characters.map((character) => [character.id, character.name]));
+  const names = new Map([...characters, ...locations].map((subject) => [subject.id, subject.name]));
   const reviewing = !isError && !!data?.reviewing;
   const currentIssues = !isError && !reviewing && data?.status === "current" ? data.issues : [];
   const issues = currentIssues.filter((issue) => !issue.character_ids.some((id) => redrawing.has(id)));
   const redrawingNames = [...redrawing].map((id) => names.get(id) ?? id).join(", ");
-  const affectedNames = [...new Set(issues.flatMap((issue) => issue.character_ids))]
+  const affectedNames = [...new Set(issues.flatMap((issue) => subjectsOf(issue).map((subject) => subject.id)))]
     .map((id) => names.get(id) ?? id).join(", ");
   const message = isError ? t("Could not load the cast review. Refresh to try again.")
     : !data ? t("Loading cast review…")
@@ -61,10 +70,10 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onU
             </p>
             <ul className="mt-5 space-y-6">
               {issues.map((issue, index) => (
-                <li key={`${issue.character_ids.join("-")}-${index}`}>
+                <li key={`${subjectsOf(issue).map((subject) => subject.id).join("-")}-${index}`}>
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {issue.character_ids.map((id) => (
-                      <a key={id} href={`#cast-character-${id}`} onClick={onShowCharacter}
+                    {subjectsOf(issue).map(({ kind, id }) => (
+                      <a key={id} href={`#cast-${kind}-${id}`} onClick={onShowCharacter}
                         className="inline-flex min-h-11 items-center font-display text-base font-bold underline underline-offset-4 hover:text-hero-red">
                         {names.get(id) ?? id}
                       </a>
@@ -79,13 +88,13 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onU
                       <dt className="mb-1 font-meta text-xs font-semibold text-ink-muted">{t("Suggested adjustment")}</dt>
                       <dd className="break-words font-body text-sm leading-6">{issue.suggestion}</dd>
                       <dd className="mt-2 flex flex-wrap gap-2">
-                        {issue.suggestion.trim() && issue.character_ids.map((id) => {
+                        {issue.suggestion.trim() && subjectsOf(issue).map(({ kind, id }, _index, subjects) => {
                           const name = names.get(id) ?? id;
                           return (
-                            <Button key={id} variant="outline" size="sm" onClick={() => onUseSuggestion(id, issue.suggestion)}
+                            <Button key={id} variant="outline" size="sm" onClick={() => onUseSuggestion(kind, id, issue.suggestion)}
                               aria-label={`${t("Use this suggestion")} · ${name}`}>
                               <ArrowUpRight size={16} aria-hidden="true" />
-                              {issue.character_ids.length > 1 ? t("Use for {name}", { name }) : t("Use this suggestion")}
+                              {subjects.length > 1 ? t("Use for {name}", { name }) : t("Use this suggestion")}
                             </Button>
                           );
                         })}

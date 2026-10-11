@@ -746,6 +746,8 @@ def test_status_requires_current_individual_refs_and_visual_review(
     monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
     asyncio.run(s3_cast.regenerate_character_ref(config, project_dir, "char_001"))
     asyncio.run(s3_cast.regenerate_character_state_ref(config, project_dir, "char_001", "burned"))
+    from .style_reference_support import write_location_style_board
+    write_location_style_board(config, project_dir)
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001"))
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001", state_id="ruined"))
     asyncio.run(s3_cast.regenerate_prop_ref(config, project_dir, "prop_001"))
@@ -882,6 +884,8 @@ def test_comparison_pixels_reach_compiled_request_without_becoming_identity_or_e
     config = Config(style_template="Clean ink")
     _prepare_character_inputs(project_dir, config)
     if kind == "location":
+        from .style_reference_support import write_location_style_board
+        write_location_style_board(config, project_dir)
         asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, entity_id, state_id=state_id))
     elif state_id:
         asyncio.run(s3_cast.regenerate_character_state_ref(config, project_dir, entity_id, state_id))

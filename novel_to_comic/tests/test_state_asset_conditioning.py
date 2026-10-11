@@ -840,6 +840,9 @@ def test_generate_location_state_persists_conditioned_metadata(tmp_path: Path, m
     ))
     config = Config()
     save_config(config, tmp_path)
+    from .style_reference_support import write_location_style_board, write_style_proof
+    write_style_proof(tmp_path)
+    write_location_style_board(config, tmp_path)
 
     async def fake_generate_wire_image(*, config, wire, output_path, feature):
         output_path.write_bytes(b"plate-image")

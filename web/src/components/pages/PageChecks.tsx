@@ -4,7 +4,9 @@ import { useI18n } from "../../i18n";
 import { msg } from "../../locales/messages";
 import { readableAnchor } from "../../lib/visualAnchor";
 import type { CompletePageSummary, PageIssue } from "../../types/api";
-import { referenceFileUrl } from "../../api/pages";
+import { referenceFileUrl, type ReferenceKind, type VisualReviewReference } from "../../api/pages";
+import { useImageViewer } from "../../hooks/useImageViewer";
+import { Image as ImageIcon, MapPin, Package, Palette, User, type LucideIcon } from "lucide-react";
 import { useAcceptPageIssue, useDismissPageIssue, useSecondLook } from "../../api/queries";
 import { useCachedVisualReview, useReviewPageVisuals, useVisualReviewEstimate } from "../../api/pageRevisions";
 import { Button } from "../ui/Button";
@@ -14,13 +16,7 @@ import { TextCheckArtwork } from "./TextCheckArtwork";
 import { LetteringIssueCard, ResolvedIssueHistory } from "./LetteringEvidence";
 import { isOcrIssue } from "./lettering";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
-
-/** A finding sent to the revision draft; known issues are selected, never duplicated. */
-export interface DraftSeed {
-  key: string;
-  instruction: string;
-  issueId?: string;
-}
+import type { DraftControls } from "./RevisionDraft";
 
 const FINDING_LABELS: Record<string, string> = {
   visual_identity: msg("Character"),
@@ -45,13 +41,14 @@ function isAutomated(issue: PageIssue) {
  * The page's automatic checks in one place. Every draw reads the page's text
  * and reviews the art against the approved cast and setting; this shows what
  * they found and the two choices for each finding: fix it in the next
- * revision, or mark it as not a problem.
+ * revision, or mark it as not a problem. A finding being fixed shows its
+ * editable change in place.
  */
 export function PageChecks({
   project,
   item,
   pageIsDrawing,
-  onFix,
+  draft,
   onRetryText,
   retryingText,
   retryTextError,
@@ -59,8 +56,8 @@ export function PageChecks({
   project: string;
   item: CompletePageSummary;
   pageIsDrawing: boolean;
-  /** Opens the revision draft with these findings selected. */
-  onFix: (seeds: DraftSeed[]) => void;
+  /** The next revision: Fix adds a finding to it. */
+  draft: DraftControls;
   onRetryText: () => void;
   retryingText: boolean;
   retryTextError?: string;
@@ -88,17 +85,13 @@ export function PageChecks({
     });
   }
 
-  function fix(issue: PageIssue) {
-    onFix([{ key: `issue:${issue.id}`, issueId: issue.id, instruction: issue.requested_correction }]);
-  }
-
   const summary = pageIsDrawing
-    ? t("Checks run automatically when the page finishes drawing.")
+    ? t("Checks run when the page finishes drawing.")
     : active.length > 0
-      ? `${t("{count, plural, one {# thing to look at.} other {# things to look at.}}", { count: active.length })} ${t("Fix adds it to your next revision; Not a problem clears it.")}`
+      ? t("{count, plural, one {# thing to look at.} other {# things to look at.}}", { count: active.length })
       : textChecked && visualChecked
-        ? t("Checked. Nothing to fix: the text matches the script and the artwork matches your cast and setting.")
-        : t("Some checks didn't finish. Run them again below; this never redraws the page.");
+        ? t("Nothing to fix.")
+        : t("Some checks didn't finish.");
 
   return (
     <section aria-label={t("Checks")} className="space-y-4">
@@ -109,16 +102,20 @@ export function PageChecks({
         <ol className="space-y-3">
           {active.map((issue) => {
             const label = FINDING_LABELS[issue.issue_type] ?? (isOcrIssue(issue) ? msg("Text") : msg("Finding"));
-            const busy = accept.isPending || dismiss.isPending;
+            const busy = accept.isPending || dismiss.isPending || draft.locked;
+            const included = draft.included(issue.id);
+            const [problem, ...details] = issue.evidence;
             return (
               <li key={issue.id}>
                 <Surface tone="bristol" border="soft" shadow="none" padding="md">
                   <div className="space-y-3">
                     <p className="font-meta text-xs font-bold uppercase tracking-wider text-ink-muted">
                       {t(label)}
-                      {!pageIsDrawing && issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
+                      {included
+                        ? <span className="text-hero-red"> · {t("In next revision")}</span>
+                        : !pageIsDrawing && issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
                     </p>
-                    {isOcrIssue(issue) ? (
+                    {included ?? (isOcrIssue(issue) ? (
                       <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} secondLook={pageIsDrawing ? undefined : {
                         onRetry: () => secondLook.mutate({ project, pageNumber }),
                         busy: secondLook.isPending,
@@ -126,20 +123,22 @@ export function PageChecks({
                       }} /></>
                     ) : (
                       <>
-                        {issue.evidence.length > 0 && (
-                          <ul className="space-y-1 font-body text-sm leading-6">
-                            {issue.evidence.map((line, index) => <li key={`${issue.id}:${index}`}>{line}</li>)}
-                          </ul>
+                        <p className="font-body text-sm leading-6">{problem ?? issue.requested_correction}</p>
+                        {(details.length > 0 || problem) && (
+                          <details className="font-body text-sm leading-6">
+                            <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">{t("Details")}</summary>
+                            <ul className="mt-2 space-y-1">
+                              {details.map((line, index) => <li key={`${issue.id}:${index}`}>{line}</li>)}
+                              {problem && <li><span className="font-bold">{t("Suggested fix:")} </span>{issue.requested_correction}</li>}
+                            </ul>
+                          </details>
                         )}
-                        <p className="font-body text-sm leading-6">
-                          <span className="font-bold">{t("Suggested fix:")} </span>{issue.requested_correction}
-                        </p>
                       </>
-                    )}
-                    {!pageIsDrawing && <div className="flex flex-wrap justify-end gap-2">
+                    ))}
+                    {!pageIsDrawing && !included && <div className="flex flex-wrap justify-end gap-2">
                       {issue.status === "revised" ? (
                         <>
-                          <Button size="xs" variant="outline" disabled={busy} onClick={() => fix(issue)}>
+                          <Button size="xs" variant="outline" disabled={busy} onClick={() => draft.include(issue)}>
                             {t("STILL WRONG")}
                           </Button>
                           <Button size="xs" disabled={busy} onClick={() => decide(issue, false)}>
@@ -152,7 +151,7 @@ export function PageChecks({
                             {t(issue.issue_type === "manual_change" ? "WITHDRAW REQUEST" : "NOT A PROBLEM")}
                           </Button>
                           {issue.correction_owner === "draw" && issue.issue_type !== "manual_change" && (
-                            <Button size="xs" onClick={() => fix(issue)}>
+                            <Button size="xs" disabled={busy} onClick={() => draft.include(issue)}>
                               {t("FIX")}
                             </Button>
                           )}
@@ -214,51 +213,93 @@ function VisualRetry({ project, pageNumber }: { project: string; pageNumber: num
   );
 }
 
-/** What the artwork was compared with, and what the review could not judge. */
+const REFERENCE_GROUPS: { kind: ReferenceKind | null; label: string; Icon: LucideIcon }[] = [
+  { kind: "style", label: msg("Style"), Icon: Palette },
+  { kind: "character", label: msg("Characters"), Icon: User },
+  { kind: "location", label: msg("Places"), Icon: MapPin },
+  { kind: "prop", label: msg("Objects"), Icon: Package },
+  { kind: null, label: msg("Other"), Icon: ImageIcon },
+];
+
+/**
+ * What the artwork was compared with, as pictures grouped like the Cast:
+ * the selected style, then characters, places and objects. Any thumbnail
+ * opens the whole set in the viewer.
+ */
 function ComparedWith({ project, pageNumber }: { project: string; pageNumber: number }) {
   const { t } = useI18n();
   const cached = useCachedVisualReview(project, pageNumber);
+  const { open, viewer } = useImageViewer();
   const references = cached.data?.references ?? [];
   const uncertain = cached.data?.report?.uncertain ?? [];
   if (references.length === 0 && uncertain.length === 0) return null;
+  const groupOf = (kind?: ReferenceKind | null) => REFERENCE_GROUPS.some((group) => group.kind === kind) ? kind ?? null : null;
+  const groups = REFERENCE_GROUPS
+    .map((group) => ({ ...group, items: references.filter((reference) => groupOf(reference.kind) === group.kind) }))
+    .filter((group) => group.items.length > 0);
+  // One viewer set in display order; each thumbnail opens at its own image.
+  const pictured = groups.flatMap((group) => group.items).filter((reference) => reference.image_path);
+  const nameOf = (reference: VisualReviewReference) =>
+    reference.kind === "style" ? t("Selected style") : reference.display_label ?? reference.label;
+  const images = pictured.map((reference) => ({
+    src: referenceFileUrl(project, reference.image_path!),
+    alt: nameOf(reference),
+    label: nameOf(reference),
+  }));
   return (
-    <details className="border border-ink-black/20 px-3 py-2">
-      <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
-        {t("What the artwork was compared with")} · {references.length}
+    <details className="group/compared border-t border-ink-black/15 pt-3">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+        <span className="font-meta text-xs font-bold uppercase tracking-wider text-ink-muted">{t("Compared with")}</span>
+        <span aria-hidden="true" className="flex -space-x-2">
+          {images.slice(0, 5).map((image) => (
+            <img key={image.src} src={image.src} alt="" loading="lazy" decoding="async"
+              className="size-7 rounded-full border-2 border-bristol bg-surface-container object-cover" />
+          ))}
+        </span>
+        <span className="font-meta text-xs text-ink-muted">{references.length}</span>
+        <span aria-hidden="true" className="ml-auto flex size-4 items-center justify-center font-meta text-xs text-ink-muted transition-transform group-open/compared:rotate-90">›</span>
       </summary>
-      {references.length > 0 && (
-        <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {references.map((reference) => {
-            const label = reference.display_label ?? reference.label;
-            return (
-              <li key={reference.id} className="flex min-w-0 items-center gap-3 border border-ink-black/20 bg-bristol p-2">
-                {reference.image_path ? (
-                  <img src={referenceFileUrl(project, reference.image_path)} alt={label} loading="lazy" decoding="async"
-                    className="h-20 w-20 shrink-0 border border-ink-black/30 object-contain" />
-                ) : (
-                  <span aria-hidden="true" className="flex h-20 w-20 shrink-0 items-center justify-center bg-surface-container font-display text-lg font-black text-ink-muted">
-                    {label.slice(0, 1).toUpperCase()}
-                  </span>
-                )}
-                <span className="min-w-0">
-                  <span className="block truncate font-body text-xs font-bold">{label}</span>
-                  {reference.visual_anchor && (
-                    <span className="block font-body text-xs text-ink-muted">{readableAnchor(reference.visual_anchor)}</span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {uncertain.length > 0 && (
-        <div className="mt-3">
-          <p className="font-meta text-xs font-bold text-ink-muted">{t("COULDN'T TELL")}</p>
-          <ul className="mt-1 space-y-1 font-body text-xs leading-5">
-            {uncertain.map((note, index) => <li key={`uncertain:${index}`}>{note}</li>)}
-          </ul>
-        </div>
-      )}
+      <div className="mt-3 space-y-4">
+        {groups.map(({ kind, label, Icon, items }) => (
+          <section key={kind ?? "other"} aria-label={t(label)}>
+            <p className="font-meta text-[11px] font-bold uppercase tracking-wider text-ink-muted">{t(label)}</p>
+            <ul className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {items.map((reference) => {
+                const name = nameOf(reference);
+                const index = pictured.indexOf(reference);
+                return (
+                  <li key={reference.id} className="min-w-0">
+                    {reference.image_path ? (
+                      <button type="button" onClick={() => open(images, index)}
+                        aria-label={`${t("Zoom and inspect")} · ${name}`}
+                        className="block aspect-square w-full overflow-hidden border border-ink-black/20 bg-surface-container transition-colors hover:border-ink-black focus-visible:outline-2 focus-visible:outline-hero-red">
+                        <img src={referenceFileUrl(project, reference.image_path)} alt="" loading="lazy" decoding="async"
+                          className="h-full w-full object-cover" />
+                      </button>
+                    ) : (
+                      <span className="flex aspect-square w-full items-center justify-center border border-dashed border-ink-black/25 text-ink-muted">
+                        <Icon size={20} aria-hidden="true" />
+                      </span>
+                    )}
+                    <p className="mt-1 line-clamp-2 font-body text-xs font-bold leading-4" title={reference.visual_anchor ? readableAnchor(reference.visual_anchor) : undefined}>
+                      {name}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+        {uncertain.length > 0 && (
+          <section aria-label={t("COULDN'T TELL")}>
+            <p className="font-meta text-[11px] font-bold uppercase tracking-wider text-ink-muted">{t("COULDN'T TELL")}</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4 font-body text-xs leading-5">
+              {uncertain.map((note, index) => <li key={`uncertain:${index}`}>{note}</li>)}
+            </ul>
+          </section>
+        )}
+      </div>
+      {viewer}
     </details>
   );
 }

@@ -30,7 +30,7 @@ from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
     prepare_page_correction,
 )
-from novel_to_comic.narrative_review import require_draw_narrative_reviews
+from novel_to_comic.narrative_review import draw_review_recheck_phases, require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_source import PageSourceStale, page_source_view
 from novel_to_comic.lettering.page_read import page_read_adapter
@@ -307,6 +307,8 @@ def list_pages(request: Request = None, project=Depends(get_project)):
     redraws = _redraws(project_dir, target)
     return {
         "redraws": [{"page_number": number, **reasons} for number, reasons in sorted(redraws.items())],
+        # Draw waits until these reviews cover the saved script and plan again.
+        "review_recheck": list(draw_review_recheck_phases(target)),
         "pages": [
             {
                 "page": target.read_page(selected.page_number),
@@ -1026,15 +1028,20 @@ class PageCorrectionCreate(BaseModel):
     comic_page_revision: int = Field(ge=1)
 
 
-def _reference_entries(project_dir, references) -> list[dict]:
+def _reference_entries(project_dir, references, style_template: str | None = None) -> list[dict]:
     """Reference display metadata with servable image paths, without spending.
 
     ``image_path`` is project-relative for the existing generic files route
     (``/api/projects/{project}/files/{image_path}``); it is null when the
     approved bytes are missing so the UI never renders a dead thumbnail.
-    Accepts frozen-request dicts and compiled-request models alike.
+    ``kind`` groups the display: the selected style proof, or the Story Bible
+    entity type. The style proof's anchor is a provider instruction, not a
+    description, so it is never shown. Accepts frozen-request dicts and
+    compiled-request models alike.
     """
     from pathlib import Path as _Path
+
+    from novel_to_comic.models.draw import STYLE_PROOF_REFERENCE_ID
 
     def _field(reference, name):
         if isinstance(reference, dict):
@@ -1049,18 +1056,28 @@ def _reference_entries(project_dir, references) -> list[dict]:
     from novel_to_comic.workspace import series_root
 
     root = series_root(_Path(project_dir)).resolve()
-    images: dict[str, str | None] = {}
-    for reference_id, source in files.items():
+
+    def servable(path) -> str | None:
         try:
-            candidate = _Path(source.path).resolve()
+            candidate = _Path(path).resolve()
         except Exception:
-            images[reference_id] = None
-            continue
-        images[reference_id] = (
-            candidate.relative_to(root).as_posix()
-            if candidate.is_relative_to(root) and candidate.is_file()
-            else None
-        )
+            return None
+        return candidate.relative_to(root).as_posix() if candidate.is_relative_to(root) and candidate.is_file() else None
+
+    images: dict[str, str | None] = {reference_id: servable(source.path) for reference_id, source in files.items()}
+    if style_template is not None:
+        from novel_to_comic.style_reference import find_style_reference
+
+        style_path = find_style_reference(_Path(project_dir), style_template)
+        images[STYLE_PROOF_REFERENCE_ID] = servable(style_path) if style_path is not None else None
+    from novel_to_comic import artifacts as project_artifacts
+
+    bible = project_artifacts.read_story_bible_safe(project_dir)
+    kinds = {} if bible is None else {
+        **{item.id: "character" for item in bible.characters},
+        **{item.id: "location" for item in bible.locations},
+        **{item.id: "prop" for item in bible.props},
+    }
     entries = []
     from novel_to_comic.reference_sheets import reference_display_members
     references = [member for reference in references for member in reference_display_members(reference)]
@@ -1068,15 +1085,17 @@ def _reference_entries(project_dir, references) -> list[dict]:
         reference_id = _field(reference, "id")
         label = _field(reference, "label") or ""
         entity = _field(reference, "entity_id") or ""
+        style = reference_id == STYLE_PROOF_REFERENCE_ID
         entries.append(
             {
                 "order": _field(reference, "order"),
                 "id": reference_id,
                 "entity_id": entity,
                 "appearance_state_id": _field(reference, "appearance_state_id"),
+                "kind": "style" if style else kinds.get(entity),
                 "label": label,
-                "display_label": label or entity or reference_id,
-                "visual_anchor": _field(reference, "visual_anchor"),
+                "display_label": "Selected style" if style else label or entity or reference_id,
+                "visual_anchor": None if style else _field(reference, "visual_anchor"),
                 "media_type": _field(reference, "media_type"),
                 "image_path": images.get(reference_id) if reference_id else None,
             }
@@ -1249,7 +1268,7 @@ def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, pr
             "context_digest": context.digest,
             "truncated": context.truncated,
         },
-        "references": _reference_entries(target.project_dir, compiled.request.references),
+        "references": _reference_entries(target.project_dir, compiled.request.references, config.style_template),
         "profile": {
             "id": compiled.request.profile_id,
             "provider": compiled.request.provider,
@@ -1473,7 +1492,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
         "report": report,
         "finding_issues": list(finding_issue_links(report, stored)) if report is not None else [],
         "references": _reference_entries(
-            project_dir, reference_display_for_render(target, page_number, active.render),
+            project_dir, reference_display_for_render(target, page_number, active.render), config.style_template,
         ),
     }
 
@@ -1547,6 +1566,84 @@ async def replan_one_page(page_number: int, project_id: str, request: Request,
     except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"page_number": page_number, "revision": revised.revision}
+
+
+def _review_recheck_reviewers(config):
+    """Each review runs with its owning stage's model, temperature and concurrency."""
+    from novel_to_comic.clients.text import generate_json
+
+    def reviewer(model: str, temperature: float, concurrency: int):
+        async def generate(**kwargs):
+            return await generate_json(config=config, model=model, temperature=temperature, **kwargs)
+        return generate, model, concurrency
+
+    return {
+        "adapt": reviewer(config.effective_adapt_model(), 0.6, config.effective_text_concurrency("adapt")),
+        "plan": reviewer(config.effective_plan_model(), 0.25, config.effective_text_concurrency()),
+    }
+
+
+def _review_recheck_operations(config):
+    return (("text", config.effective_adapt_model()), ("text", config.effective_plan_model()))
+
+
+@router.get("/pages/review-recheck/estimate")
+def review_recheck_estimate(project=Depends(get_project)):
+    """Price a fresh review of the saved script and plan; 409 when both are current."""
+    from novel_to_comic.narrative_review import draw_review_recheck_phases, estimate_draw_review_recheck
+    from ..credits import credit_estimate_for_provider_cost
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    phases = draw_review_recheck_phases(target)
+    if not phases:
+        raise HTTPException(409, "The script and plan reviews already cover the saved work.")
+    cost = estimate_draw_review_recheck(
+        target, {"adapt": config.effective_adapt_model(), "plan": config.effective_plan_model()},
+    )
+    return {
+        **credit_estimate_for_provider_cost(
+            cost, "plan", reserve=True, funding=classify_operations(_review_recheck_operations(config)),
+        ),
+        "phases": list(phases),
+    }
+
+
+@router.post("/pages/review-recheck", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
+async def recheck_reviews(project_id: str, project=Depends(get_project),
+                          user_id: str = Depends(get_current_user)):
+    """Review the saved script and plan again so drawing can continue.
+
+    Neither is rewritten. Reviews written under an earlier review contract
+    otherwise leave a project with drawn pages no way back to drawing.
+    """
+    from ..credited_job import run_credited_call
+    from novel_to_comic.narrative_review import estimate_draw_review_recheck, recheck_draw_reviews
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        cost = estimate_draw_review_recheck(
+            target, {"adapt": config.effective_adapt_model(), "plan": config.effective_plan_model()},
+        )
+        failures = await run_credited_call(
+            user_id=user_id, project_id=project_id, project_dir=project_dir, stage="plan",
+            estimated_cost_usd=cost, operations=_review_recheck_operations(config),
+            work=lambda: recheck_draw_reviews(target, reviewers=_review_recheck_reviewers(config)),
+        )
+    except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if failures:
+        # A finding's first evidence line names the problem; its message is generic.
+        found = " ".join(dict.fromkeys(
+            failure.evidence[0] if failure.evidence and failure.code != "narrative_review_invalid" else failure.message
+            for failure in failures[:3]
+        ))
+        raise HTTPException(409, {
+            "code": "review_recheck_failed",
+            "message": f"The review found a problem, so drawing stays paused. {found}",
+        })
+    return {"status": "current"}
 
 
 # Independent presentation endpoints, not a ninth pipeline stage.

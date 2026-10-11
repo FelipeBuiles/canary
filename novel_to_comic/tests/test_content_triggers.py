@@ -4,7 +4,7 @@ from novel_to_comic.content_triggers import find_content_triggers
 def _prompt(anchor: str, style: str = "flat inks", direction: str = "") -> str:
     sections = [
         "Constraints\n- no nudity or gore beyond what the story states",
-        f"Secondary style notes\n{style}",
+        f"Style\n{style}",
         f"Protected anchors\nSphinx [prop / canonical]: {anchor}",
     ]
     if direction:

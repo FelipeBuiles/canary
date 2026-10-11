@@ -57,9 +57,10 @@ import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { StaleRenderRedraw } from "../../components/pages/StaleRenderRedraw";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import { OutOfDatePages } from "../../components/pages/OutOfDatePages";
+import { ReviewRecheck } from "../../components/pages/ReviewRecheck";
 import { StageFailureSummary } from "../../components/pages/StageFailureSummary";
 import { PageSourcePanel } from "../../components/pages/PageSourcePanel";
-import { PageChecks, type DraftSeed } from "../../components/pages/PageChecks";
+import { PageChecks } from "../../components/pages/PageChecks";
 import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -120,7 +121,8 @@ function PageSpendConsent({
             : t("Draw one complete page of artwork. Editable lettering is added without an image charge.")}
       cost={estimate.data}
       confirmLabel={intent.kind === "batch" ? retryBatch ? t("CONFIRM RETRY") : t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
-      busy={busy || estimate.isFetching || !estimate.data || !!estimate.error}
+      busy={busy}
+      disabled={estimate.isFetching || !estimate.data || !!estimate.error}
       onConfirm={() => { if (estimate.data && !estimate.error && !estimate.isFetching && !busy) onConfirm(); }}
       onClose={onClose}
       extraBody={(
@@ -182,7 +184,6 @@ function PageReview({
   // Integrated editions carry their lettering in the art; there is nothing to edit separately.
   const editableLettering = item.lettering_mode === "hybrid";
   const shownView: ReviewView = view === "lettering" && !editableLettering ? "page" : view;
-  const [visualSeeds, setVisualSeeds] = useState<DraftSeed[]>([]);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -199,11 +200,6 @@ function PageReview({
     }
   }
 
-  function addVisualSeeds(seeds: DraftSeed[]) {
-    setVisualSeeds((current) => [...current, ...seeds]);
-    // Explicit "add to changes" visibly opens the editor holding the seeds.
-    selectView("page");
-  }
   return createPortal(
     <section
       role="dialog"
@@ -294,8 +290,6 @@ function PageReview({
                   compareRevision={compareRevision}
                   issues={item.issues}
                   correctableIssueIds={item.correctable_issue_ids}
-                  seeds={visualSeeds}
-                  onSeedsConsumed={() => setVisualSeeds([])}
                   onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)}
                   onArtworkLoaded={() => {
                     const key = `${project}:${item.page.page_number}:${editSourceRevision}`;
@@ -307,12 +301,12 @@ function PageReview({
                     }
                   }}
                   disabled={pageIsDrawing}
-                  aside={!renderStale && (
+                  checks={renderStale ? undefined : (draft) => (
                     <PageChecks
                       project={project}
                       item={item}
                       pageIsDrawing={pageIsDrawing}
-                      onFix={addVisualSeeds}
+                      draft={draft}
                       onRetryText={onCheckText}
                       retryingText={checkingText}
                       retryTextError={checkError ? t("Text could not be checked. Your artwork is saved and you can continue to export.") : undefined}
@@ -613,6 +607,27 @@ export function PagesRoom() {
   const queuedPageJobs = (generationJobs?.jobs ?? []).filter((job) =>
     job.kind === "complete_page_draw" && job.is_current_page !== false && job.status === "queued",
   );
+  // Require server-confirmed jobs for the whole remaining batch. A single
+  // page request or a partially queued edition is not a queue-all run.
+  const allRemainingPagesQueued = undrawnPages.length > 1 && undrawnPages.every((item) => {
+    const job = latestPageJobs.get(item.page.page_number);
+    return job?.status === "queued" || job?.status === "running";
+  });
+  const queueControl = allRemainingPagesQueued && queuedPageJobs.length > 0 ? (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-muted">{t("Spotted an issue? Stop queued pages before more artwork is generated.")}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={cancelQueued.isPending}
+          onClick={() => cancelQueued.mutate(id)}
+        >{cancelQueued.isPending ? t("STOPPING QUEUED DRAWING…") : t("STOP QUEUED DRAWING")} ({queuedPageJobs.length})</Button>
+      </div>
+      <p className="text-xs text-ink-muted">{t("Pages already drawing will finish. Waiting pages are cancelled without a generation charge. Completed artwork stays saved.")}</p>
+      {cancelQueued.error && <ErrorNotice error={cancelQueued.error} operation="save" />}
+    </div>
+  ) : null;
   const retryingDraw = undrawnPages.some((item) => failedPages.has(item.page.page_number))
     || drawStatus === "failed"
     || !!status?.stages.draw?.stale;
@@ -823,6 +838,11 @@ export function PagesRoom() {
             {actionError && !paidIntent && <ErrorNotice error={actionError} operation="generate" />}
           </Surface>
         )}
+        {(data?.review_recheck?.length ?? 0) > 0 && (
+          <div className="mb-5">
+            <ReviewRecheck project={id} disabled={drawingPages.size > 0 || !!status?.is_running} />
+          </div>
+        )}
         {drawStatus !== "pending" && !generationJobsLoading && pagesWaitingToDraw.length > 0 && (
           <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
@@ -859,15 +879,9 @@ export function PagesRoom() {
           <Surface tone="pulp" border="soft" shadow="none" padding="md" className="mb-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p role="status" className="text-sm font-bold">{drawingPages.size} {t("pages drawing or queued")}</p>
-              {queuedPageJobs.length > 0 && <Button
-                variant="outline"
-                size="sm"
-                disabled={cancelQueued.isPending}
-                onClick={() => cancelQueued.mutate(id)}
-              >{cancelQueued.isPending ? t("CANCELLING QUEUED PAGES…") : t("CANCEL QUEUED PAGES")} ({queuedPageJobs.length})</Button>}
             </div>
             <p className="mt-1 text-sm text-ink-muted">{t("Completed pages are ready to inspect while the press continues.")}</p>
-            {cancelQueued.error && <ErrorNotice error={cancelQueued.error} operation="save" />}
+            <div className="mt-3">{queueControl}</div>
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>

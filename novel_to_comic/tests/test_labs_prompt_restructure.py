@@ -49,8 +49,8 @@ ASSET_PROMPT = """Constraints
 - Surface fidelity: preserve the selected medium and deliberate texture, including authored grain.
 - Detail hierarchy: keep focal contours legible at the intended viewing size.
 
-Secondary style notes
-Secondary textual style notes; the approved visual style reference owns the intended rendering language: Ink and flat colour. RENDERING APPROACH — Clearly stylized. CHARACTER DESIGN — elongated: Tall figures.
+Style
+Selected style; the approved style reference image shows how it is rendered. Draw in that rendering language and apply this written direction in full, including its character design and proportion system, subject to surface-fidelity constraints for incidental texture: Ink and flat colour. RENDERING APPROACH — Clearly stylized. CHARACTER DESIGN — elongated: Tall figures.
 
 Protected anchors
 Ada [char_001 / canonical]: 1woman, adult female, tall
@@ -85,6 +85,6 @@ def test_asset_restructure_leads_with_the_picture_and_keeps_authorities():
     ]
     assert "- exactly 1 distinct listed character" in restructured
     for dropped in ("Surface fidelity", "Detail hierarchy", "sole visual rendering style authority",
-                    "Generation geometry", "Image operation", "Secondary textual style notes"):
+                    "Generation geometry", "Image operation", "Selected style; the approved"):
         assert dropped not in restructured
     assert "1. Shows only how to paint" in restructured
