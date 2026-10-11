@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .plan_detail_support import detail_response, plan_response, reservation
+from .test_book_adaptation import _approved_brief
 
 import asyncio
 from datetime import datetime, timezone
@@ -181,7 +182,6 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -257,6 +257,8 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
     ]
     assert artifacts.read_plan() == plan
     assert plan.pages[0].content_sha256 == page.content_sha256
+    # Page 1 prints on the right; code, not the writer, owns the side.
+    assert page.spread_role == "right"
     assert response["pages"][0]["layout_intent"] in page.layout_intent
     assert response["pages"][0]["content"][0]["continuity_intent"] in page.layout_intent
     assert page.content[0].lettering == tuple(
@@ -586,10 +588,12 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
                 tmp_path,
             ),
             model="test-planner",
-            generate=generate,
+            generate=generate, story_tone="Restrained dread.", integrated_lettering=True,
         )
     )
 
+    assert all('"approved_story_tone":"Restrained dread."' in call["user_content"] for call in calls)
+    assert "110 words and 10 lettering items" in calls[0]["user_content"]
     assert len(plan.pages) == 12
     assert detail_attempts[tuple(range(1, 9))] == (2 if invalid_batch_start == 1 else 1)
     assert detail_attempts[tuple(range(9, 13))] == (2 if invalid_batch_start == 9 else 1)
@@ -982,7 +986,6 @@ def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
             {
                 "page_number": 1,
                 "page_turn_role": "setup",
-                "spread_role": "single",
                 "emphasis": "prolongation",
                 "density_intent": "standard",
                 "rhythm_intent": "Hold on the approach.",
@@ -1007,7 +1010,6 @@ def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
             {
                 "page_number": 2,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "The turn follows the approach.",
@@ -1094,7 +1096,6 @@ def test_producer_keeps_repetitive_composition_advisory(
         return {
             "page_number": page_number,
             "page_turn_role": "release" if page_number == 4 else "none",
-            "spread_role": "single",
             "emphasis": "release" if page_number == 4 else "prolongation",
             "density_intent": "standard",
             "rhythm_intent": f"page {page_number} rhythm",
@@ -1237,7 +1238,6 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                     {
                         "page_number": 1,
                         "page_turn_role": "setup",
-                        "spread_role": "single",
                         "emphasis": "prolongation",
                         "density_intent": "sparse",
                         "rhythm_intent": "establish the approach",
@@ -1263,7 +1263,6 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                     {
                         "page_number": 2,
                         "page_turn_role": "cliffhanger",
-                        "spread_role": "single",
                         "emphasis": "prolongation",
                         "density_intent": "sparse",
                         "rhythm_intent": "hold on the threatening city",
@@ -1286,7 +1285,6 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                     {
                         "page_number": 3,
                         "page_turn_role": "release",
-                        "spread_role": "single",
                         "emphasis": "release",
                         "density_intent": "standard",
                         "rhythm_intent": "Johansen turns away",
@@ -1475,7 +1473,6 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -1513,6 +1510,8 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
     }
 
     async def generate(**_kwargs):
+        assert '"approved_story_tone":"Restrained dread."' in _kwargs["user_content"]
+        assert "110 words and 10 lettering items" in _kwargs["user_content"]
         return ApiResult(
             value=plan_response(response),
             usage=UsageRecord(
@@ -1542,7 +1541,7 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
                 tmp_path,
             ),
             model="test-planner",
-            generate=generate,
+            generate=generate, story_tone="Restrained dread.", integrated_lettering=True,
         )
     )
 
@@ -1563,7 +1562,6 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -1652,7 +1650,6 @@ def test_plan_persists_reviewed_allocation_above_target(
             {
                 "page_number": page_number,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release" if page_number == 2 else "prolongation",
                 "density_intent": "standard",
                 "rhythm_intent": "one beat per page",
@@ -1727,7 +1724,6 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -2492,53 +2488,6 @@ def test_peak_and_release_on_one_page_report_proportion_evidence() -> None:
     )
 
 
-def test_spread_sides_cannot_repeat_without_an_intervening_single_or_spread() -> None:
-    adaptation = _adaptation()
-    pages = [
-        ComicPage(
-            page_number=index,
-            revision=1,
-            adaptation_revision=adaptation.revision,
-            adaptation_sha256=adaptation.content_sha256,
-            page_turn_role="setup" if index == 1 else "release",
-            spread_role="left",
-            emphasis=beat.narrative_function,
-            density_intent="standard",
-            layout_intent=beat.summary,
-            content=[
-                PageContent(
-                    id=f"page_{index:03d}_content_001",
-                    order=1,
-                    beat_ids=[beat.id],
-                    camera=PanelCamera(shot="medium", angle="eye_level"),
-                    visual_intent=beat.summary,
-                    lettering=beat.lettering,
-                )
-            ],
-            reading_order=[
-                f"page_{index:03d}_content_001",
-                beat.lettering[0].id,
-            ],
-        )
-        for index, beat in enumerate(adaptation.beats, start=1)
-    ]
-
-    validation = validate_book_plan(
-        adaptation,
-        ApprovedVisualReferenceInventory(),
-        ApprovedPageRange(minimum=2, maximum=2),
-        pages,
-    )
-
-    failure = next(
-        failure
-        for failure in validation.invariant_failures
-        if failure.code == "page_spread_order"
-    )
-    assert failure.artifact_ids == ("page_001", "page_002")
-    assert failure.evidence == ("Pages 1 and 2 both declare spread side 'left'.",)
-
-
 def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
     adaptation = _adaptation()
     page = ComicPage(
@@ -2596,7 +2545,6 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path, s
     page = {
         "page_number": 1,
         "page_turn_role": "release",
-        "spread_role": "single",
         "emphasis": "release",
         "density_intent": "standard",
         "rhythm_intent": "approach gives way to escape",
@@ -2692,7 +2640,6 @@ def test_plan_authored_issue_ownership_is_canonicalized_without_a_retry(
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -2841,7 +2788,6 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
             {
                 "page_number": 1,
                 "page_turn_role": "setup",
-                "spread_role": "single",
                 "emphasis": "initial",
                 "density_intent": "standard",
                 "rhythm_intent": "The soaked approach begins.",
@@ -2869,7 +2815,6 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
             {
                 "page_number": 2,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "The approach gives way to escape.",
@@ -2934,7 +2879,6 @@ def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
     valid_page = {
         "page_number": 1,
         "page_turn_role": "release",
-        "spread_role": "single",
         "emphasis": "release",
         "density_intent": "standard",
         "rhythm_intent": "approach gives way to escape",
@@ -3043,7 +2987,6 @@ def test_missing_lettering_ids_are_derived_into_reading_order(
             {
                 "page_number": 1,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "approach gives way to escape",
@@ -3166,7 +3109,6 @@ def _two_page_response(content_overrides: dict[str, object]) -> dict:
             {
                 "page_number": 1,
                 "page_turn_role": "setup",
-                "spread_role": "single",
                 "emphasis": "initial",
                 "density_intent": "standard",
                 "rhythm_intent": "The soaked approach begins.",
@@ -3188,7 +3130,6 @@ def _two_page_response(content_overrides: dict[str, object]) -> dict:
             {
                 "page_number": 2,
                 "page_turn_role": "release",
-                "spread_role": "single",
                 "emphasis": "release",
                 "density_intent": "standard",
                 "rhythm_intent": "The approach gives way to escape.",
@@ -4203,7 +4144,7 @@ def _two_look_inventory() -> ApprovedVisualReferenceInventory:
 
 def _three_page_page(number: int, state: str | None = None, intent: str | None = None) -> dict:
     return {
-        "page_number": number, "page_turn_role": "none", "spread_role": "single",
+        "page_number": number, "page_turn_role": "none",
         "emphasis": "initial", "density_intent": "standard",
         "rhythm_intent": f"Event {number}.", "layout_intent": f"Event {number} fills the page.",
         "content": [{
@@ -4233,6 +4174,7 @@ def _run_three_page_plan(response: dict, tmp_path: Path):
 
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_adaptation(_two_look_adaptation())
+    artifacts.write_brief(_approved_brief())
     ctx = StageRuntime("plan", PipelineState(project_name="cthulhu", novel_path="novel.txt",
                                              created_at=datetime.now(timezone.utc)), tmp_path)
     try:
@@ -4292,6 +4234,8 @@ def test_replanning_one_page_clears_its_look_ahead_and_leaves_the_book_alone(tmp
     revised = asyncio.run(replan_page(artifacts, _two_look_inventory(), 2, generate=generate, model="test-planner"))
 
     assert len(prompts) == 1 and "'johansen_at_wheel' begins with beat 'beat_0003'" in prompts[0]
+    # A replanned page keeps the tone the book was laid out with.
+    assert '"approved_story_tone":"Cosmic dread."' in prompts[0]
     assert revised.revision == 2
     assert revised.content[0].appearance_states == {"character_johansen": "johansen_soaked"}
     assert revised.content[0].visual_intent == "Still soaked, Johansen waits by the rail."

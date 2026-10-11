@@ -77,6 +77,19 @@ def detail_batch_pages(model: str) -> int:
     if text_transport_limits(model).call_deadline_seconds is not None:
         return _DEADLINE_BOUND_DETAIL_BATCH_PAGES
     return _PLAN_DETAIL_BATCH_PAGES
+
+
+def page_side(page_number: int) -> Literal["left", "right"]:
+    """Which side of a two-page spread a page prints on.
+
+    Page 1 is a right-hand page and every part starts on one
+    (``combined_export.py``), so a turn happens only after each odd page and
+    each even page faces the odd page after it.
+    """
+
+    return "right" if page_number % 2 else "left"
+
+
 _MIN_PLAN_GENERATION_CALLS = 64
 # A page map is ID-heavy structural JSON, rather than panel prose.  Leaving
 # GLM's full context ceiling available lets its mandatory reasoning stream run
@@ -206,7 +219,6 @@ class _PageDraft(BaseModel):
     page_turn_role: Literal[
         "none", "setup", "reveal", "cliffhanger", "release", "transition"
     ] = "none"
-    spread_role: Literal["single", "left", "right", "spread"] = "single"
     emphasis: Literal[
         "establisher",
         "initial",
@@ -331,7 +343,6 @@ class _PageMapEntry(BaseModel):
     page_turn_role: Literal[
         "none", "setup", "reveal", "cliffhanger", "release", "transition"
     ] = "none"
-    spread_role: Literal["single", "left", "right", "spread"] = "single"
     emphasis: Literal[
         "establisher",
         "initial",
@@ -351,6 +362,24 @@ class _BookPageMap(BaseModel):
     pages: tuple[_PageMapEntry, ...] = Field(min_length=1)
 
 
+def _without_page_side(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop a page side a model still authors; code derives it from the number.
+
+    Checkpointed responses from before the side was derived carry the key too,
+    and a paid redo would buy nothing.
+    """
+
+    normalized = dict(value)
+    pages = normalized.get("pages")
+    if isinstance(pages, (list, tuple)):
+        normalized["pages"] = [
+            {key: item for key, item in page.items() if key != "spread_role"}
+            if isinstance(page, Mapping) else page
+            for page in pages
+        ]
+    return normalized
+
+
 def _normalize_book_plan_draft(
     value: Mapping[str, Any],
     adaptation: BookAdaptation,
@@ -359,7 +388,7 @@ def _normalize_book_plan_draft(
 ) -> Mapping[str, Any]:
     """Canonicalize deterministic Plan-owned metadata before validation."""
 
-    normalized = dict(value)
+    normalized = _without_page_side(value)
     issues = normalized.get("editorial_issues")
     if isinstance(issues, (list, tuple)):
         normalized["editorial_issues"] = [
@@ -441,6 +470,7 @@ def _planning_view(adaptation: BookAdaptation) -> dict[str, Any]:
                 "narrative_function": beat.narrative_function,
                 "story_functions": beat.story_functions,
                 "brief_requirement_ids": beat.brief_requirement_ids,
+                "lettering_words": sum(len(item.text.split()) for item in beat.lettering),
                 "lettering": [
                     item.model_dump(
                         mode="json",
@@ -508,6 +538,9 @@ _SEMANTIC_PAGE_CONTRACT = (
     "For ongoing physical attachments, describe what connects to what, the contact point, "
     "object orientation and what supports the body or object; carry that relationship "
     "into subsequent panels instead of merely naming the attached objects. "
+    "When the story moves to a new place, one of its first two panels there shows the "
+    "place and who is where with a wide, medium-wide or establishing shot, unless the "
+    "source wants deliberate disorientation. "
     "Explicitly author setting for EVERY panel: location_entity_id is the approved location "
     "where the action happens (null only when no approved location applies), environment_visible "
     "says whether any of that environment is drawn, and direction explains the setting or why "
@@ -567,14 +600,72 @@ _SEMANTIC_PAGE_CONTRACT = (
 
 
 
+# Page sides and turns: docs/research/2026-10-10-adapt-plan-comics-craft.md §4.
+_PAGE_TURN_GUIDANCE = (
+    "Pages print as two-page spreads: page 1 is a right-hand page, odd pages are "
+    "right-hand and even pages left-hand, and each even page faces the odd page after "
+    "it, so both are seen at once. A page turn happens only after an odd page. Give a "
+    "turn's setup or cliffhanger to an odd page, with its hook in the last panel, and "
+    "open the following even page with the reveal in its first panel. A reveal on an "
+    "odd page is seen beside its setup; when a reveal must land on a turn, regroup "
+    "beats so it falls on an even page. Code derives each page's side from its number. "
+)
+
+# Panel and word density: §2-3 of the same note. Cohn et al.'s 14,324-page corpus
+# averages about five panels a page; Dark Horse and DC editors cap words per panel
+# and page.
+_PANEL_DENSITY_GUIDANCE = (
+    "Fit panel count to the page's job: peaks and reveals often use 1-3 large panels; "
+    "establishing and transition pages 2-4; action 3-4; dialogue and exposition 4-6. "
+    "Comics average about five panels a page, a descriptive reference rather than a target. "
+    "A regular grid or repeated panel count can support measured dialogue, restraint, "
+    "routine or mounting tension; vary it when the story changes pace or emphasis. "
+    "Keep a panel's lettering under about 50 words with at most three spoken exchanges. "
+    "Spread a heavy beat's lettering across distinct supported moments when useful, "
+    "without padding, rewriting or splitting locked lettering items. A silent panel "
+    "needs a clear visual purpose and enough room to carry it. "
+)
+
+_LAYOUT_GUIDANCE = (
+    "Choose a coherent layout vocabulary from the supplied approved_story_tone, treatment "
+    "and current scene, honoring explicit author direction. Prefer clear rectangular panels "
+    "and gutters. Vary proportions, row grouping and relative area when the story benefits: "
+    "a wide panel can orient a landscape or pause, a tall panel can frame height or a fall, "
+    "and a larger panel can emphasize a decisive reaction or reveal. These are options, "
+    "not a rotation or quota. Restrained scenes may keep a steady grid; an intense scene "
+    "does not by itself require diagonals, overlaps, insets or broken borders. Use unusual "
+    "shapes only for a specific story purpose consistent with the tone and unambiguous "
+    "reading order. Preserve author-pinned geometry, panel sequence and lettering order. "
+    "Do not invent geometric coordinates, extra panels or blank areas to achieve variety. "
+)
+
+
+def _page_word_guidance(integrated_lettering: bool) -> str:
+    if integrated_lettering:
+        budget = (f"For this integrated-lettering edition, aim for at most about "
+                  f"{_INTEGRATED_PAGE_WORDS} words and {_INTEGRATED_PAGE_ITEMS} lettering items per page. ")
+    else:
+        budget = f"For this editable-lettering edition, aim for at most about {_HYBRID_PAGE_WORDS} words per page. "
+    return budget + (
+        "Budget the actual lettering IDs assigned to each page before locking the map; "
+        "beat totals are not page totals when a beat spans pages. Give heavy passages "
+        "more pages where supported by the story. These are advisory budgets: preserve "
+        "whole protected passages and exact locked copy, and never pad to meet a target. "
+    )
+
+
 def build_book_plan_prompt(
     adaptation: BookAdaptation,
     references: ApprovedVisualReferenceInventory,
     target_range: ApprovedPageRange,
+    *,
+    integrated_lettering: bool = False,
+    story_tone: str = "",
 ) -> str:
     """Compile Plan's complete book-level allocation context."""
 
     context = {
+        "approved_story_tone": story_tone,
         "planning_view": _planning_view(adaptation),
         "approved_visual_reference_inventory": _reference_view(references),
         "approved_target_page_range": target_range.model_dump(mode="json"),
@@ -615,10 +706,16 @@ def build_book_plan_prompt(
         "or deliberate pauses; do not make them the default page grammar. Author a "
         "panel_role for every content item and ensure layout_intent describes those "
         "same ordered panels. Cite visible entities beyond explicit appearance changes. "
-        "Own actual page count, "
+        + _PAGE_TURN_GUIDANCE
+        + _PANEL_DENSITY_GUIDANCE
+        + _LAYOUT_GUIDANCE
+        + _page_word_guidance(integrated_lettering)
+        + "Record the overall layout vocabulary in rhythm_summary and each page's story-driven "
+        "panel proportions and grouping in layout_intent. "
+        + "Own actual page count, "
         + page_range_instruction
         + " "
-        "page and spread rhythm, page-turn intent, narrative "
+        "page rhythm, page-turn intent, narrative "
         "emphasis, semantic density and layout intent, and page-scoped approved "
         "entity and appearance-state IDs. Sparse, standard, and dense are semantic "
         "intent, not panel-count or word-count caps. "
@@ -640,18 +737,31 @@ def build_book_plan_prompt(
 def _build_page_map_prompt(
     adaptation: BookAdaptation,
     target_range: ApprovedPageRange,
+    *,
+    integrated_lettering: bool = False,
+    story_tone: str = "",
 ) -> str:
     return (
         "Create the compact global page map for this complete graphic novel. "
         "Allocate every beat at least once, in order, without returning to an "
         "earlier beat after advancing. Own book-wide page count, page turns, "
-        "spreads, emphasis, density, and rhythm. The target range is advisory, "
+        "emphasis, density, and rhythm. The target range is advisory, "
         "not a floor or ceiling. Use fewer or more pages when the story requires. "
         "Check each proposed page-turn reveal against the exact lettering on both "
         "sides: words can reveal an arrival or discovery before the image does. "
         "Place the revealing words with the intended reveal, or describe the later "
         "page honestly as aftermath or escalation. Do not claim to hold a threshold "
         "when the preceding page already narrates crossing it. "
+        + _PAGE_TURN_GUIDANCE
+        + "Reserve peak emphasis and reveal turns for the moments that change the story; "
+        "when every third page is a peak, none of them stands out. Each beat lists its "
+        "lettering_words. "
+        + _page_word_guidance(integrated_lettering)
+        + _PANEL_DENSITY_GUIDANCE
+        + _LAYOUT_GUIDANCE
+        + "Record the book's layout vocabulary in rhythm_summary and any story-motivated "
+        "change of pace or panel emphasis in each rhythm_intent, so parallel detail "
+        "batches share one direction. Keep these semantic, without specifying panels yet. "
         "Never pad a closing beat to meet a minimum. Preserve investigation, causality, reactions, and "
         "aftermath rather than compressing toward the maximum. A repeated beat "
         "is allowed only on an immediately adjacent page when decompression "
@@ -668,6 +778,7 @@ def _build_page_map_prompt(
         + "\n"
         + json.dumps(
             {
+                "approved_story_tone": story_tone,
                 "planning_view": _planning_view(adaptation),
                 "approved_target_page_range": target_range.model_dump(mode="json"),
             },
@@ -679,7 +790,7 @@ def _build_page_map_prompt(
 
 
 def _canonicalize_page_map(value: Mapping[str, Any]) -> _BookPageMap:
-    normalized = dict(value)
+    normalized = _without_page_side(value)
     pages = normalized.get("pages")
     if isinstance(pages, (list, tuple)):
         normalized["pages"] = [
@@ -752,6 +863,7 @@ def _detail_batch_prompt(
     stop: int,
     concerns: tuple[InvariantFailure | EditorialIssue, ...] = (),
     gemini: bool = False,
+    story_tone: str = "",
 ) -> str:
     target_pages = page_map.pages[start:stop]
     context_start = max(0, start - 1)
@@ -821,16 +933,25 @@ def _detail_batch_prompt(
         "the locked items to those exact destinations in their established order; it "
         "does not choose placements. "
         + ("A silent page has lettering_placements: []. " if gemini else "A silent page has lettering_placements: {}. ")
-        + "Reserve one-panel pages for exceptional moments."
+        + "Reserve one-panel pages for exceptional moments. "
+        + _PANEL_DENSITY_GUIDANCE
+        + _LAYOUT_GUIDANCE
+        + "Realize the global rhythm_summary and neighboring rhythm_intent in layout_intent: "
+        "describe the ordered panels' relative proportions and row grouping, and why "
+        "any departure from the established layout serves this scene. "
+        + "Each page-map entry names its page_side: on a right-hand page that sets up a "
+        "turn, hold the hook for the last panel; on a left-hand page that opens with a "
+        "reveal, give it the first panel."
         + concern_text
         + " "
         + PLAN_DEPICTION_GUIDANCE
         + "\n"
         + json.dumps(
             {
+                "approved_story_tone": story_tone,
                 "global_rhythm_summary": page_map.rhythm_summary,
                 "neighboring_page_map_context": [
-                    page.model_dump(mode="json")
+                    {**page.model_dump(mode="json"), "page_side": page_side(page.page_number)}
                     for page in page_map.pages[context_start:context_stop]
                 ],
                 "target_page_numbers": [page.page_number for page in target_pages],
@@ -851,6 +972,8 @@ def estimate_book_plan_cost(
     *,
     model: str,
     story_instruction: str = "",
+    story_tone: str = "",
+    integrated_lettering: bool = False,
 ) -> float:
     """Estimate the selected internal workflow, including bounded detail calls."""
 
@@ -861,7 +984,8 @@ def estimate_book_plan_cost(
     ) * 2
     if not _uses_two_pass_plan(adaptation, model):
         prompt = build_book_plan_prompt(
-            adaptation, references, target_range
+            adaptation, references, target_range,
+            integrated_lettering=integrated_lettering, story_tone=story_tone,
         ) + instruction_suffix
         return estimate_text_cost(
             model,
@@ -897,7 +1021,7 @@ def estimate_book_plan_cost(
         pages=tuple(projected_pages),
     )
     map_prompt = _build_page_map_prompt(
-        adaptation, target_range
+        adaptation, target_range, integrated_lettering=integrated_lettering, story_tone=story_tone,
     ) + instruction_suffix
     total = estimate_text_cost(
         model,
@@ -915,7 +1039,7 @@ def estimate_book_plan_cost(
                 page_map,
                 start=start,
                 stop=stop,
-                gemini=gemini_tuning_enabled(model),
+                gemini=gemini_tuning_enabled(model), story_tone=story_tone,
             )
             + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)),
             output_chars=max(4_000, (stop - start) * 1_600),
@@ -1046,6 +1170,7 @@ async def _produce_book_plan_one_shot(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
+    story_tone: str = "",
     concurrency: int = 4,
     integrated_lettering: bool = False,
 ) -> BookPlan:
@@ -1053,10 +1178,12 @@ async def _produce_book_plan_one_shot(
 
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
     prompt = build_book_plan_prompt(
-        adaptation, references, target_range
+        adaptation, references, target_range,
+        integrated_lettering=integrated_lettering, story_tone=story_tone,
     ) + story_instruction_section(story_instruction, stage="plan")
     estimate = estimate_book_plan_cost(adaptation, references, target_range,
-                                      model=model, story_instruction=story_instruction)
+                                      model=model, story_instruction=story_instruction, story_tone=story_tone,
+                                      integrated_lettering=integrated_lettering)
     with ctx.execute(total=1, estimated_cost_usd=estimate):
         _raise_on_adaptation_preconditions(adaptation, references, artifacts)
         _PlanProgress(ctx, adaptation, target_range, model=model).publish("laying_out")
@@ -1201,7 +1328,7 @@ class _PlanProgress:
                 "page": entry.page_number,
                 "emphasis": entry.emphasis,
                 "turn": entry.page_turn_role,
-                "spread": entry.spread_role,
+                "spread": page_side(entry.page_number),
                 "density": entry.density_intent,
                 "beats": len(entry.beat_ids),
                 "panels": None,
@@ -1245,12 +1372,14 @@ async def _generate_page_map(
     artifacts: TargetArtifacts,
     model: str,
     story_instruction: str = "",
+    story_tone: str = "",
     review_instruction: str | None = None,
     concurrency: int = 4,
     progress: _PlanProgress | None = None,
+    integrated_lettering: bool = False,
 ) -> tuple[_BookPageMap, list[ValidationAttempt]]:
     prompt = _build_page_map_prompt(
-        adaptation, target_range
+        adaptation, target_range, integrated_lettering=integrated_lettering, story_tone=story_tone,
     ) + story_instruction_section(story_instruction, stage="plan")
     attempt_prompt = prompt
     history: list[ValidationAttempt] = []
@@ -1372,7 +1501,7 @@ def _compile_detail_response(
     made corrections alternate between two individually incomplete citations.
     Visual citations remain authored; no words or visual decisions are moved.
     """
-    response = _BookDetailDraft.model_validate(value)
+    response = _BookDetailDraft.model_validate(_without_page_side(value))
     if len(response.pages) != len(target_pages):
         raise ValueError(f"Expected {len(target_pages)} pages; received {len(response.pages)}.")
     # A correction may return the repaired page first. The declared page number
@@ -1480,6 +1609,7 @@ async def _generate_detail_batch(
     ctx: StageRuntime,
     concerns: tuple[InvariantFailure | EditorialIssue, ...] = (),
     story_instruction: str = "",
+    story_tone: str = "",
     previous_draft: _BookPlanDraft | None = None,
     artifacts: TargetArtifacts | None = None,
     model: str = "",
@@ -1492,7 +1622,7 @@ async def _generate_detail_batch(
         start=start,
         stop=stop,
         concerns=concerns,
-        gemini=gemini,
+        gemini=gemini, story_tone=story_tone,
     ) + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)
     base_prompt += (
         ("\nLETTERING RESERVATIONS: each lettering_placements item is an OBJECT with lettering_item_id. "
@@ -1623,7 +1753,6 @@ def _merge_detail_drafts(
                     **page.model_dump(mode="json"),
                     "page_number": mapped.page_number,
                     "page_turn_role": mapped.page_turn_role,
-                    "spread_role": mapped.spread_role,
                     "emphasis": mapped.emphasis,
                     "density_intent": mapped.density_intent,
                     "rhythm_intent": mapped.rhythm_intent,
@@ -1673,6 +1802,7 @@ async def _produce_book_plan_two_pass(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
     story_instruction: str = "",
+    story_tone: str = "",
     concurrency: int = 4,
     integrated_lettering: bool = False,
 ) -> BookPlan:
@@ -1684,7 +1814,8 @@ async def _produce_book_plan_two_pass(
         references,
         target_range,
         model=model,
-        story_instruction=story_instruction,
+        story_instruction=story_instruction, story_tone=story_tone,
+        integrated_lettering=integrated_lettering,
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
         _raise_on_adaptation_preconditions(adaptation, references, artifacts)
@@ -1699,9 +1830,9 @@ async def _produce_book_plan_two_pass(
                 artifacts=artifacts,
                 model=model,
                 review_instruction=author_instruction,
-                story_instruction=story_instruction,
+                story_instruction=story_instruction, story_tone=story_tone,
                 concurrency=concurrency,
-                progress=progress,
+                progress=progress, integrated_lettering=integrated_lettering,
             )
         except PlanInvariantError as error:
             _persist_validation(
@@ -1739,7 +1870,7 @@ async def _produce_book_plan_two_pass(
                     stop=stop,
                     generate=generate,
                     ctx=ctx,
-                    story_instruction=story_instruction,
+                    story_instruction=story_instruction, story_tone=story_tone,
                     artifacts=artifacts, model=model,
                 )
             ctx.record_item_done()
@@ -1827,7 +1958,7 @@ async def _produce_book_plan_two_pass(
                     generate=generate,
                     ctx=ctx,
                     concerns=tuple(concerns),
-                    story_instruction=story_instruction,
+                    story_instruction=story_instruction, story_tone=story_tone,
                     previous_draft=previous_draft,
                     artifacts=artifacts, model=model,
                 )
@@ -1904,6 +2035,7 @@ async def produce_book_plan(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
+    story_tone: str = "",
     max_generation_calls: int | None = None,
     concurrency: int = 4,
     integrated_lettering: bool = False,
@@ -1923,7 +2055,8 @@ async def produce_book_plan(
                 "references": references.model_dump(mode="json"),
                 "range": target_range.model_dump(mode="json"),
                 "pins": [p.model_dump(mode="json") for p in author_pins],
-                "instruction": story_instruction},
+                "instruction": story_instruction, "story_tone": story_tone,
+                "integrated_lettering": integrated_lettering},
         override_limit=max_generation_calls is not None,
         max_calls=max_generation_calls if max_generation_calls is not None else _default_plan_call_limit(adaptation, target_range, model),
     )
@@ -1940,7 +2073,7 @@ async def produce_book_plan(
             model=model,
             generate=generate,
             author_pins=author_pins,
-            story_instruction=story_instruction,
+            story_instruction=story_instruction, story_tone=story_tone,
             concurrency=concurrency,
             integrated_lettering=integrated_lettering,
         )
@@ -1953,7 +2086,7 @@ async def produce_book_plan(
         model=model,
         generate=generate,
         author_pins=author_pins,
-        story_instruction=story_instruction,
+        story_instruction=story_instruction, story_tone=story_tone,
         concurrency=concurrency,
         integrated_lettering=integrated_lettering,
     )
@@ -2508,7 +2641,7 @@ def _canonical_pages(
                 adaptation_revision=adaptation.revision,
                 adaptation_sha256=adaptation.content_sha256,
                 page_turn_role=page.page_turn_role,
-                spread_role=page.spread_role,
+                spread_role=page_side(page.page_number),
                 emphasis=page.emphasis,
                 density_intent=page.density_intent,
                 rhythm_intent=page.rhythm_intent,
@@ -2798,31 +2931,6 @@ def validate_book_plan(
                 evidence=[f"Found page order {page_numbers!r}."],
             )
         )
-
-    for previous, current in zip(pages, pages[1:], strict=False):
-        if (
-            previous.spread_role in {"left", "right"}
-            and current.spread_role == previous.spread_role
-        ):
-            failures.append(
-                InvariantFailure(
-                    id=(
-                        "plan_failure_page_spread_order_"
-                        f"{previous.page_number:03d}_{current.page_number:03d}"
-                    ),
-                    owner_stage="plan",
-                    code="page_spread_order",
-                    message="Facing-page spread sides must remain ordered.",
-                    artifact_ids=[
-                        f"page_{previous.page_number:03d}",
-                        f"page_{current.page_number:03d}",
-                    ],
-                    evidence=[
-                        f"Pages {previous.page_number} and {current.page_number} "
-                        f"both declare spread side {current.spread_role!r}."
-                    ],
-                )
-            )
 
     for page in pages:
         expected_content_order = [content.id for content in page.content]
@@ -3154,8 +3262,11 @@ def validate_book_plan(
                 )
 
     issues.extend(_uncast_recurring_character_issues(references, pages))
-    if integrated_lettering:
-        issues.extend(_integrated_lettering_density_issues(pages))
+    issues.extend(_integrated_lettering_density_issues(pages) if integrated_lettering
+                  else _crowded_lettering_issues(pages))
+    issues.extend(_page_turn_side_issues(adaptation, pages))
+    issues.extend(_uniform_panel_count_issues(pages))
+    issues.extend(_unestablished_location_issues(adaptation, pages))
     failures.extend(_staging_failures(references, pages))
     return PlanValidation(
         invariant_failures=failures,
@@ -3241,6 +3352,192 @@ def _integrated_lettering_density_issues(
             )
         )
     return issues
+
+
+# Editable pages letter in software, so the limit is reading load, not
+# reproduction: Weisinger's DC rule (via Moore) and Dark Horse's script guide
+# put a panel near 35-50 words and a page near 210.
+_HYBRID_PANEL_WORDS = 50
+_HYBRID_PAGE_WORDS = 210
+
+
+_CROWDED_PAGES_LISTED = 8
+
+
+def _crowded_lettering_issues(
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    """One note naming the pages whose words would crowd out the art."""
+
+    crowded: list[tuple[ComicPage, int, list[int]]] = []
+    for page in pages:
+        panel_words = [
+            sum(len(item.text.split()) for item in content.lettering) for content in page.content
+        ]
+        heavy_panels = [order for order, words in enumerate(panel_words, 1) if words > _HYBRID_PANEL_WORDS]
+        if sum(panel_words) > _HYBRID_PAGE_WORDS or heavy_panels:
+            crowded.append((page, sum(panel_words), heavy_panels))
+    if not crowded:
+        return []
+    worst = sorted(crowded, key=lambda entry: -entry[1])[:_CROWDED_PAGES_LISTED]
+    more = len(crowded) - len(worst)
+    lettering = [item for page, _, _ in crowded for content in page.content for item in content.lettering]
+    return [EditorialIssue(
+        id="plan_issue_crowded_lettering",
+        owner_stage="plan",
+        code="crowded_lettering",
+        message="Some pages carry more words than a comic page comfortably holds.",
+        source_unit_ids=list(dict.fromkeys(unit for item in lettering for unit in item.source_unit_ids)),
+        artifact_ids=[f"page_{page.page_number:03d}" for page, _, _ in crowded],
+        evidence=[
+            f"{len(crowded)} pages run past {_HYBRID_PAGE_WORDS} words, or past "
+            f"{_HYBRID_PANEL_WORDS} words in a panel.",
+            *(
+                f"Page {page.page_number}: {words} words across {len(page.content)} panels"
+                + (f"; panels {heavy} each hold more than {_HYBRID_PANEL_WORDS}." if heavy else ".")
+                for page, words, heavy in worst
+            ),
+            *([f"…and {more} more pages."] if more else []),
+            "Comics editors aim for about 210 words a page and 50 a panel; more panels "
+            "or another page would let the art breathe.",
+        ],
+    )]
+
+
+def _page_turn_side_issues(
+    adaptation: BookAdaptation,
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    """Turn roles placed where the reader sees both facing pages at once."""
+
+    beat_by_id = {beat.id: beat for beat in adaptation.beats}
+    exposed_reveals: list[int] = []
+    unturned_setups: list[int] = []
+    for page in pages:
+        opening = min(page.content, key=lambda content: content.order, default=None)
+        opens_with_reveal = opening is not None and any(
+            (beat := beat_by_id.get(beat_id)) is not None
+            and "reveal" in beat.story_functions and beat.narrative_function == "peak"
+            for beat_id in opening.beat_ids
+        )
+        side = page_side(page.page_number)
+        if side == "right" and page.page_number > 1 and (
+            page.page_turn_role == "reveal" or opens_with_reveal
+        ):
+            exposed_reveals.append(page.page_number)
+        if side == "left" and page.page_turn_role in {"setup", "cliffhanger"}:
+            unturned_setups.append(page.page_number)
+    issues = []
+    if exposed_reveals:
+        issues.append(EditorialIssue(
+            id="plan_issue_reveal_on_right_page",
+            owner_stage="plan",
+            code="reveal_on_right_page",
+            message="Some reveals open a right-hand page, beside the page that sets them up.",
+            artifact_ids=[f"page_{number:03d}" for number in exposed_reveals],
+            evidence=[
+                f"Pages {exposed_reveals} open with a reveal on a right-hand page, so readers "
+                "see it at the same time as the facing page before it.",
+                "A reveal lands hardest at the top of a left-hand (even) page, right after a "
+                "page turn, with its setup closing the right-hand page before.",
+            ],
+        ))
+    if unturned_setups:
+        issues.append(EditorialIssue(
+            id="plan_issue_turn_setup_on_left_page",
+            owner_stage="plan",
+            code="turn_setup_on_left_page",
+            message="Some page-turn hooks sit on a left-hand page, where no turn follows.",
+            artifact_ids=[f"page_{number:03d}" for number in unturned_setups],
+            evidence=[
+                f"Pages {unturned_setups} end on a setup or cliffhanger but are left-hand pages; "
+                "the next page faces them, so the hook is answered without a turn.",
+                "Setups and cliffhangers work best in the last panel of a right-hand (odd) page.",
+            ],
+        ))
+    return issues
+
+
+# Repeated counts invite an editorial look; intentional grids are valid.
+_UNIFORM_PANEL_RUN = 4
+
+
+def _uniform_panel_count_issues(
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    runs: list[list[ComicPage]] = []
+    for page in pages:
+        if runs and len(runs[-1][-1].content) == len(page.content):
+            runs[-1].append(page)
+        else:
+            runs.append([page])
+    return [
+        EditorialIssue(
+            id=f"plan_issue_uniform_panel_count_page_{run[0].page_number:03d}",
+            owner_stage="plan",
+            code="uniform_panel_count",
+            message="Several pages in a row use the same number of panels.",
+            artifact_ids=[f"page_{page.page_number:03d}" for page in run],
+            evidence=[
+                f"Pages {run[0].page_number}-{run[-1].page_number} all use "
+                f"{len(run[0].content)} panels.",
+                "A repeated count can be intentional. Keep a steady grid when it serves tone or timing; "
+                "consider changing proportions or grouping only when the story benefits.",
+            ],
+        )
+        for run in runs
+        if len(run) >= _UNIFORM_PANEL_RUN
+    ]
+
+
+_CLOSE_SHOTS = frozenset({"extreme_close_up", "close_up", "medium_close_up", "insert"})
+
+
+def _unestablished_location_issues(
+    adaptation: BookAdaptation,
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    """A move to a new place whose first two panels never show where we are."""
+
+    moves = {
+        beat.id for beat in adaptation.beats
+        if any(transition.dimension == "place" for transition in beat.transitions)
+    }
+    ordered = [(page.page_number, content) for page in pages
+               for content in sorted(page.content, key=lambda panel: panel.order)]
+    first_panels: dict[str, list[tuple[int, PageContent]]] = {}
+    for index, (number, content) in enumerate(ordered):
+        for beat_id in content.beat_ids:
+            if beat_id not in moves or beat_id in first_panels:
+                continue
+            panels = [(number, content)]
+            if index + 1 < len(ordered):
+                following = ordered[index + 1]
+                next_moves = set(following[1].beat_ids) & moves
+                if not next_moves - set(content.beat_ids):
+                    panels.append(following)
+            first_panels[beat_id] = panels
+    unestablished = [
+        (beat_id, panels[0][0]) for beat_id, panels in first_panels.items()
+        if all(content.camera is not None and content.camera.shot in _CLOSE_SHOTS
+               for _, content in panels)
+    ]
+    if not unestablished:
+        return []
+    return [EditorialIssue(
+        id="plan_issue_unestablished_location_change",
+        owner_stage="plan",
+        code="unestablished_location_change",
+        message="Some scene changes never show the new place.",
+        artifact_ids=[*(beat_id for beat_id, _ in unestablished),
+                      *dict.fromkeys(f"page_{number:03d}" for _, number in unestablished)],
+        evidence=[
+            "The story moves to a new place, but the first panels there are all close shots: "
+            + ", ".join(f"{beat_id} (page {number})" for beat_id, number in unestablished) + ".",
+            "A wide or medium-wide panel early in the new scene tells readers where they are "
+            "and who is where, unless the disorientation is deliberate.",
+        ],
+    )]
 
 
 # A character whose panels repeat one facing and face reads as a pasted
@@ -3439,7 +3736,6 @@ def _page_draft(page: ComicPage) -> _PageDraft:
     return _PageDraft(
         page_number=page.page_number,
         page_turn_role=page.page_turn_role,
-        spread_role=page.spread_role,
         emphasis=page.emphasis,
         density_intent=page.density_intent,
         rhythm_intent=page.rhythm_intent or page.layout_intent,
@@ -3475,7 +3771,6 @@ def _page_map_entry(page: ComicPage) -> _PageMapEntry:
         beat_ids=tuple(dict.fromkeys(beat_id for content in page.content for beat_id in content.beat_ids)),
         lettering_ids=tuple(item.id for content in page.content for item in content.lettering),
         page_turn_role=page.page_turn_role,
-        spread_role=page.spread_role,
         emphasis=page.emphasis,
         density_intent=page.density_intent,
         rhythm_intent=page.rhythm_intent or page.layout_intent,
@@ -3522,6 +3817,7 @@ def estimate_page_replan_cost(
     adaptation, _plan, _pages, _range, concerns, page_map = _replan_inputs(artifacts, references, page_number)
     prompt = _detail_batch_prompt(
         adaptation, references, page_map, start=page_number - 1, stop=page_number, concerns=concerns,
+        story_tone=artifacts.read_brief().tone,
     )
     detail = estimate_text_cost(model, prompt * 2, output_chars=4_000) * 2
     # Draw requires a current narrative review of the whole plan. Unchanged
@@ -3563,6 +3859,8 @@ async def replan_page(
         start=index, stop=page_number,
         generate=generate, ctx=sink,  # type: ignore[arg-type]
         concerns=concerns,
+        # The replanned page keeps the tone the rest of the book was laid out with.
+        story_tone=artifacts.read_brief().tone,
         previous_draft=_BookPlanDraft(rhythm_summary=page_map.rhythm_summary, pages=(drafts[index],)),
         artifacts=artifacts, model=model,
     )

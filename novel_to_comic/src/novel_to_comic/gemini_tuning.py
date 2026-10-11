@@ -55,17 +55,17 @@ ADDENDA: dict[str, str] = {
     ),
     "plan.map": _HEADER + (
         "- Each page's emphasis must equal the narrative_function of at least one beat on that page.\n"
-        "- Put a reveal at the top of a page, with its setup closing the previous page, so the page turn "
-        "lands it.\n"
-        "- Allocate pages so dialogue-heavy stretches are not crammed: a page should not carry more "
-        "lettering than about 4-6 panels can hold at 25 words each.\n"
+        "- Put a turn reveal at the top of a left-hand (even) page, with its setup closing the "
+        "right-hand (odd) page before it, so the page turn lands it.\n"
+        "- Allocate dialogue-heavy stretches against the edition-specific word and item budgets "
+        "supplied in the main prompt before locking the page map.\n"
     ),
 }
 _PANEL_RULES = (
     "- Vary panel counts with the page's job: peaks and reveals 1-3 large panels; establishing and "
-    "transition pages 2-4; dialogue-heavy prolongation 4-6. Never use the same panel count on more "
-    "than three consecutive pages.\n"
-    "- Keep each panel's lettering under about 25 words in total. When a beat carries more, spread "
+    "transition pages 2-4; dialogue-heavy prolongation 4-6. These are options, not quotas; "
+    "keep a repeated grid when it supports the story tone or timing.\n"
+    "- Keep each panel's lettering under about 50 words in total. When a beat carries more, spread "
     "its lettering across several panels of that beat (new angle, reaction, or close-up).\n"
 )
 ADDENDA["plan.detail"] = _HEADER + _PANEL_RULES

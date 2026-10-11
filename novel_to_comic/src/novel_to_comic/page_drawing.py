@@ -974,7 +974,8 @@ def _compile_prompt(
         "composition, framing and artwork, but never perpetuate conflicting identity, state, "
         "style or copy. Apply only the authoritative change list within those constraints. "
         "Within them, choose camera, acting, lighting, staging and unpinned panel proportions "
-        "to express visual and rhythm intent. Canonical continuity describes established "
+        "to realize the planned layout proportions, grouping and rhythm within the selected style; "
+        "do not add unplanned overlaps, insets or extra panels. Canonical continuity describes established "
         "start/end staging, not a request to repeat completed actions.\n"
         + lettering_direction
         + depiction_direction
@@ -1033,7 +1034,8 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         "Legitimate in-world signage is distinct; never substitute it for publishable copy.\n"
         "AUTHORITY: preserve approved subject/state references, physical anchors and continuity guards "
         "verbatim in meaning, current staging, selected art direction, page framing and author pins. "
-        "Compose each scene naturally within its panel. "
+        "Realize the planned panel proportions, grouping and reading order within the selected style; "
+        "do not add unplanned overlaps, insets or extra panels. Compose each scene naturally within its panel. "
         "Style proof images are RENDERING/STYLE authority only: do not copy their words, balloons, "
         "captions or page content. Subject and location assets own identity, state, architecture "
         "and material identity; they do not prescribe an additional surface-texture layer. "

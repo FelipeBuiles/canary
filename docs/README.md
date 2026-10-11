@@ -96,6 +96,9 @@ retained as current reference.
 - [Graphic novel style quality](research/2026-10-08-graphic-novel-style-quality.md):
   October 8 evidence on color, legibility and market styles, a cyanotype/novelty
   medium gate, and proposed Style proof portfolio changes; not implemented.
+- [Adapt and Plan comics craft](research/2026-10-10-adapt-plan-comics-craft.md):
+  October 10 evidence on adaptation economy, word and panel budgets, recto/verso
+  page turns and staging, with proposed Adapt and Plan changes; not implemented.
 - [Self-service launch strategy](proposals/self-service-launch.md): September 9
   commercial direction, independent-use gates and automation priorities.
 - [First-scene campaign kit](proposals/first-scene-campaign.md): prepared copy,

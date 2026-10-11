@@ -1923,3 +1923,21 @@ def test_reference_identity_reaches_the_image_prompt(tmp_path):
     assert first["identity"] == "adult male; stature: two and a half feet tall"
     assert all("identity" not in ref for ref in brief["approved_page_references"] if ref["image"] != "asset-A")
     assert "never normalize it to ordinary height" in brief["reference_scope"]
+
+
+@pytest.mark.parametrize("lettering_mode", ["editable", "integrated"])
+def test_story_layout_direction_reaches_draw_without_changing_panel_authority(tmp_path, lettering_mode):
+    page = _page().model_copy(update={
+        "layout_intent": "A broad upper panel pauses over the landscape; narrower lower panels hold the reaction.",
+        "rhythm_intent": "Quiet, restrained dread; clear rectangular tiers.",
+    })
+    profile = current_page_capability_profile(Config(lettering_mode=lettering_mode))
+    compiled = compile_page_generation_request(
+        page, _edition(profile), _inventory(), _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+    )
+    payload = _provider_brief(compiled.request.prompt)
+    assert payload["canonical_staging_and_layout"] == page.layout_intent
+    assert page.rhythm_intent in compiled.request.prompt
+    assert "do not add unplanned overlaps, insets or extra panels" in compiled.request.prompt
+    assert bool(compiled.request.lettering) == (lettering_mode == "integrated")
