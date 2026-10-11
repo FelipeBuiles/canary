@@ -311,3 +311,40 @@ def test_account_endpoint_never_fails_app_load(tmp_path):
     with patch.object(events, "record_account_observed", side_effect=RuntimeError("auth admin down")):
         response = TestClient(app).post("/api/events/account")
     assert response.status_code == 202
+
+
+@pytest.mark.parametrize("rows,expected", [([{"id": "signup"}], True), ([], False)])
+def test_ga4_signup_claim_is_atomic_scoped_and_recent(tmp_path, rows, expected):
+    from novel_to_comic.server.auth import get_current_user
+    from novel_to_comic.server.routers import events
+
+    user = "00000000-0000-0000-0000-0000000000a2"
+    app = create_app(tmp_path, dev=True)
+    app.dependency_overrides[get_current_user] = lambda: user
+    query = MagicMock()
+    for name in ("update", "eq", "gte", "lte", "is_"):
+        getattr(query, name).return_value = query
+    query.execute.return_value.data = rows
+    db = MagicMock()
+    db.table.return_value = query
+    with patch.object(events, "get_db", return_value=db):
+        response = TestClient(app).post("/api/events/ga4-signup")
+    assert response.json() == {"signup": expected}
+    query.eq.assert_any_call("event_name", "account_created")
+    query.eq.assert_any_call("user_id", user)
+    query.is_.assert_called_once_with("ga4_signup_claimed_at", "null")
+    assert query.gte.call_args.args[0] == "occurred_at"
+    assert query.lte.call_args.args[0] == "occurred_at"
+    assert "ga4_signup_claimed_at" in query.update.call_args.args[0]
+
+
+def test_ga4_signup_claim_failure_is_nonblocking_and_not_a_conversion(tmp_path):
+    from novel_to_comic.server.auth import get_current_user
+    from novel_to_comic.server.routers import events
+
+    app = create_app(tmp_path, dev=True)
+    app.dependency_overrides[get_current_user] = lambda: "author"
+    with patch.object(events, "get_db", side_effect=RuntimeError("missing migration")):
+        response = TestClient(app).post("/api/events/ga4-signup")
+    assert response.status_code == 200
+    assert response.json() == {"signup": False}

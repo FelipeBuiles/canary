@@ -3465,5 +3465,13 @@
   "earlier plan": "earlier plan",
   "Back to selected": "Back to selected",
   "Compare with": "Compare with",
-  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits."
+  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.",
+  "Google Analytics preferences": "Google Analytics preferences",
+  "Optional Google Analytics": "Optional Google Analytics",
+  "Allow Google Analytics to measure visits and completed signups? It uses analytics cookies. Your stories, artwork, and account details stay out of Google Analytics.": "Allow Google Analytics to measure visits and completed signups? It uses analytics cookies. Your stories, artwork, and account details stay out of Google Analytics.",
+  "Google Analytics is enabled.": "Google Analytics is enabled.",
+  "Google Analytics is disabled.": "Google Analytics is disabled.",
+  "Decline Google Analytics": "Decline Google Analytics",
+  "Allow Google Analytics": "Allow Google Analytics",
+  "Privacy Policy": "Privacy Policy"
 }

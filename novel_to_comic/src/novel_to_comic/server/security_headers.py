@@ -13,7 +13,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "base-uri 'self'",
         "object-src 'none'",
         "frame-ancestors 'none'",
-        "script-src 'self' https://js.stripe.com",
+        "script-src 'self' https://js.stripe.com https://www.googletagmanager.com",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
         "img-src 'self' data: blob: https:",
@@ -22,7 +22,9 @@ CONTENT_SECURITY_POLICY = "; ".join(
         (
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
             "https://*.stripe.com https://us.i.posthog.com https://eu.i.posthog.com "
-            "https://us-assets.i.posthog.com https://eu-assets.i.posthog.com"
+            "https://us-assets.i.posthog.com https://eu-assets.i.posthog.com "
+            "https://*.google-analytics.com https://*.analytics.google.com "
+            "https://*.googletagmanager.com"
         ),
         # The homepage film loads the privacy-enhanced YouTube player on click.
         "frame-src https://js.stripe.com https://hooks.stripe.com https://www.youtube-nocookie.com",

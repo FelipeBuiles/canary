@@ -12,6 +12,9 @@ import { loadPublicPage } from "./lib/publicRoutes";
 import { publicPages, publicSchema, isPublicHome } from "./lib/publicPages";
 import { usePublicMetadata } from "./lib/publicMetadata";
 import { getPublicBootstrap } from "./lib/publicBootstrap";
+import { AnalyticsConsent } from "./components/AnalyticsConsent";
+import { subscribeGa4Consent, trackGa4Pageview } from "./lib/ga4";
+import { reportGa4Signup, setGa4SignupAccount } from "./lib/ga4Signup";
 
 const loadShell = () => import("./layout/Shell").then(({ Shell }) => ({ default: Shell }));
 const Shell = lazy(loadShell);
@@ -111,9 +114,21 @@ function PageviewTracker() {
   const { pathname } = useLocation();
   const { session, loading } = useAuth();
   const signedIn = !!session;
+  const userId = session?.user.id;
   useEffect(() => {
-    if (!loading) trackPageview(pathname, signedIn);
+    if (!loading) {
+      trackPageview(pathname, signedIn);
+      trackGa4Pageview(pathname, signedIn);
+    }
   }, [pathname, signedIn, loading]);
+  useEffect(() => {
+    setGa4SignupAccount(userId);
+    const report = () => {
+      if (userId) void reportGa4Signup(userId);
+    };
+    report();
+    return subscribeGa4Consent(report);
+  }, [userId]);
   return null;
 }
 
@@ -137,6 +152,7 @@ export function App() {
     <I18nProvider pageLanguage={pageLanguage}>
       <RouteMetadata />
       <PageviewTracker />
+      <AnalyticsConsent />
       <Routes>
         <Route path="/read/:id" element={lazyRoute(PublicBookPage)} />
         <Route path="/samples" element={lazyRoute(SampleLibraryPage)} />

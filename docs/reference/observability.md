@@ -1,9 +1,56 @@
 # PostHog and launch learning
 
 Status: Current implementation; cloud activation and deployment remain separate.
-Last reviewed: 2026-10-05.
+Last reviewed: 2026-10-11.
 
 ## What is consolidated
+
+### Optional GA4 acquisition analytics
+
+GA4 is implemented alongside PostHog; deployment and database activation are
+separate. The production web stream is `G-R9Q5LX1E00`, set only in the Depot
+CI build as `VITE_GA4_MEASUREMENT_ID`. Docker, Compose, and `dev-prod` builds
+default to no ID, so local production-mode builds never report to the live stream. Development builds
+and builds without a valid ID do not load Google. The public measurement ID
+is configuration, not an API secret.
+
+`web/src/lib/ga4.ts` loads Google's tag only after an explicit Google Analytics
+choice. The banner offers allow/decline; `/legal/privacy` provides a way to
+change that choice. It controls GA4 specifically, independently of the existing
+PostHog diagnostics. Declining disables subsequent GA4 collection, removes
+host-only `_ga` cookies, and drops pending page views. Re-accepting in the same
+visit does not resend a page view already sent, and the loaded tag may keep its
+in-memory client ID until the page reloads. Preference storage denial
+limits the choice to the current visit. Choices also synchronize across tabs.
+
+React Router sends manual page views using canonical route templates, static
+page titles, bounded campaign tokens, and referring origins or canonical routes.
+Raw query strings, fragments, project/book IDs, private titles, and account IDs
+are omitted. Global tag defaults use the same sanitized values for automatic
+engagement events. Google signals and advertising personalization are disabled.
+Enhanced Measurement must remain **off** in the GA4 web stream; `send_page_view:
+false` disables the initial automatic view but cannot alone disable history
+events. The stream setting was disabled in the Google UI on 2026-10-11.
+
+After the tag loads with consent, authenticated browsers may claim one `sign_up`
+attempt via `POST /api/events/ga4-signup`. An atomic update claims only their
+server-confirmed `account_created` row from the preceding 24 hours. Tabs and
+devices cannot claim it twice. Apply
+`docs/migrations/2026-10-11-ga4-signup-claim.sql` before the release: it adds the
+claim marker and excludes existing signups. A lost response, navigation during
+the claim, ad blocker, or Google outage can lose this optional report; it is
+never retried as a new conversion. Supabase's signup record remains authoritative.
+Delayed confirmations beyond 24 hours do not generate a GA4 signup conversion.
+The browser coordinator retains its one attempt across React remounts and checks
+the current account and consent again before reporting a successful claim.
+
+Rollout verification: accept on a public landing page, navigate and check one
+sanitized page view per route in GA4 DebugView/Realtime; decline and verify no
+further collection and no `_ga` cookies; confirm a new account produces one
+`sign_up`, with returning accounts producing none. Production receipt has not
+been established by local mocked tests. `sign_up` was registered as a key event
+in GA4 on 2026-10-11, without a default monetary value. Revenue/Measurement
+Protocol reporting is a later integration and is not implemented here.
 
 PostHog replaces the Sentry clients and custom Langfuse exporter. The backend
 uses one event client plus HTTP OpenTelemetry exporters directly to PostHog.

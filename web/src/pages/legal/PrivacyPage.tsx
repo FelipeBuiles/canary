@@ -1,4 +1,5 @@
 import { LegalLayout } from "../../layout/LegalLayout";
+import { AnalyticsConsent } from "../../components/AnalyticsConsent";
 
 /**
  * Privacy Policy — written to be *truthful* about what the Service actually
@@ -10,7 +11,7 @@ import { LegalLayout } from "../../layout/LegalLayout";
  */
 export function PrivacyPage() {
   return (
-    <LegalLayout title="Privacy Policy" updated="September 28, 2026">
+    <LegalLayout title="Privacy Policy" updated="October 11, 2026">
       <p>
         This Privacy Policy explains what Scenewright collects, how we use it,
         and the choices you have. We aim to collect only what we need to run the
@@ -68,6 +69,17 @@ export function PrivacyPage() {
           <strong>Stripe</strong> for payment processing.
         </li>
         <li>
+          <strong>Google Analytics</strong>, when you allow it, measures visits,
+          traffic sources, and completed signups. It uses first-party analytics
+          cookies to recognize browsers and sessions. Page addresses are reduced
+          to route templates; campaign tags are validated and referring addresses
+          contain only a site origin or a route template. We do not send stories,
+          artwork, email addresses, account identifiers, or private page titles to
+          Google Analytics. Advertising personalization and Google signals are disabled.
+          This optional choice controls Google Analytics; PostHog diagnostics and
+          usage collection are described separately below.
+        </li>
+        <li>
           <strong>PostHog</strong> for page views, selected usage milestones,
           error reports, and operational diagnostics, linked to an account
           identifier once you sign in. Page views record a route template (never
@@ -104,6 +116,8 @@ export function PrivacyPage() {
       </p>
 
       <h2>Your Choices</h2>
+      <p>You can allow or decline Google Analytics here. Declining stops future Google Analytics collection and removes its analytics cookies from this browser.</p>
+      <AnalyticsConsent preferences />
       <ul>
         <li>You can delete any project at any time from the app.</li>
         <li>You can request deletion of your account by contacting us.</li>
@@ -116,7 +130,9 @@ export function PrivacyPage() {
       <p>
         The Service uses a session cookie so you stay logged in across page
         loads and so browser-native consumers (such as image requests) are
-        authenticated. We do not use advertising or cross-site tracking cookies.
+        authenticated. If you allow Google Analytics, it also uses first-party
+        analytics cookies. Your Google Analytics preference is stored locally in
+        your browser. We do not use advertising or cross-site tracking cookies.
       </p>
 
       <h2>Children</h2>

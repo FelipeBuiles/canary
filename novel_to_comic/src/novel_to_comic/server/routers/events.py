@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -68,3 +69,24 @@ def observe_account(user_id: str = Depends(get_current_user)):
         # Analytics must never block the app shell.
         logger.warning("Account analytics capture failed: %s", type(exc).__name__)
     return {"status": "accepted"}
+
+
+@router.post("/ga4-signup")
+def claim_ga4_signup(user_id: str = Depends(get_current_user)):
+    """One best-effort browser report per recent, server-confirmed account creation.
+
+    Claim atomically across tabs/devices. A blocked/lost Google request may lose
+    this optional report; it never changes the authoritative signup record.
+    """
+    now = datetime.now(UTC)
+    try:
+        rows = (get_db().table("product_events")
+                .update({"ga4_signup_claimed_at": now.isoformat()})
+                .eq("event_name", "account_created").eq("user_id", user_id)
+                .gte("occurred_at", (now - timedelta(hours=24)).isoformat())
+                .lte("occurred_at", now.isoformat())
+                .is_("ga4_signup_claimed_at", "null").execute()).data
+        return {"signup": bool(rows)}
+    except Exception as exc:
+        logger.warning("GA4 signup claim failed: %s", type(exc).__name__)
+        return {"signup": False}

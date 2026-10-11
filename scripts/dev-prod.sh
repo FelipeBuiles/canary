@@ -100,6 +100,7 @@ echo "[dev-prod]   VITE_CANARY_ENV            = ${VITE_CANARY_ENV:-production}"
 # Export so docker compose's build-args interpolation picks them up.
 export VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY VITE_CANARY_ENV
 export VITE_POSTHOG_PROJECT_TOKEN VITE_POSTHOG_HOST  # may be empty — Dockerfile handles that
+export VITE_GA4_MEASUREMENT_ID
 
 # ─── Default subcommand: up --build canary-prod ────────────────────────────
 if [ "$#" -eq 0 ]; then
