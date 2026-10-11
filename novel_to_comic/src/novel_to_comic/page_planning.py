@@ -251,6 +251,13 @@ class _BookPlanDraft(BaseModel):
 class _LetteringPlacementDraft(LetteringReservationIntent):
     panel_number: int = Field(strict=True, ge=1)
 
+    @field_validator("preferred_zone", mode="before")
+    @classmethod
+    def _center_reads_as_top_center(cls, value: object) -> object:
+        # The panel centre is reserved for the subject. A writer that names it
+        # means "centred"; one bad zone must not regenerate a whole batch.
+        return "top-center" if value in {"middle-center", "center"} else value
+
 
 class _PageDetailDraft(_PageDraft):
     """One authored destination per locked item; silent panels need no entries."""
@@ -584,7 +591,9 @@ _SEMANTIC_PAGE_CONTRACT = (
     "vary shot size across a page and keep unusual angles for emphasis. For every "
     "visible entity whose reference kind is character, author exactly one acting entry, "
     "including on-screen speakers, appearance-state carriers, masked figures, silhouettes, "
-    "and dead or motionless characters. Describe an obscured face or absent gaze honestly; "
+    "dead or motionless characters, and speaking machines or computers (a panel that "
+    "carries a character's on-screen line shows that character, so it needs the entry; "
+    "a machine's expression is its display or indicator state). Describe an obscured face or absent gaze honestly; "
     "do not omit the entry or invent visible eyes or a living expression. "
     "facing is the reader's screen direction. gaze names whom or what the eyes are on "
     "(an entity ID or a concrete target). expression is the specific momentary face for "
@@ -1658,6 +1667,7 @@ async def _generate_detail_batch(
     ))
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
         candidate_prompt = attempt_prompt
+        draft = None
         # A formatting slip must not consume the remaining semantic repair.
         for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             with ai_source_context(f"pages_{start + 1}-{stop}", source_unit_ids):
@@ -1704,6 +1714,18 @@ async def _generate_detail_batch(
             break
         if not errors and not reference_failures:
             return draft
+        _log(ctx, f"Plan pages {start + 1}-{stop} detail rejected: " + "; ".join(
+            [*errors, *(f"[{f.code}] {' '.join(f.evidence)}" for f in reference_failures)])[:2000])
+        local = _page_local_concerns(draft, page_map.pages[start:stop], reference_failures)
+        if local is not None and len(local) < stop - start:
+            # Most rejections cite one or two pages. Re-detailing only those
+            # keeps the accepted pages and takes a fraction of a whole batch.
+            # The batch response stays checkpointed: a resume replays it and
+            # repeats the same local repairs.
+            return await _repair_detail_pages(
+                draft, local, adaptation, references, page_map, generate=generate, ctx=ctx,
+                story_instruction=story_instruction, story_tone=story_tone, artifacts=artifacts, model=model,
+            )
         if artifacts is not None:
             discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
         if attempt == _MAX_PLAN_ATTEMPTS:
@@ -1731,6 +1753,83 @@ async def _generate_detail_batch(
             ])
         )
     raise AssertionError("detail loop must return or raise")
+
+
+def _log(ctx: Any, message: str) -> None:
+    # A standalone re-plan collects usage only and has no stage log.
+    if hasattr(ctx, "log"):
+        ctx.log(message, level="warning")
+
+
+def _page_local_concerns(
+    draft: _BookPlanDraft | None,
+    target_pages: tuple[_PageMapEntry, ...],
+    reference_failures: tuple[InvariantFailure, ...],
+) -> dict[int, list[InvariantFailure]] | None:
+    """Group a compiled batch's rejections by page, or None when one is unattributable."""
+
+    if draft is None or len(draft.pages) != len(target_pages):
+        return None
+    by_page: dict[int, list[InvariantFailure]] = {}
+    for page, mapped in zip(draft.pages, target_pages, strict=True):
+        single = _BookPlanDraft(rhythm_summary=draft.rhythm_summary, pages=(page,))
+        if errors := _detail_matches_map(single, (mapped,)):
+            by_page.setdefault(mapped.page_number, []).append(InvariantFailure(
+                id=f"plan_detail_failure_{mapped.page_number}",
+                owner_stage="plan",
+                code="beat_allocation",
+                message="Page detail must preserve its fixed global page-map allocation.",
+                artifact_ids=[f"page_{mapped.page_number:03d}"],
+                evidence=list(errors),
+            ))
+    batch_numbers = {mapped.page_number for mapped in target_pages}
+    for failure in reference_failures:
+        numbers = {
+            int(match.group(1)) for artifact_id in failure.artifact_ids
+            if (match := re.fullmatch(r"page_(\d{3})(?:_content_\d{3})?", artifact_id))
+        }
+        if not numbers or not numbers <= batch_numbers:
+            return None
+        for number in numbers:
+            by_page.setdefault(number, []).append(failure)
+    return by_page
+
+
+async def _repair_detail_pages(
+    draft: _BookPlanDraft,
+    concerns_by_page: dict[int, list[InvariantFailure]],
+    adaptation: BookAdaptation,
+    references: ApprovedVisualReferenceInventory,
+    page_map: _BookPageMap,
+    *,
+    generate: StructuredGenerator,
+    ctx: StageRuntime,
+    story_instruction: str,
+    story_tone: str,
+    artifacts: TargetArtifacts | None,
+    model: str,
+) -> _BookPlanDraft:
+    """Re-detail the cited pages of a compiled batch, each with its own bounded attempts."""
+
+    by_number = {page.page_number: page for page in draft.pages}
+    repairs = await run_paid_shards([
+        lambda number=number, concerns=concerns: _generate_detail_batch(
+            adaptation, references, page_map,
+            start=number - 1, stop=number,
+            generate=generate, ctx=ctx,
+            concerns=tuple(concerns),
+            story_instruction=story_instruction, story_tone=story_tone,
+            previous_draft=_BookPlanDraft(rhythm_summary=draft.rhythm_summary, pages=(by_number[number],)),
+            artifacts=artifacts, model=model,
+        )
+        for number, concerns in sorted(concerns_by_page.items())
+    ], limit=len(concerns_by_page))
+    for repaired in repairs:
+        by_number.update({page.page_number: page for page in repaired.pages})
+    return draft.model_copy(update={
+        "pages": tuple(by_number[page.page_number] for page in draft.pages),
+        "editorial_issues": (*draft.editorial_issues, *(issue for r in repairs for issue in r.editorial_issues)),
+    })
 
 
 def _merge_detail_drafts(
@@ -1946,7 +2045,8 @@ async def _produce_book_plan_two_pass(
             for index in grouped:
                 progress.batch_state(index, "needs_repair")
             progress.publish("repairing")
-            for index, concerns in grouped.items():
+
+            async def repair_batch(index: int, concerns: list) -> None:
                 start, stop, previous_draft = by_index[index]
                 progress.batch_state(index, "repairing")
                 repaired = await _generate_detail_batch(
@@ -1966,6 +2066,14 @@ async def _produce_book_plan_two_pass(
                 ctx.progress(ctx.stage_state.items_done, total_steps)
                 progress.batch_done(index, repaired)
                 by_index[index] = (start, stop, repaired)
+
+            # Batches repair independently; serial repairs added a full detail
+            # call's latency per cited batch.
+            await run_paid_shards(
+                [lambda index=index, concerns=concerns: repair_batch(index, concerns)
+                 for index, concerns in grouped.items()],
+                limit=concurrency,
+            )
             batches = list(by_index.values())
             draft = _merge_detail_drafts(
                 adaptation,
