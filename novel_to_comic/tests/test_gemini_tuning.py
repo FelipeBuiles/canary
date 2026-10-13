@@ -5,9 +5,11 @@ from copy import deepcopy
 import pytest
 
 from novel_to_comic.ai.gemini_schema import gemini_output_schema
+from novel_to_comic.ai.prompt_parts import cache_join, prompt_parts
 from novel_to_comic.extraction_schema import extraction_schema
 from novel_to_comic.gemini_tuning import (
-    ADDENDA, gemini_tuning_enabled, gemini_tuning_override, tuned_request, tuned_user_content,
+    ADDENDA, MODEL_ADDENDA, gemini_tuning_enabled, gemini_tuning_override, tuned_request,
+    tuned_user_content,
 )
 
 
@@ -15,10 +17,41 @@ from novel_to_comic.gemini_tuning import (
 def test_checklists_follow_context_once_and_leave_other_providers_unchanged(feature):
     context = "Author's exact words and protected visual anchors."
     tuned = tuned_user_content("gemini-3.8-flash", feature, context)
-    assert tuned == context + ADDENDA[feature]
+    extra = MODEL_ADDENDA["gemini-3.8-flash"].get(feature, "")
+    assert tuned == cache_join(context, (ADDENDA[feature] + extra).lstrip("\n"))
     assert tuned_user_content("gemini-3.8-flash", feature, tuned) == tuned
     for model in ("gpt-6.1-sol", "claude-opus-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash"):
         assert tuned_user_content(model, feature, context) == context
+
+
+@pytest.mark.parametrize("feature", ["extract.story_bible", "brief.infer", "adapt.lettering", "adapt.book",
+                                     "plan.map", "plan.book"])
+def test_argon_appends_its_own_checklist_after_the_shared_one(feature):
+    from novel_to_comic.gemini_tuning import MODEL_ADDENDA
+
+    context = "Author's exact words."
+    extra = MODEL_ADDENDA["gemini-4-argon"][feature]
+    tuned = tuned_user_content("gemini-4-argon", feature, context)
+    assert tuned == cache_join(context, (ADDENDA[feature] + extra).lstrip("\n"))
+    assert tuned_user_content("gemini-4-argon", feature, tuned) == tuned
+    assert extra not in tuned_user_content("gemini-3.8-flash", feature, context)
+    with gemini_tuning_override(False):
+        assert tuned_user_content("gemini-4-argon", feature, context) == context
+
+
+@pytest.mark.parametrize("feature", ["adapt.lettering", "adapt.book"])
+def test_flash_adapt_keeps_lettering_to_source_wording_without_reaching_argon(feature):
+    extra = MODEL_ADDENDA["gemini-3.8-flash"][feature]
+    assert "Never invent a cry" in extra and "thought balloon" in extra
+    assert extra in tuned_user_content("gemini-3.8-flash", feature, "context")
+    assert extra not in tuned_user_content("gemini-4-argon", feature, "context")
+
+
+def test_argon_leaves_features_without_its_own_checklist_on_the_shared_one():
+    context = "Author's exact words."
+    for feature in ("adapt.blueprint", "plan.detail"):
+        assert tuned_user_content("gemini-4-argon", feature, context) == cache_join(
+            context, ADDENDA[feature].lstrip("\n"))
 
 
 def test_review_and_uncovered_features_retain_their_original_prompt():
@@ -86,14 +119,21 @@ def test_every_gemini_structured_request_carries_its_compiled_schema_as_json_mod
                "feature": "extract.story_bible", "json_schema": extraction_schema()}
     for model in ("gpt-6.1-sol", "claude-opus-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash"):
         assert tuned_request(model, request) is request
-    for model in ("gemini-3.8-flash", "claude-haiku-5-5", "bedrock-claude-haiku-5-5"):
+    for model in ("gemini-4-argon", "gemini-3.8-flash", "claude-haiku-5-5", "bedrock-claude-haiku-5-5"):
         for feature in ("extract.story_bible", "extract.sequences", "brief.infer", "plan.detail", "text.generate"):
             tuned = tuned_request(model, {**request, "feature": feature})
             assert tuned["json_schema"] is None and tuned["json_mode"] is True
-            assert tuned["system_prompt"].startswith("Rules.\n\nOUTPUT CONTRACT:")
-            assert json.loads(tuned["system_prompt"].split("\n")[-1]) == gemini_output_schema(request["json_schema"])
-            if model.startswith("claude") or model.startswith("bedrock"):
-                assert tuned["user_content"] == "Source."
+            if model == "gemini-4-argon":
+                # Argon's contract is the final user part, after the shared content.
+                assert tuned["system_prompt"] == "Rules."
+                contract = prompt_parts(tuned["user_content"])[-1]
+                assert prompt_parts(tuned["user_content"])[0] == "Source."
+            else:
+                contract = tuned["system_prompt"].removeprefix("Rules.\n\n")
+                assert prompt_parts(tuned["user_content"])[0] == "Source."
+                assert "OUTPUT CONTRACT" not in tuned["user_content"]
+            assert contract.startswith("OUTPUT CONTRACT:")
+            assert json.loads(contract.split("\n")[-1]) == gemini_output_schema(request["json_schema"])
         plain = tuned_request(model, {**request, "json_schema": None})
         assert plain["system_prompt"] == "Rules." and "json_mode" not in plain
 

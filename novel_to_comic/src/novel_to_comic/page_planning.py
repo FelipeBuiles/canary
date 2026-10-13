@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from novel_to_comic.ai.prompt_parts import CACHE_BREAK
 from novel_to_comic.appearance_chronology import (
     CODE as CHRONOLOGY_CODE,
     appearance_chronology,
@@ -1441,8 +1442,8 @@ async def _generate_page_map(
         if attempt == _MAX_PLAN_ATTEMPTS:
             raise PlanInvariantError(validation, history=tuple(history))
         attempt_prompt = (
-            prompt
-            + "\n\nRepair the compact page map. Return a complete corrected map, "
+            prompt + CACHE_BREAK
+            + "Repair the compact page map. Return a complete corrected map, "
             "preserving valid global rhythm decisions.\nPREVIOUS PAGE MAP:\n"
             + page_map.model_dump_json()
             + "\nFAILURES:\n"
@@ -1649,8 +1650,8 @@ async def _generate_detail_batch(
         previous_view = _detail_response_view(previous_draft)
         if gemini:
             previous_view = generic_detail_view(previous_view)
-        base_prompt += (
-            "\n\nRepair only the cited staging/composition defects in this existing detail. "
+        base_prompt += CACHE_BREAK + (
+            "Repair only the cited staging/composition defects in this existing detail. "
             "Preserve unaffected panels and all fixed page allocations. If the concern "
             "requires moving lettering between pages, retain that allocation unchanged; "
             "the global-map pass owns such changes. Return the complete target batch. "
@@ -1741,8 +1742,8 @@ async def _generate_detail_batch(
                 ))
             raise PlanInvariantError(PlanValidation(invariant_failures=failures))
         attempt_prompt = (
-            base_prompt
-            + "\n\nYour previous detail violated the fixed page map or approved references. Return only "
+            base_prompt + CACHE_BREAK
+            + "Your previous detail violated the fixed page map or approved references. Return only "
             "corrected target-page detail. Preserve unaffected panels and their "
             "word placements. Correct affected visual intentions together with "
             "their lettering; never restage an event to accommodate a repeated ID. "
@@ -2204,7 +2205,7 @@ def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> st
     """Re-prompt with the exact schema errors from the previous payload."""
 
     return (
-        f"{base_prompt}\n\nYour previous response did not match the required JSON "
+        f"{base_prompt}{CACHE_BREAK}Your previous response did not match the required JSON "
         "schema. Return one corrected, complete JSON object: use JSON arrays for "
         "every list field and exactly one of the permitted values for every "
         "enumerated field.\n\nYOUR PREVIOUS JSON:\n"
@@ -2234,7 +2235,7 @@ def _repair_prompt(
         else "Correct the invalid allocation while preserving unaffected story decisions. "
     )
     return (
-        f"{prompt}\n\nYour previous global page plan violated these blocking "
+        f"{prompt}{CACHE_BREAK}Your previous global page plan violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
         "resolves every failure. " + scope + "Preserve exact words, story order, "
         "and source-supported events.\n\n"

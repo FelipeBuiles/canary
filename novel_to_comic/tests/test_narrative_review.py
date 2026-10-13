@@ -50,6 +50,21 @@ from .test_book_adaptation import (
 )
 
 
+
+def _supplied(text):
+    """Merge the JSON parts of a prompt: review story context, window, or one detail payload."""
+    from novel_to_comic.ai.prompt_parts import CACHE_BREAK
+
+    merged = {}
+    for piece in text.split("\n", 1)[1].split(CACHE_BREAK):
+        try:
+            value = json.JSONDecoder().raw_decode(piece.lstrip())[0]
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            merged.update(value)
+    return merged
+
 def runtime(tmp_path, stage):
     return StageRuntime(
         stage,
@@ -121,9 +136,7 @@ def canonical(adaptation, draft):
 
 
 def verdict(request, *, accept=True, finding=None):
-    context = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])[
-        0
-    ]
+    context = _supplied(request["user_content"])
     # Existing repair/resume fixtures explicitly model substantive defects.
     # Supply the new evidence contract; policy tests below build unsubstantiated
     # responses directly rather than using this authoring fixture.
@@ -516,9 +529,7 @@ def test_map_review_padding_does_not_repeat_map_or_detail_generation(tmp_path):
         if request["feature"] == "plan.detail":
             details += 1
             assert maps == 1
-            context = json.JSONDecoder().raw_decode(
-                request["user_content"].split("\n", 1)[1]
-            )[0]
+            context = _supplied(request["user_content"])
             numbers = context["target_page_numbers"]
             raw = draft_for(a, 14)
             return ApiResult(
@@ -604,11 +615,61 @@ def test_review_windows_include_omitted_source_and_cross_boundary_context():
     context["units"] = [
         {"id": f"omitted_{n}", "text": "x" * 13000} for n in range(3)
     ] + context["units"]
-    prompts = [json.loads(p.split("\n", 1)[1]) for p in _review_prompts(context)]
+    prompts = [_supplied(p) for p in _review_prompts(context)]
     assert {u["id"] for p in prompts for u in p["units"]} == {
         u["id"] for u in context["units"]
     }
     assert all(p["global_story"] for p in prompts)
+
+
+def test_review_window_size_follows_the_reviewing_route():
+    a = _book_adaptation()
+    context = adaptation_context(_source_document(), _approved_brief(), a)
+    context["units"] = [
+        {"id": f"omitted_{n}", "text": "x" * 13000} for n in range(3)
+    ] + context["units"]
+    flash = [_supplied(p) for p in _review_prompts(context, "gemini-3.8-flash")]
+    argon = [_supplied(p) for p in _review_prompts(context, "gemini-4-argon")]
+    assert len(flash) > 1
+    # One window holds every unit, so no copy is repeated as reader context.
+    assert len(argon) == 1
+    assert {u["id"] for u in argon[0]["units"]} == {u["id"] for u in context["units"]}
+    assert argon[0]["reader_context"] == []
+
+
+def test_plan_review_omits_draw_layout_inputs():
+    a = _book_adaptation()
+    pages = planning_context(a, canonical(a, draft_for(a, 4)))["pages"]
+    assert pages and not any(
+        key in page for page in pages
+        for key in ("lettering_reservations", "reading_order", "adaptation_sha256")
+    )
+    assert all(page["content"] for page in pages)
+
+
+def test_a_consequence_written_as_the_finding_code_is_an_unsupported_event():
+    from novel_to_comic.narrative_review import NarrativeFinding
+
+    finding = NarrativeFinding.model_validate({
+        "code": "contradiction", "repair_stage": "plan", "artifact_ids": ["page_001"],
+        "evidence": "Staging contradicts the caption.", "repair": "Restage.",
+    })
+    assert (finding.code, finding.consequence) == ("unsupported_event", "contradiction")
+
+
+def test_review_story_context_is_an_identical_leading_part_across_windows():
+    from novel_to_comic.ai.prompt_parts import prompt_parts
+
+    a = _book_adaptation()
+    context = adaptation_context(_source_document(), _approved_brief(), a)
+    context["units"] = [
+        {"id": f"omitted_{n}", "text": "x" * 13000} for n in range(3)
+    ] + context["units"]
+    prompts = list(_review_prompts(context, "gemini-3.8-flash"))
+    assert len(prompts) > 1
+    leading = {prompt_parts(prompt)[0] for prompt in prompts}
+    assert len(leading) == 1
+    assert "global_story" in next(iter(leading)) and '"units"' not in next(iter(leading))
 
 
 def test_draw_admission_requires_both_current_reviews(tmp_path):
@@ -861,9 +922,7 @@ def test_author_instruction_is_reviewed_and_part_of_cache_identity(tmp_path):
     calls = []
 
     async def generate(**request):
-        supplied = json.JSONDecoder().raw_decode(
-            request["user_content"].split("\n", 1)[1]
-        )[0]
+        supplied = _supplied(request["user_content"])
         calls.append(supplied["approved_story_instruction"])
         return ApiResult(value=verdict(request))
 
@@ -899,7 +958,7 @@ def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
                  "density_intent": p["density_intent"], "rhythm_intent": p["rhythm_intent"]}
                 for p in raw["pages"]
             ]})
-        supplied = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])[0]
+        supplied = _supplied(request["user_content"])
         if request["feature"] == "plan.detail":
             numbers = supplied["target_page_numbers"]
             detail_starts.append(numbers[0])
@@ -961,7 +1020,7 @@ def test_narrative_finding_after_structural_repair_still_gets_its_own_repair(tmp
                  "density_intent": p["density_intent"], "rhythm_intent": p["rhythm_intent"]}
                 for p in raw["pages"]
             ]})
-        supplied = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])[0]
+        supplied = _supplied(request["user_content"])
         if request["feature"] == "plan.detail":
             numbers = supplied["target_page_numbers"]
             if "PREVIOUS DETAIL:" in request["user_content"]:
@@ -1005,7 +1064,7 @@ def test_review_corrects_window_relative_page_citations_before_story_repair(tmp_
     final_window_calls = 0
     async def generate(**request):
         nonlocal final_window_calls
-        supplied = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])[0]
+        supplied = _supplied(request["user_content"])
         if supplied["pages"][0]["page_number"] != 37:
             return ApiResult(value=verdict(request))
         final_window_calls += 1
@@ -1058,9 +1117,7 @@ def test_final_two_pass_review_keeps_padding_advisory(tmp_path):
             return ApiResult(
                 value={"rhythm_summary": "Varied story allocation.", "pages": mapped}
             )
-        supplied = json.JSONDecoder().raw_decode(
-            request["user_content"].split("\n", 1)[1]
-        )[0]
+        supplied = _supplied(request["user_content"])
         if request["feature"] == "plan.detail":
             raw = draft_for(adaptation)
             if maps == 2:
@@ -1488,7 +1545,7 @@ def test_page_map_review_counts_assigned_words_before_panel_detail_exists():
     from novel_to_comic.page_planning import _PageMapEntry
     mapped = [_PageMapEntry.model_validate({**page, "emphasis": "initial", "density_intent": "standard"}) for page in page_map]
     prompt = next(iter(_review_prompts(planning_context(adaptation, mapped, phase="plan_map"))))
-    context = json.loads(prompt.split("\n", 1)[1])
+    context = _supplied(prompt)
     assert [page["narrative_words"] for page in context["global_pages"]] == [2, 0, 2]
     assert "without demanding panel placement" in prompt
 
@@ -1581,7 +1638,7 @@ def test_review_windows_overlap_in_time_but_publish_in_order_and_resume_from_cac
         gates = {1: asyncio.Event(), 13: asyncio.Event()}
 
         async def generate(**request):
-            supplied = json.JSONDecoder().raw_decode(request['user_content'].split('\n', 1)[1])[0]
+            supplied = _supplied(request['user_content'])
             first_page = supplied['pages'][0]['page_number']
             starts.append(first_page)
             if len(starts) == 3:
@@ -1624,7 +1681,7 @@ def test_parallel_invalid_reviews_retain_all_completed_siblings_for_resume(tmp_p
         all_started = asyncio.Event()
 
         async def first(**request):
-            supplied = json.JSONDecoder().raw_decode(request['user_content'].split('\n', 1)[1])[0]
+            supplied = _supplied(request['user_content'])
             page = supplied['pages'][0]['page_number']
             started.add(page)
             if len(started) == 3:

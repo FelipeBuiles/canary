@@ -110,3 +110,16 @@ def part_workspaces(root: Path) -> list[Path]:
         and is_part_workspace(child)
     ]
     return sorted(found, key=lambda child: part_ordinal(child.name))
+
+
+def current_part_workspace(root: Path) -> Path:
+    """The part a project opens on: first unfinished, otherwise the last."""
+    from novel_to_comic.state import StageStatus, load_state
+
+    if is_part_workspace(root):
+        return root
+    workspaces = part_workspaces(root)
+    for workspace in workspaces:
+        if load_state(workspace).stages["finish"].status != StageStatus.COMPLETE:
+            return workspace
+    return workspaces[-1] if workspaces else root

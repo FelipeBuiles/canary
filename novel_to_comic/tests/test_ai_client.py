@@ -1992,38 +1992,49 @@ def test_gemini_checklist_reaches_the_wire_without_overriding_reasoning(monkeypa
         json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
     ))
     sent = _FakeAsyncClient.last_request["json"]
-    expected = "Exact story text." + ADDENDA["extract.story_bible"] if model == "gemini-3.8-flash" else "Exact story text."
-    assert sent["messages"][1]["content"] == expected
+    content = sent["messages"][1]["content"]
     if model == "gemini-3.8-flash":
+        # Story and checklist travel as separate parts; Flash keeps its
+        # output contract in the system prompt.
+        assert [part["text"] for part in content] == [
+            "Exact story text.", ADDENDA["extract.story_bible"].lstrip("\n"),
+        ]
+        assert "OUTPUT CONTRACT:" in sent["messages"][0]["content"]
         assert sent["reasoning_effort"] == effort
+    else:
+        assert content == "Exact story text."
 
 
 def test_vertex_structured_calls_send_json_mode_with_the_compiled_schema_as_instructions(monkeypatch):
     from novel_to_comic.extraction_schema import extraction_schema
     from novel_to_comic.ai.gemini_schema import gemini_output_schema
-    from novel_to_comic.gemini_tuning import ADDENDA, tuned_request
+    from novel_to_comic.gemini_tuning import ADDENDA, MODEL_ADDENDA, tuned_request
+    from novel_to_comic.ai.prompt_parts import prompt_parts
     schema = extraction_schema()
     _patch_http(monkeypatch, {
-        "model": "gemini-3.8-flash",
+        "model": "gemini-4-argon",
         "choices": [{"message": {"content": '{}'}, "finish_reason": "stop"}],
     })
     asyncio.run(client.generate_structured_object(
-        config=Config(), model="gemini-3.8-flash", system_prompt="Extract source facts.",
+        config=Config(), model="gemini-4-argon", system_prompt="Extract source facts.",
         user_content="Exact story.", feature="extract.story_bible", json_schema=schema,
     ))
     sent = _FakeAsyncClient.last_request["json"]
     assert sent["response_format"] == {"type": "json_object"}
-    instructions = sent["messages"][0]["content"]
-    assert instructions.startswith("Extract source facts.\n\nOUTPUT CONTRACT:")
-    compiled = json.loads(instructions.split("\n")[-1])
+    # Argon keeps per-request schemas out of the system prompt so shards share a prefix.
+    assert sent["messages"][0]["content"] == "Extract source facts."
+    parts = [part["text"] for part in sent["messages"][1]["content"]]
+    assert parts[:2] == ["Exact story.", (ADDENDA["extract.story_bible"] + MODEL_ADDENDA["gemini-4-argon"]["extract.story_bible"]).lstrip("\n")]
+    assert parts[2].startswith("OUTPUT CONTRACT:")
+    compiled = json.loads(parts[2].split("\n")[-1])
     assert compiled == gemini_output_schema(schema)
     assert compiled["required"] == list(schema["properties"])
-    assert sent["messages"][1]["content"] == "Exact story." + ADDENDA["extract.story_bible"]
-    hashed = tuned_request("gemini-3.8-flash", {
+    hashed = tuned_request("gemini-4-argon", {
         "system_prompt": "Extract source facts.", "user_content": "Exact story.",
         "feature": "extract.story_bible", "json_schema": schema,
     })
-    assert hashed["system_prompt"] == instructions
+    assert hashed["system_prompt"] == "Extract source facts."
+    assert prompt_parts(hashed["user_content"]) == parts
     assert hashed["json_schema"] is None and hashed["json_mode"] is True
 
 
@@ -2075,6 +2086,8 @@ def test_vertex_json_stream_caps_thinking_budget_and_records_vertex_cost(
     assert result.value == {"ok": True}
     assert result.usage.provider == "vertex_ai"
     assert result.usage.output_tokens == 1000
+    # Chat routes report cache reads only in prompt_tokens_details.
+    assert result.usage.cached_text_tokens == 250
     # Without a gateway charge, fallback pricing counts all input and billed
     # output (including thinking); Cloud trial credits do not make it free.
     from novel_to_comic.usage import calculate_cost_breakdown
@@ -2374,3 +2387,60 @@ def test_text_call_probe_records_versions_execution_and_gated_content(monkeypatc
         assert probe.content_fields()["$ai_output_choices"] == [{"role": "assistant", "content": '{"ok": true}'}]
     else:
         assert probe.content_fields() == {} and probe.output_text is None
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_argon_structured_stage_uses_json_mode_native_thinking_and_local_json_parser(monkeypatch, effort):
+    _patch_http(monkeypatch, {
+        "model": "gemini-4-argon",
+        "choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}],
+    })
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(text_reasoning_efforts={"extract": effort}), model="gemini-4-argon", system_prompt="Extract facts.",
+        user_content="Story", feature="extract.story_bible", json_schema=schema,
+    ))
+    assert result.value == {"ok": True}
+    sent = _FakeAsyncClient.last_request["json"]
+    assert sent["response_format"] == {"type": "json_object"}
+    for key in ("reasoning_effort", "temperature", "stream", "stream_options"):
+        assert key not in sent
+    assert sent["messages"][0]["content"] == "Extract facts."
+    assert sent["messages"][1]["content"][-1]["text"].startswith("OUTPUT CONTRACT:")
+    assert sent["thinkingConfig"] == {"thinkingLevel": effort, "includeThoughts": True}
+    assert sent["max_completion_tokens"] == 32_768
+
+
+def test_argon_rejects_images_before_provider_submission(monkeypatch):
+    async def forbidden(*args, **kwargs):
+        pytest.fail("Unverified vision must not submit a request")
+
+    monkeypatch.setattr(client, "_post_with_retry", forbidden)
+    with pytest.raises(ValueError, match="Vision is not enabled"):
+        asyncio.run(client._chat_completion_once(
+            config=Config(), model="gemini-4-argon", system_prompt="Read this image.",
+            user_content="Image", temperature=0.2, max_output_tokens=128,
+            feature="draw.page_ocr", json_mode=False,
+            image_attachments=((b"image", "image/png"),),
+        ))
+
+
+@pytest.mark.parametrize("model", ["gemini-4-argon", "gemini-3.8-flash", "gpt-6.1-sol", "claude-opus-5-5"])
+def test_cache_breaks_become_gemini_parts_and_never_reach_any_model(monkeypatch, model):
+    from novel_to_comic.ai.prompt_parts import CACHE_BREAK, cache_join
+
+    _patch_http(monkeypatch, {
+        "model": model,
+        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    })
+    asyncio.run(client.generate_text(
+        config=Config(), model=model, system_prompt="Answer.",
+        user_content=cache_join("Shared story.", "Window question."), feature="text.generate",
+    ))
+    content = _FakeAsyncClient.last_request["json"]["messages"][1]["content"]
+    if model.startswith("gemini"):
+        assert content == [{"type": "text", "text": "Shared story."}, {"type": "text", "text": "Window question."}]
+    else:
+        assert content == "Shared story.\n\nWindow question."
+    assert CACHE_BREAK.strip() not in json.dumps(_FakeAsyncClient.last_request["json"])

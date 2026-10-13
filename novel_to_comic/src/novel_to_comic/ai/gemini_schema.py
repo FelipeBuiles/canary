@@ -1,4 +1,4 @@
-"""The schema-instructions output contract: a compiled schema carried as JSON-mode instructions.
+"""The schema-instructions output contract: a compiled schema carried as prompt instructions.
 
 Routes with ``TextModel.schema_instructions`` use it: Vertex Gemini (below) and
 Claude Haiku 5.5, whose native grammar rejects full-size stage schemas such as
@@ -6,7 +6,7 @@ Extract's Story Bible ("compiled grammar is too large", 2026-10-07).
 
 Every Gemini structured call goes through ``gemini_output_schema`` and
 ``schema_instructions`` (applied by ``gemini_tuning.tuned_request``); no feature
-has its own transport rule. Vertex's native constrained decoding
+has its own transport rule. Gemini 3.8 Flash's native constrained decoding
 (``responseJsonSchema``) failed three ways in direct probes on 2026-10-03:
 
 - It often omits optional properties: four of six identical Brief calls
@@ -31,14 +31,18 @@ import json
 from typing import Any
 
 
-def schema_instructions(system_prompt: str, schema: dict[str, Any]) -> str:
-    """The compiled schema as JSON-mode output instructions."""
-    return system_prompt + (
-        "\n\nOUTPUT CONTRACT: Return one JSON object conforming to the complete schema below. "
+def output_contract(schema: dict[str, Any]) -> str:
+    """The compiled schema as output instructions; JSON mode is route-owned."""
+    return (
+        "OUTPUT CONTRACT: Return one JSON object conforming to the complete schema below. "
         "Include every property it declares, with its type and constraints. Resolve local $ref "
         "entries from $defs. Return JSON only, without Markdown or commentary.\n"
         + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
     )
+
+
+def schema_instructions(system_prompt: str, schema: dict[str, Any]) -> str:
+    return system_prompt + "\n\n" + output_contract(schema)
 
 
 def gemini_output_schema(schema: dict[str, Any]) -> dict[str, Any]:

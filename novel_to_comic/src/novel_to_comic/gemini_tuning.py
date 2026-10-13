@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Iterator
 
+from novel_to_comic.ai.prompt_parts import cache_join
 from novel_to_comic.text_models import is_gemini_model, text_wire
 
 _ENABLED: ContextVar[bool] = ContextVar("gemini_tuning_enabled", default=True)
@@ -74,6 +75,91 @@ ADDENDA["plan.book"] = ADDENDA["plan.map"] + _PANEL_RULES
 ADDENDA["adapt.book"] = ADDENDA["adapt.blueprint"] + ADDENDA["adapt.lettering"].removeprefix(_HEADER)
 
 
+# Route-specific additions after the shared Gemini checklist. Argon follows the
+# completeness rules literally: in Labs run 20261013-143611-7df22e it lettered
+# 2,316 words (48 captions) from a 3,931-word story where Flash used 1,213 (10),
+# narrating actions, including the climax, that the panels already show.
+_ARGON_SHOW_DONT_CAPTION = (
+    "- Show, do not caption. Narration that describes visible action, gesture, expression, "
+    "appearance, or setting is realized by its drawn beat: cite it on the beat, not in any "
+    "lettering item. A depicted source unit fully satisfies faithful completeness. "
+    "For example, \"She crossed the room and sat by the fire\" is drawn; \"It was the last "
+    "evening they would spend together\" is a caption.\n"
+    "- A caption must add what the panel cannot show: the narrator's voice or judgment, a time or "
+    "place jump, unspoken interiority, or a causal link. Most beats need no caption and rarely more "
+    "than one. Do not caption the action of a peak or reveal beat unless its words are protected.\n"
+    "- Keep dialogue in the speakers' own words and protected passages verbatim. Captions should "
+    "carry well under a quarter of the source's narration sentences.\n"
+    # Labs run 20261013-160909-c706ad dropped both bookend lines as "setting".
+    "- Keep the narrator's signature lines as captions even when they describe a scene: the story's "
+    "opening and closing sentences and any line a reader would quote.\n"
+    "- Before leaving a beat silent, check that the reader still learns every name, relationship, "
+    "or cause that later copy relies on (who an organization is to a character, what a character "
+    "imagines or fears); keep the shortest narration that establishes it.\n"
+)
+# Labs run 20261013-160909-c706ad: Argon protected 29 lines, splitting quotes
+# at their dialogue tags into fragments ("If you must wish," / "Wish for
+# something sensible.") and keeping game moves ("Check.", "Mate,"), while
+# leaving out the story's opening and closing lines, which Adapt then dropped.
+_ARGON_PROTECTED_LANGUAGE = (
+    "- Protected language is for lines whose exact wording carries the story: lines a reader would "
+    "quote, a wish or vow, a reveal, the story's opening and closing sentences when they set its "
+    "tone, and narration in a voice the adaptation must keep. Protect each such line whole; quote "
+    "a speech across its dialogue tag rather than splitting it into fragments.\n"
+    "- Do not protect routine exchanges, single words, game moves, or cries that any adaptation "
+    "would letter anyway. A short story rarely needs more than about fifteen protected lines.\n"
+)
+# Argon reads the whole source well but kept anchors thin ("young man, adult
+# son") where details appear only later in the story.
+_ARGON_ANCHORS = (
+    "- Character and location anchors: gather every visible detail the source states anywhere, "
+    "not only at a first appearance (age, build, hair, clothing, belongings, condition, period). "
+    "Never add a detail the source does not state or plainly establish.\n"
+)
+# The same run: 16 of Argon's 30 pages used four panels and 7 were marked
+# cliffhangers, so the page turn stopped carrying weight.
+_ARGON_PAGE_RHYTHM = (
+    "- Do not fall back on one grid. Across the book, mix panel counts so no single count holds "
+    "most pages; give each peak or reveal a page of 1-3 panels and let a quiet aftermath breathe "
+    "on a sparse page.\n"
+    "- Mark a page as a cliffhanger only when its last panel withholds an answer the next page "
+    "gives. Most stories need a few, not one every few pages; use setup, release, or none otherwise.\n"
+)
+# Labs run 20261013-171728-bf5a8d: Flash Adapt invented cries ("NOOOOO—!",
+# "AIIIEEEEE—!"), voiced reported narration as dialogue ("A tailor's bill!
+# Retired Sergeant-Majors and their bibulous habits...") and rewrote "If only he
+# could find it" as a first-person thought, despite the main prompt's rules.
+_FLASH_SOURCE_WORDING = (
+    "- Letter only words the source supplies. Never invent a cry, scream, or exclamation the source "
+    "does not write out: a wail or shriek the narrator describes is drawn, or captioned in the "
+    "narrator's words. Sound effects for sounds the source describes are fine.\n"
+    "- Speech the narrator reports indirectly (she apologized for the room; it led to remarks about "
+    "his habits) stays a caption in the narrator's words or is drawn; do not voice it as new dialogue.\n"
+    "- Never turn narration into a thought balloon. 'If only he could find it' in narration is a "
+    "caption, not the thought 'If only I can find it'.\n"
+)
+MODEL_ADDENDA: dict[str, dict[str, str]] = {
+    "gemini-3.8-flash": {
+        "adapt.lettering": _FLASH_SOURCE_WORDING,
+        "adapt.book": _FLASH_SOURCE_WORDING,
+    },
+    "gemini-4-argon": {
+        "extract.story_bible": _ARGON_ANCHORS,
+        "brief.infer": _ARGON_PROTECTED_LANGUAGE,
+        "adapt.lettering": _ARGON_SHOW_DONT_CAPTION,
+        "adapt.book": _ARGON_SHOW_DONT_CAPTION,
+        "plan.map": _ARGON_PAGE_RHYTHM,
+        "plan.book": _ARGON_PAGE_RHYTHM,
+    },
+}
+
+
+def _addendum(model: str, feature: str) -> str:
+    shared = ADDENDA.get(feature, "")
+    extra = MODEL_ADDENDA.get(model, {}).get(feature, "")
+    return shared + extra if shared else (_HEADER + extra if extra else "")
+
+
 def gemini_tuning_enabled(model: str) -> bool:
     return is_gemini_model(model) and _ENABLED.get()
 
@@ -81,15 +167,26 @@ def gemini_tuning_enabled(model: str) -> bool:
 def tuned_user_content(model: str, feature: str, content: str) -> str:
     if not gemini_tuning_enabled(model):
         return content
-    addendum = ADDENDA.get(feature)
-    return content + addendum if addendum and not content.endswith(addendum) else content
+    # Its own trailing part, so a repair that appends to the content above
+    # keeps that content's leading part, and Vertex's cached prefix, intact.
+    addendum = _addendum(model, feature).lstrip("\n")
+    return cache_join(content, addendum) if addendum and not content.endswith(addendum) else content
+
+
+# Schemas carry per-window and per-shard ID enums; in the system prompt they
+# make every shard's prefix unique after ~5k characters. Argon takes the
+# contract after the content (validated in Labs run 20261013-171728-bf5a8d,
+# zero Plan repairs). Flash keeps its long-validated system-prompt contract:
+# the move bought no cache hits (3 of 226 calls in that run) and Flash's Plan
+# repairs rose to 11-19 calls after it.
+_CONTRACT_AFTER_CONTENT = frozenset({"gemini-4-argon"})
 
 
 def tuned_request(model: str, request: dict[str, Any]) -> dict[str, Any]:
     """Use the same effective input for paid checkpoints and the HTTP request."""
     if not is_gemini_model(model) and not text_wire(model).schema_instructions:
         return request
-    from novel_to_comic.ai.gemini_schema import gemini_output_schema, schema_instructions
+    from novel_to_comic.ai.gemini_schema import gemini_output_schema, output_contract, schema_instructions
 
     result = dict(request)
     if isinstance(result.get("user_content"), str):
@@ -97,9 +194,11 @@ def tuned_request(model: str, request: dict[str, Any]) -> dict[str, Any]:
     if result.get("json_schema") and text_wire(model).schema_instructions:
         # These routes send every structured call as JSON mode with the compiled
         # schema as instructions; see ai/gemini_schema.py and TextModel.
-        result["system_prompt"] = schema_instructions(
-            result.get("system_prompt", ""), gemini_output_schema(result["json_schema"]),
-        )
+        schema = gemini_output_schema(result["json_schema"])
+        if model in _CONTRACT_AFTER_CONTENT:
+            result["user_content"] = cache_join(result.get("user_content", ""), output_contract(schema))
+        else:
+            result["system_prompt"] = schema_instructions(result.get("system_prompt", ""), schema)
         result["json_schema"] = None
         result["json_mode"] = True
     return result

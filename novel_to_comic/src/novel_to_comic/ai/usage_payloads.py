@@ -29,6 +29,9 @@ def compact_params(params: dict[str, Any]) -> dict[str, Any]:
         value = params.get(key)
         if value is not None and (key != "response_format" or isinstance(value, (dict, list))):
             result[key + "_summary"] = fingerprint(value)
+    thinking = params.get("thinkingConfig")
+    if isinstance(thinking, dict):
+        result["thinkingConfig"] = _scalars(thinking, "thinkingLevel includeThoughts")
     return result
 
 

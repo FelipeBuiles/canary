@@ -72,7 +72,7 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
         const selected = draft[stage.id] ?? settings.selections[stage.id];
         const options = settings.reasoning_options[selected] ?? [];
         const candidate = effortDraft[stage.id] ?? settings.reasoning_efforts[stage.id];
-        const effort = options.includes(candidate) ? candidate : options.includes("medium") ? "medium" : "none";
+        const effort = options.includes(candidate) ? candidate : options.includes("medium") ? "medium" : options[0] ?? "none";
         return <div key={stage.id} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,360px)] md:items-center md:gap-8 md:p-5">
           <div>
             <label htmlFor={`operator-model-${stage.id}`} className="font-meta text-xs font-bold uppercase tracking-[0.08em]">{stage.label}</label>
@@ -83,7 +83,7 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
               onChange={(event) => { const model = event.target.value;
                 setDraft((current) => ({ ...current, [stage.id]: model }));
                 const nextOptions = settings.reasoning_options[model] ?? [];
-                if (nextOptions.length) setEffortDraft((current) => ({ ...current, [stage.id]: nextOptions.includes(effort) ? effort : nextOptions.includes("medium") ? "medium" : "none" }));
+                if (nextOptions.length) setEffortDraft((current) => ({ ...current, [stage.id]: nextOptions.includes(effort) ? effort : nextOptions.includes("medium") ? "medium" : nextOptions[0] ?? "none" }));
                 setSaved(false); }}
               className="w-full bg-bristol font-body text-sm">
               {stage.model_ids.map((id) => <option key={id} value={id}>{byId.get(id)?.label ?? id}</option>)}

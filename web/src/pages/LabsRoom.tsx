@@ -26,7 +26,7 @@ import {
   type LabsRunDetail,
   type LabsRunSummary,
   type StageModelCell,
-  type LabsReasoning,
+  type StageModelArm,
   type StageResult,
 } from "../api/labs";
 import { SectionHeader } from "../components/composites";
@@ -47,7 +47,10 @@ import { useImageViewer } from "../hooks/useImageViewer";
 const PHASE_LABEL: Record<string, string> = {
   extract_brief: "Extract + Brief",
   adapt_plan: "Adapt + Plan",
+  full: "End to end",
 };
+/** Approved source stages a phase reads instead of running. */
+const PHASE_NEEDS: Record<string, string[]> = { adapt_plan: ["brief", "style", "cast"], full: ["style", "cast"] };
 const KIND_LABEL: Record<LabsRunSummary["kind"], string> = {
   image_compare: "Image comparison",
   stage_models: "Stage models",
@@ -117,6 +120,12 @@ function targetName(targets: ImageTarget[] | undefined, id: string): string {
 
 function armName(targets: ImageTarget[] | undefined, arm: ImageArm): string {
   return `${targetName(targets, arm.target)} · ${PROMPT_LABEL[arm.prompt]}`;
+}
+
+/** "gemini-4-argon", or "gemini-4-argon · plan: gemini-3.8-flash" for a mixed arm. */
+function stageArmLabel(model: string, stageModels: Record<string, string> | undefined): string {
+  const overrides = Object.entries(stageModels ?? {}).filter(([, chosen]) => chosen !== model);
+  return [model, ...overrides.map(([stage, chosen]) => `${stage}: ${chosen}`)].join(" · ");
 }
 
 function StatusChip({ status }: { status: string }) {
@@ -392,19 +401,26 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
   const [picked, setProject] = useState("");
   const project = picked || projects[0]?.id || "";
   const [phases, setPhases] = useState<string[]>(["extract_brief", "adapt_plan"]);
-  const [models, setModels] = useState<string[] | null>(null);
-  const [reasoningDraft, setReasoning] = useState<LabsReasoning>({});
-  const chosenModels = models ?? data?.default_models ?? [];
-  const source = projects.find((candidate) => candidate.id === project);
-  const adaptReady = !!source && ["brief", "style", "cast"].every((stage) => READY.has(source.statuses[stage] ?? ""));
-  const activePhases = phases.filter((phase) => phase !== "adapt_plan" || adaptReady);
-  const activeStages = activePhases.flatMap((phase) => data?.phases[phase] ?? []);
-  const reasoning = Object.fromEntries(chosenModels.map((id) => {
-    const model = data?.models.find((candidate) => candidate.id === id);
-    return [id, Object.fromEntries(activeStages.map((stage) => [stage, reasoningDraft[id]?.[stage] ?? model?.default_reasoning ?? "medium"]))];
+  const [arms, setArms] = useState<StageModelArm[] | null>(null);
+  const chosenArms = arms ?? (data?.default_models ?? []).map<StageModelArm>((model, index) => ({
+    id: `arm-${index + 1}`, model, reasoning_efforts: {},
   }));
-  const request = source && activePhases.length && chosenModels.length >= 2
-    ? { project, phases: activePhases, models: chosenModels, reasoning_efforts: reasoning } : null;
+  const source = projects.find((candidate) => candidate.id === project);
+  const missing = (phase: string) => (PHASE_NEEDS[phase] ?? []).filter((stage) => !READY.has(source?.statuses[stage] ?? ""));
+  const activePhases = phases.filter((phase) => !!source && !missing(phase).length);
+  // A stage runs on one model per arm, whichever phases include it.
+  const activeStages = [...new Set(activePhases.flatMap((phase) => data?.phases[phase] ?? []))];
+  const stageModel = (arm: StageModelArm, stage: string) => arm.stage_models?.[stage] ?? arm.model;
+  const effectiveArms = chosenArms.map((arm) => ({
+    ...arm,
+    stage_models: Object.fromEntries(activeStages.map((stage) => [stage, stageModel(arm, stage)])),
+    reasoning_efforts: Object.fromEntries(activeStages.map((stage) => [
+      stage, arm.reasoning_efforts[stage]
+        ?? data?.models.find((candidate) => candidate.id === stageModel(arm, stage))?.default_reasoning ?? "medium",
+    ])),
+  }));
+  const request = source && activePhases.length && chosenArms.length >= 2
+    ? { project, part_id: source.part_id, phases: activePhases, arms: effectiveArms } : null;
   const estimate = useStageModelEstimate(request);
   const providers = useMemo(() => {
     const groups = new Map<string, NonNullable<typeof data>["models"]>();
@@ -417,99 +433,128 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
 
   const toggle = (list: string[], value: string, next: boolean) =>
     next ? [...list, value] : list.filter((item) => item !== value);
-  const funding = (id: string) => data.models.find((model) => model.id === id)?.funding ?? "api";
-  const apiTotal = Object.entries(estimate.data?.estimated_cost_usd ?? {})
-    .filter(([model, value]) => funding(model) === "api" && value != null)
-    .reduce((total, [, value]) => total + (value ?? 0), 0);
+  const addArm = (model: string, reasoning_efforts: Record<string, string> = {}, stage_models: Record<string, string> = {}) => {
+    const next = Math.max(0, ...chosenArms.map((arm) => Number(arm.id.replace("arm-", "")))) + 1;
+    setArms([...chosenArms, { id: `arm-${next}`, model, stage_models: { ...stage_models }, reasoning_efforts: { ...reasoning_efforts } }]);
+  };
+  const setStageModel = (armId: string, stage: string, model: string) => setArms(chosenArms.map((candidate) => {
+    if (candidate.id !== armId) return candidate;
+    // A new model's reasoning choices may differ, so the stage falls back to that model's default.
+    const reasoning_efforts = { ...candidate.reasoning_efforts };
+    delete reasoning_efforts[stage];
+    return { ...candidate, stage_models: { ...candidate.stage_models, [stage]: model }, reasoning_efforts };
+  }));
+  const spendsUsd = (arm: StageModelArm) => activeStages.some((stage) =>
+    data.models.find((model) => model.id === stageModel(arm, stage))?.funding === "api");
+  const apiTotal = chosenArms.reduce((total, arm) =>
+    total + (spendsUsd(arm) ? estimate.data?.estimated_cost_usd[arm.id] ?? 0 : 0), 0);
+  const missingEstimate = chosenArms.some((arm) => spendsUsd(arm) && estimate.data?.estimated_cost_usd[arm.id] == null);
 
   return (
     <div className="space-y-5">
       <p className="max-w-3xl font-body text-sm leading-6 text-ink-muted">
-        Runs the same stages on the same inputs once per model, each in its own copy of the project, exactly as the
-        pipeline runs them. Extract + Brief starts from the novel text; Adapt + Plan starts from the project&apos;s
-        approved Brief, Style and Cast. Your project is only read.
+        Runs the same stages on the same inputs once per comparison arm, each in its own copy of the project.
+        Add a model more than once to compare reasoning levels or repeat a trial, or give a stage its own model to
+        test a mix, such as one model&apos;s Adapt feeding another&apos;s Plan. Extract + Brief starts from the
+        novel text; Adapt + Plan starts from the project&apos;s approved Brief, Style and Cast. End to end runs all four
+        stages on the arm&apos;s own outputs, keeping the approved Style and Cast. Your project is only read.
       </p>
       <ProjectPicker projects={projects} value={project} onChange={setProject} />
       <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <fieldset>
           <legend className={META}>Stages</legend>
           {Object.entries(data.phases).map(([phase, stages]) => (
-            <Checkbox
-              key={phase}
-              checked={activePhases.includes(phase)}
-              disabled={phase === "adapt_plan" && !adaptReady}
-              onChange={(next) => setPhases(toggle(phases, phase, next))}
-            >
+            <Checkbox key={phase} checked={activePhases.includes(phase)}
+              disabled={create.isPending || !source || !!missing(phase).length}
+              onChange={(next) => setPhases(toggle(phases, phase, next))}>
               <span className="font-body text-sm font-bold">{PHASE_LABEL[phase] ?? phase}</span>
               <span className={cn(META, "block")}>
-                {phase === "adapt_plan" && !adaptReady ? "Needs an approved Brief, Style and Cast" : stages.join(" → ")}
+                {missing(phase).length ? `Needs an approved ${PHASE_NEEDS[phase].map((stage) => stage[0].toUpperCase() + stage.slice(1)).join(", ")}`
+                  : stages.join(" → ")}
               </span>
             </Checkbox>
           ))}
         </fieldset>
         <fieldset>
-          <legend className={META}>Models (2–6)</legend>
+          <legend className={META}>Models (2–6 comparison arms)</legend>
           <div className="grid gap-x-5 sm:grid-cols-2">
             {providers.map(([provider, group]) => (
               <div key={provider} className="mt-2">
                 <div className="font-meta text-xs font-bold">{provider}</div>
-                {group.map((model) => (
-                  <Checkbox
-                    key={model.id}
-                    checked={chosenModels.includes(model.id)}
-                    disabled={!model.available || (!chosenModels.includes(model.id) && chosenModels.length >= 6)}
-                    onChange={(next) => setModels(toggle(chosenModels, model.id, next))}
-                  >
+                {group.map((model) => {
+                  const selected = chosenArms.some((arm) => arm.model === model.id);
+                  return <Checkbox key={model.id} checked={selected}
+                    disabled={create.isPending || !model.available || (!selected && chosenArms.length >= 6)}
+                    onChange={(next) => next ? addArm(model.id) : setArms(chosenArms.filter((arm) => arm.model !== model.id))}>
                     <span className="font-body text-sm">{model.label}</span>
                     {!model.available && <span className={cn(META, "block")}>Not enabled in this server</span>}
-                    {model.available && estimate.data?.estimated_cost_usd[model.id] !== undefined && (
-                      <span className={cn(META, "block")}>
-                        {model.funding === "api" ? `≈${usd(estimate.data.estimated_cost_usd[model.id], 2)} est.` : "subscription allowance"}
-                      </span>
-                    )}
-                  </Checkbox>
-                ))}
+                  </Checkbox>;
+                })}
               </div>
             ))}
           </div>
         </fieldset>
       </div>
       <fieldset className="space-y-3">
-        <legend className={META}>Reasoning per model and stage</legend>
-        <p className="font-body text-sm text-ink-muted">These choices apply to this comparison. Higher reasoning can increase latency and token usage; estimates use the source project's recorded tokens.</p>
-        {chosenModels.map((id) => {
-          const model = data.models.find((candidate) => candidate.id === id);
+        <legend className={META}>Comparison arms and reasoning</legend>
+        <p className="font-body text-sm text-ink-muted">Each arm sets a model and reasoning per stage. Higher reasoning can increase latency and token usage; estimates use the source project's recorded tokens.</p>
+        {effectiveArms.map((arm) => {
+          const model = data.models.find((candidate) => candidate.id === arm.model);
           if (!model) return null;
-          return <Surface key={id} padding="sm" shadow="none" border="soft">
-            <p className="font-meta text-xs font-bold">{model.label}</p>
+          return <Surface key={arm.id} padding="sm" shadow="none" border="soft">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-meta text-xs font-bold">{stageArmLabel(model.label, Object.fromEntries(activeStages
+                .filter((stage) => stageModel(arm, stage) !== arm.model)
+                .map((stage) => [stage, data.models.find((candidate) => candidate.id === stageModel(arm, stage))?.label ?? stageModel(arm, stage)])))} · {arm.id}</p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="xs" disabled={create.isPending || !model.available || chosenArms.length >= 6}
+                  aria-label={`Duplicate ${model.label} ${arm.id}`}
+                  onClick={() => addArm(arm.model, arm.reasoning_efforts, arm.stage_models)}>Duplicate arm</Button>
+                <Button variant="outline" size="xs" disabled={create.isPending}
+                  aria-label={`Remove ${model.label} ${arm.id}`}
+                  onClick={() => setArms(chosenArms.filter((candidate) => candidate.id !== arm.id))}>Remove</Button>
+              </div>
+            </div>
+            <p className={cn(META, "mt-1")}>
+              {!spendsUsd(arm) ? "subscription allowance" : estimate.data?.estimated_cost_usd[arm.id] != null
+                ? `≈${usd(estimate.data.estimated_cost_usd[arm.id], 2)} est.` : "Estimate unavailable"}
+            </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {activeStages.map((stage) => <label key={stage} className="font-body text-xs">
-                {stage[0].toUpperCase() + stage.slice(1)}
-                <select aria-label={`${model.label} ${stage} reasoning`} className="mt-1 w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm"
-                  disabled={create.isPending} value={reasoning[id][stage]}
-                  onChange={(event) => setReasoning((current) => ({ ...current, [id]: { ...current[id], [stage]: event.target.value } }))}>
-                  {model.reasoning_options.map((value) => <option key={value} value={value}>{value === "none" ? "Off" : value === "enabled" ? "On" : value[0].toUpperCase() + value.slice(1)}</option>)}
-                </select>
-              </label>)}
+              {activeStages.map((stage) => {
+                const stageOption = data.models.find((candidate) => candidate.id === stageModel(arm, stage)) ?? model;
+                return <div key={stage} className="font-body text-xs">
+                  {stage[0].toUpperCase() + stage.slice(1)}
+                  <div className="mt-1 grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-2">
+                    <select aria-label={`${model.label} ${arm.id} ${stage} model`} className="w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm"
+                      disabled={create.isPending} value={stageOption.id}
+                      onChange={(event) => setStageModel(arm.id, stage, event.target.value)}>
+                      {data.models.filter((candidate) => candidate.available || candidate.id === stageOption.id).map((candidate) =>
+                        <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
+                    </select>
+                    <select aria-label={`${model.label} ${arm.id} ${stage} reasoning`} className="w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm"
+                      disabled={create.isPending} value={arm.reasoning_efforts[stage]}
+                      onChange={(event) => setArms(chosenArms.map((candidate) => candidate.id === arm.id
+                        ? { ...candidate, reasoning_efforts: { ...candidate.reasoning_efforts, [stage]: event.target.value } } : candidate))}>
+                      {stageOption.reasoning_options.map((value) => <option key={value} value={value}>{value === "none" ? "Off" : value === "enabled" ? "On" : value[0].toUpperCase() + value.slice(1)}</option>)}
+                    </select>
+                  </div>
+                </div>;
+              })}
             </div>
           </Surface>;
         })}
       </fieldset>
       <div className="flex flex-wrap items-center gap-3">
-        <Button
-          disabled={!request || create.isPending}
+        <Button disabled={!request || create.isPending}
           onClick={() => request && create.mutate(
-            { kind: "stage_models", label: `${source?.title} · ${chosenModels.join(" vs ")}`, ...request },
+            { kind: "stage_models", label: `${source?.title} · ${effectiveArms.map((arm) => stageArmLabel(arm.model, arm.stage_models)).join(" vs ")}`, ...request },
             { onSuccess: (run) => onStarted(run.run_id) },
-          )}
-        >
-          Run comparison
-        </Button>
+          )}>Run comparison</Button>
         <span className={META}>
-          {estimate.isFetching ? "Estimating…"
-            : estimate.error ? String(estimate.error)
-              : request ? `≈${usd(apiTotal, 2)} est. for API models, priced from this project's recorded tokens`
-                : "Choose stages and at least two models"}
+          {estimate.isFetching ? "Estimating…" : estimate.error ? String(estimate.error)
+            : request ? missingEstimate ? "Estimate unavailable for some API arms; source usage may be missing"
+              : `≈${usd(apiTotal, 2)} est. for API arms, priced from this project's recorded tokens`
+              : "Choose stages and at least two comparison arms"}
         </span>
         {create.error && <span className="font-body text-sm text-hero-red">{String(create.error)}</span>}
       </div>
@@ -591,14 +636,32 @@ function ImageResult({ runId, cell, label, frame, blind, onRetry, retrying }: {
   );
 }
 
+/** Per-cell retries: other failed cells stay retryable while one reruns. */
+function useCellRetry(runId: string, failedIds: string[]) {
+  const retry = useRetryLabsCells(runId);
+  const [submitted, setSubmitted] = useState<ReadonlySet<string>>(new Set());
+  // A cell leaves "failed" once its retry starts; until then it stays marked as submitted.
+  const pending = new Set(failedIds.filter((id) => submitted.has(id)));
+  const retryable = failedIds.filter((id) => !pending.has(id));
+  const start = (cells?: string[]) => retry.mutate(cells, {
+    onSuccess: (result) => setSubmitted(new Set([...pending, ...result.cells])),
+  });
+  return {
+    error: retry.error,
+    retryable,
+    canRetry: (cellId: string) => !retry.isPending && retryable.includes(cellId),
+    retryCell: (cellId: string) => start([cellId]),
+    retryAll: () => start(retryable),
+    busy: retry.isPending,
+  };
+}
+
 function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageTarget[] | undefined }) {
   const [blind, setBlind] = useState(true);
-  const retry = useRetryLabsCells(run.run_id);
   const cells = run.cells as ImageCell[];
   const items = (run.spec.items as string[] | undefined) ?? [];
   const arms = (run.spec.arms as ImageArm[] | undefined) ?? [];
-  const failed = cells.filter((cell) => cell.status === "failed");
-  const canRetry = run.status !== "running" && !retry.isPending;
+  const retry = useCellRetry(run.run_id, cells.filter((cell) => cell.status === "failed").map((cell) => cell.cell_id));
   const totals = arms.map((arm, index) => {
     const own = cells.filter((cell) => cell.arm === index);
     const done = own.filter((cell) => cell.status === "ok");
@@ -623,10 +686,10 @@ function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageT
           {blind ? <Eye className="mr-1.5 inline h-4 w-4" aria-hidden /> : <EyeOff className="mr-1.5 inline h-4 w-4" aria-hidden />}
           {blind ? "Reveal arms" : "Blind review"}
         </Button>
-        {failed.length > 0 && (
-          <Button variant="outline" size="sm" disabled={!canRetry} onClick={() => retry.mutate(undefined)}>
+        {retry.retryable.length > 0 && (
+          <Button variant="outline" size="sm" disabled={retry.busy} onClick={retry.retryAll}>
             <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
-            Retry {failed.length} failed
+            Retry {retry.retryable.length} failed
           </Button>
         )}
         <span className={META}>
@@ -683,8 +746,8 @@ function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageT
                   label={blind ? `Image ${position + 1}` : `Arm ${index + 1} · ${armName(targets, arms[index])}`}
                   frame={frame}
                   blind={blind}
-                  retrying={!canRetry}
-                  onRetry={(cellId) => retry.mutate([cellId])}
+                  retrying={!retry.canRetry(own.find((cell) => cell.arm === index)?.cell_id ?? "")}
+                  onRetry={retry.retryCell}
                 />
               ))}
             </div>
@@ -731,7 +794,8 @@ function StageTable({ run, stageName, cells }: { run: LabsRunDetail; stageName: 
         <thead>
           <tr className="border-b-[2px] border-ink-black">
             <th className={cn(META, "py-1.5 pr-3 text-left font-normal")}>Metric</th>
-            {cells.map((cell) => <th key={cell.cell_id} className="py-1.5 pr-3 text-left font-meta text-xs font-bold">{cell.model}{cell.variant && ` · ${cell.variant}`}</th>)}
+            {cells.map((cell) => <th key={cell.cell_id} className="py-1.5 pr-3 text-left font-meta text-xs font-bold">{cell.stage_models?.[stageName] ?? cell.model}{cell.variant && ` · ${cell.variant}`}
+              {cell.reasoning_efforts?.[stageName] && <span className="block font-normal text-ink-muted">{cell.reasoning_efforts[stageName]} reasoning</span>}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -767,21 +831,19 @@ function StageTable({ run, stageName, cells }: { run: LabsRunDetail; stageName: 
 }
 
 function StageModelsRun({ run }: { run: LabsRunDetail }) {
-  const retry = useRetryLabsCells(run.run_id);
   const cells = run.cells as StageModelCell[];
   const phases = (run.spec.phases as string[] | undefined) ?? [];
   const estimate = run.spec.estimated_cost_usd as Record<string, number | null> | undefined;
-  const failed = cells.filter((cell) => cell.status === "failed");
-  const canRetry = run.status !== "running" && !retry.isPending;
+  const retry = useCellRetry(run.run_id, cells.filter((cell) => cell.status === "failed").map((cell) => cell.cell_id));
   return (
     <div className="space-y-8">
-      {failed.length > 0 && (
+      {(retry.retryable.length > 0 || !!retry.error) && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" disabled={!canRetry} onClick={() => retry.mutate(undefined)}>
+            {retry.retryable.length > 0 && <Button variant="outline" size="sm" disabled={retry.busy} onClick={retry.retryAll}>
               <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
-              Retry {failed.length} failed
-            </Button>
+              Retry {retry.retryable.length} failed
+            </Button>}
             <span className={META}>A retry reruns the arm's whole phase from the same source inputs.</span>
           </div>
           {retry.error && <p className="font-body text-sm text-hero-red">{String(retry.error)}</p>}
@@ -797,15 +859,15 @@ function StageModelsRun({ run }: { run: LabsRunDetail }) {
               {phaseCells.map((cell) => (
                 <Surface key={cell.cell_id} padding="sm" shadow="none" border="soft">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-meta text-xs font-bold">{cell.model}{cell.variant && ` · ${cell.variant}`}<FundingTag funding={cell.funding} /></span>
+                    <span className="font-meta text-xs font-bold">{stageArmLabel(cell.model, cell.stage_models)}{cell.variant && ` · ${cell.variant}`}<FundingTag funding={cell.funding} /></span>
                     <StatusChip status={cell.status} />
                   </div>
                   <p className="mt-1 font-body text-sm tabular-nums">
                     {seconds(cell.seconds ?? cell.stages.reduce((sum, stage) => sum + stage.seconds, 0))} ·{" "}
                     {costWithEquivalent(cell.cost_usd ?? cell.stages.reduce((sum, stage) => sum + stage.cost_usd, 0), cell.api_equivalent_usd, cell.funding)}
                     {cell.funding === "api" ? " measured" : ""}
-                    {cell.funding === "api" && estimate?.[cell.model] != null && (
-                      <span className="text-ink-muted"> · ≈{usd(estimate[cell.model], 2)} est. for all phases</span>
+                    {cell.funding === "api" && (estimate?.[cell.variant ?? cell.model] ?? estimate?.[cell.model]) != null && (
+                      <span className="text-ink-muted"> · ≈{usd(estimate?.[cell.variant ?? cell.model] ?? estimate?.[cell.model], 2)} est. for all phases</span>
                     )}
                   </p>
                   {cell.reasoning_efforts && <p className="mt-1 font-body text-xs text-ink-muted">Reasoning: {Object.entries(cell.reasoning_efforts).map(([stage, effort]) => `${stage}: ${effort === "none" ? "Off" : effort === "enabled" ? "On" : effort}`).join(" · ")}</p>}
@@ -823,7 +885,7 @@ function StageModelsRun({ run }: { run: LabsRunDetail }) {
                     </p>
                   )}
                   {cell.status === "failed" && (
-                    <Button className="mt-2" variant="outline" size="sm" disabled={!canRetry} onClick={() => retry.mutate([cell.cell_id])}>
+                    <Button className="mt-2" variant="outline" size="sm" disabled={!retry.canRetry(cell.cell_id)} onClick={() => retry.retryCell(cell.cell_id)}>
                       <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
                       Retry
                     </Button>

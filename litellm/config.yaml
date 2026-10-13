@@ -102,6 +102,30 @@ model_list:
     cache_read_input_token_cost: 7.5e-08
     output_cost_per_token: 3.75e-06
     output_cost_per_reasoning_token: 3.75e-06
+- model_name: gemini-4-argon
+  litellm_params:
+    model: vertex_ai/gemini-4-argon
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: os.environ/VERTEXAI_LOCATION
+    # Verified native Low/Medium/High levels. Avoid LiteLLM's legacy budget mapping.
+    thinkingConfig:
+      thinkingLevel: medium
+      includeThoughts: true
+  model_info:
+    mode: chat
+    # JSON mode and small schemas verified 2026-10-13; full Extract native
+    # schema returns 400. Stages keep schema instructions and local validation.
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_vision: false
+    supports_native_streaming: false
+    supports_prompt_caching: false
+    # Provisional launch rates, operator-approved 2026-10-13. Vertex tariff,
+    # cache availability/storage charges and intro expiry remain unconfirmed.
+    # https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
 - model_name: claude-opus-5-5
   litellm_params:
     model: anthropic/claude-opus-5-5

@@ -119,6 +119,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/visual-review` | `read_saved_visual_review` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/replan/estimate` | `replan_page_estimate` | `pages.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/replan` | `replan_one_page` | `pages.py` |
+| `GET` | `/api/projects/{project}/parts/{part_id}/pages/review-recheck/estimate` | `review_recheck_estimate` | `pages.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/pages/review-recheck` | `recheck_reviews` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts` | `list_parts` | `parts.py` |
 | `POST` | `/api/projects/{project}/parts` | `add_part` | `parts.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/chapters` | `part_chapters` | `parts.py` |

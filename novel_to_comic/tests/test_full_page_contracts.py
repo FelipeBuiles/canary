@@ -920,7 +920,7 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
     assert proposed.status == "draft"
     assert '"id":"scene_001"' in prompts[0]
     assert '"title":"The Door"' in prompts[0]
-    assert '"recommended_page_envelope":{"maximum":4,"minimum":2}' in prompts[0]
+    assert '"recommended_page_envelope":{"maximum":1,"minimum":1}' in prompts[0]
     assert "Do not equate source units, sentences, paragraphs, or prose pages" in prompts[0]
     context = json.loads(prompts[0].split("\n", 1)[1])
     source = _source_document()
@@ -936,6 +936,12 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
 
 def test_recommended_page_envelope_calibrates_cthulhu_length() -> None:
     assert recommended_page_envelope(word_count=11_865, scene_count=12) == (30, 48)
+
+
+def test_recommended_page_envelope_follows_length_not_scene_segmentation() -> None:
+    # The Monkey's Paw: Flash found 7 scenes and Argon 15 in the same story.
+    assert recommended_page_envelope(word_count=3_931, scene_count=7) == (10, 16)
+    assert recommended_page_envelope(word_count=3_931, scene_count=15) == (15, 22)
 
 
 def test_brief_inference_replaces_an_outlier_page_guess_without_retry() -> None:
@@ -955,7 +961,7 @@ def test_brief_inference_replaces_an_outlier_page_guess_without_retry() -> None:
     )
 
     assert calls == 1
-    assert (proposed.target_page_min, proposed.target_page_max) == (2, 4)
+    assert (proposed.target_page_min, proposed.target_page_max) == (1, 1)
 
 
 def test_brief_approval_rejects_a_stale_editor_revision() -> None:

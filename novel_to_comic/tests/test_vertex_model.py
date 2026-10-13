@@ -24,7 +24,7 @@ def test_gemini_selection_is_vertex_text_and_vision_only():
     assert "gemini-3.8-flash" not in allowed_models("draw")
     assert reasoning_options("gemini-3.8-flash") == ("low", "medium", "high")
     wire = text_wire("gemini-3.8-flash")
-    assert wire.vision and wire.effort == "medium"
+    assert wire.vision and wire.effort == "low"
 
 
 @pytest.mark.parametrize("model", ["gemini-3.8-flash", "vertex_ai/gemini-3.8-flash"])

@@ -15,6 +15,7 @@ def test_params_drop_nested_content_and_fingerprint_schemas():
         'canary_wire_request': json.dumps({'prompt': 'private story', 'image': 'x' * 100000}),
         'response_format': {'type': 'json_schema', 'json_schema': {'schema': {'description': 'private story'}}},
         'unknown_provider_field': {'secret': 'private story'},
+        'thinkingConfig': {'thinkingLevel': 'high', 'includeThoughts': True, 'unknown': 'private story'},
     }
     original = copy.deepcopy(params)
     compact = compact_params(params)
@@ -22,6 +23,7 @@ def test_params_drop_nested_content_and_fingerprint_schemas():
     assert compact['quality'] == 'high'
     assert compact['temperature'] == 0.2
     assert compact['service_tier'] == 'priority'
+    assert compact['thinkingConfig'] == {'thinkingLevel': 'high', 'includeThoughts': True}
     assert len(compact['response_format_summary']['sha256']) == 64
     assert compact['canary_wire_request_summary']['bytes'] > 100000
     assert 'private story' not in json.dumps(compact)

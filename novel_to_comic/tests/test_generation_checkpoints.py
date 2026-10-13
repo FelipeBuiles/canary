@@ -71,7 +71,9 @@ def test_gemini_tuning_invalidates_stock_responses_and_keys_the_effective_prompt
     assert len(calls) == 2
     saved_inputs = [json.loads(json.loads(path.read_text())["input"])["request"]["user_content"]
                     for path in (tmp_path / ".checkpoints").rglob("*.json")]
-    assert sorted(saved_inputs) == sorted(["Story.", "Story." + ADDENDA["extract.story_bible"]])
+    from novel_to_comic.ai.prompt_parts import cache_join
+
+    assert sorted(saved_inputs) == sorted(["Story.", cache_join("Story.", ADDENDA["extract.story_bible"].lstrip("\n"))])
 
 
 def test_rejected_response_can_be_replaced_without_discarding_other_batches(tmp_path):
