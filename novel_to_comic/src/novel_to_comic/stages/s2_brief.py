@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from novel_to_comic.ai.prompt_parts import CACHE_BREAK
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import (
     brief_inference_schema,
@@ -68,7 +69,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         # still invalid needs the model, so it gets the exact errors rather than
         # costing the user the whole stage.
         return (
-            f"{prompt}\n\nYour previous response did not satisfy the adaptation "
+            f"{prompt}{CACHE_BREAK}Your previous response did not satisfy the adaptation "
             "brief contract. Return one corrected JSON object; use exactly one of "
             "'faithful', 'medium_specific', or 'transformative' for "
             "transformation_level, and JSON arrays of strings for every list "

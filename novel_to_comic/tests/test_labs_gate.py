@@ -120,25 +120,30 @@ def test_labs_reasoning_is_validated_before_creating_run(monkeypatch, tmp_path):
     source = tmp_path / "owner" / "story"
     source.mkdir(parents=True)
     monkeypatch.setattr(stage_models, "validate_spec", lambda *args: None)
-    monkeypatch.setattr(stage_models, "estimate_usd", lambda source, phases, models: {model: None for model in models})
+    monkeypatch.setattr(stage_models, "estimate_stages_usd", lambda source, models: None)
     dispatched = []
     def start(request, root, run_id, coroutine):
         dispatched.append(run_id)
         coroutine.close()
     monkeypatch.setattr(labs, "_start", start)
     body = {"kind": "stage_models", "project": "story", "phases": ["extract_brief"],
-            "models": ["gpt-6-sol", "mimo-v2.6-pro"],
-            "reasoning_efforts": {"mimo-v2.6-pro": {"extract": "medium"}}}
+            "arms": [{"id": "arm-1", "model": "gpt-6-sol"},
+                     {"id": "arm-2", "model": "mimo-v2.6-pro", "reasoning_efforts": {"extract": "medium"}}]}
     assert client.post("/api/labs/runs", json=body).status_code == 400
     assert client.post("/api/labs/stage-models/estimate", json=body).status_code == 400
     assert not dispatched
     assert not storage.list_runs(tmp_path / "owner")
-    body["reasoning_efforts"] = {"mimo-v2.6-pro": {"extract": "enabled"}, "gpt-6-sol": {"brief": "low"}}
+    body["arms"][0]["reasoning_efforts"] = {"brief": "low"}
+    body["arms"][1]["reasoning_efforts"] = {"extract": "enabled"}
     result = client.post("/api/labs/runs", json=body)
     assert result.status_code == 200
-    selected = result.json()["spec"]["reasoning_efforts"]
-    assert selected == {"mimo-v2.6-pro": {"extract": "enabled", "brief": "none"},
-                        "gpt-6-sol": {"extract": "medium", "brief": "low"}}
+    selected = result.json()["spec"]["arms"]
+    assert selected == [
+        {"id": "arm-1", "model": "gpt-6-sol", "stage_models": {"extract": "gpt-6-sol", "brief": "gpt-6-sol"},
+         "reasoning_efforts": {"extract": "medium", "brief": "low"}},
+        {"id": "arm-2", "model": "mimo-v2.6-pro", "stage_models": {"extract": "mimo-v2.6-pro", "brief": "mimo-v2.6-pro"},
+         "reasoning_efforts": {"extract": "enabled", "brief": "none"}},
+    ]
     assert dispatched == [result.json()["run_id"]]
 
 
@@ -179,7 +184,7 @@ def test_retry_dispatches_failed_text_arms_to_the_stage_model_runner(monkeypatch
     storage.write_cell(root, run["run_id"], "extract_brief.b", {"status": "ok", "model": "b"})
     storage.update_run(root, run["run_id"], status="complete")
     dispatched = []
-    def start(request, root, run_id, coroutine):
+    def start(request, root, run_id, coroutine, cells=None):
         dispatched.append((coroutine.cr_code.co_filename.rsplit("/", 1)[-1], coroutine.cr_code.co_name))
         coroutine.close()
     monkeypatch.setattr(labs, "_start", start)
@@ -190,3 +195,86 @@ def test_retry_dispatches_failed_text_arms_to_the_stage_model_runner(monkeypatch
     assert result.status_code == 200 and result.json()["cells"] == ["extract_brief.a"]
     assert dispatched == [("stage_models.py", "retry")]
     assert storage.read_run(root, run["run_id"])["status"] == "running"
+
+
+def test_failed_arms_retry_side_by_side_but_never_twice_at_once(monkeypatch, tmp_path):
+    import asyncio
+    from novel_to_comic.labs import stage_models, storage
+    root = tmp_path / "owner"
+    run = storage.create_run(root, kind=stage_models.KIND, label="t", spec={"project": "story"})
+    for cell in ("full.a", "full.b"):
+        storage.write_cell(root, run["run_id"], cell, {"status": "failed", "model": cell})
+    storage.update_run(root, run["run_id"], status="complete")
+    release: dict[str, asyncio.Event] = {}
+
+    async def retry(user_root, run_id, cells):
+        (cell,) = cells
+        release[cell["cell_id"]] = event = asyncio.Event()
+        await event.wait()
+        storage.write_cell(user_root, run_id, cell["cell_id"], {"status": "ok", "model": cell["model"]})
+    monkeypatch.setattr(stage_models, "retry", retry)
+
+    async def finish(cell):
+        while cell not in release:
+            await asyncio.sleep(0)
+        release[cell].set()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+    url = f"/api/labs/runs/{run['run_id']}/retry"
+    with _labs_client(monkeypatch, tmp_path) as client:
+        assert client.post(url, json={"cells": ["full.a"]}).json()["cells"] == ["full.a"]
+        assert client.post(url, json={"cells": ["full.a"]}).status_code == 409
+        assert client.post(url, json={}).json()["cells"] == ["full.b"], "retry-all skips a cell already rerunning"
+        assert storage.read_run(root, run["run_id"])["status"] == "running"
+        client.portal.call(finish, "full.a")
+        assert storage.read_run(root, run["run_id"])["status"] == "running", "full.b is still retrying"
+        client.portal.call(finish, "full.b")
+        assert storage.read_run(root, run["run_id"])["status"] == "complete"
+
+
+def test_cells_a_restart_interrupted_become_retryable(monkeypatch, tmp_path):
+    from novel_to_comic.labs import stage_models, storage
+    client = _labs_client(monkeypatch, tmp_path)
+    root = tmp_path / "owner"
+    run = storage.create_run(root, kind=stage_models.KIND, label="t", spec={"project": "story"})
+    storage.write_cell(root, run["run_id"], "full.a", {"status": "running", "model": "a", "stages": [{"stage": "extract"}]})
+    storage.write_cell(root, run["run_id"], "full.b", {"status": "ok", "model": "b"})
+
+    detail = client.get(f"/api/labs/runs/{run['run_id']}").json()
+
+    assert detail["status"] == "interrupted"
+    cells = {cell["cell_id"]: cell for cell in detail["cells"]}
+    assert cells["full.a"]["status"] == "failed" and cells["full.a"]["stages"] == [{"stage": "extract"}]
+    assert cells["full.b"]["status"] == "ok"
+    assert [cell["cell_id"] for cell in stage_models.failed_cells(root, run["run_id"], None)] == ["full.a"]
+
+
+def test_labs_duplicate_models_snapshot_and_estimate_every_arm(monkeypatch, tmp_path):
+    from novel_to_comic.server.routers import labs
+    from novel_to_comic.labs import stage_models
+    client = _labs_client(monkeypatch, tmp_path)
+    (tmp_path / "owner/story").mkdir(parents=True)
+    monkeypatch.setattr(stage_models, "validate_spec", lambda *args: None)
+    monkeypatch.setattr(stage_models, "estimate_stages_usd", lambda source, models: 0.5)
+    dispatched = []
+    def start(request, root, run_id, coroutine):
+        dispatched.append(run_id)
+        coroutine.close()
+    monkeypatch.setattr(labs, "_start", start)
+    body = {"kind": "stage_models", "project": "story", "phases": ["extract_brief"], "arms": [
+        {"id": "low", "model": "gpt-6-sol", "reasoning_efforts": {"extract": "low"}},
+        {"id": "high", "model": "gpt-6-sol", "reasoning_efforts": {"extract": "high"}},
+    ]}
+    estimate = client.post("/api/labs/stage-models/estimate", json=body)
+    assert estimate.status_code == 200
+    assert estimate.json()["estimated_cost_usd"] == {"low": 0.5, "high": 0.5}
+    run = client.post("/api/labs/runs", json=body)
+    assert run.status_code == 200
+    assert [arm["reasoning_efforts"]["extract"] for arm in run.json()["spec"]["arms"]] == ["low", "high"]
+    assert run.json()["spec"]["estimated_cost_usd"] == estimate.json()["estimated_cost_usd"]
+    assert len(dispatched) == 1
+    body["arms"][1]["id"] = "low"
+    assert client.post("/api/labs/runs", json=body).status_code == 400
+    assert client.post("/api/labs/stage-models/estimate", json=body).status_code == 400
+    assert len(dispatched) == 1

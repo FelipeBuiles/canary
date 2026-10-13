@@ -481,7 +481,10 @@ character relationships and narrative direction. Compact `visual_continuity`
 includes activated looks and the state carried in from earlier parts; future-part
 looks never become carried context. Unactivated catalogs, sentence JSON wrappers
 and duplicate source passages are omitted. Non-narrative matter is marked in
-the source view and excluded from the recommended page envelope. Source artifacts
+the source view and excluded from the recommended page envelope, which follows
+narrative word count (about 250–400 source words per page); each narrative scene
+raises the minimum to at least one page and widens the maximum by half a page,
+so Extract's scene granularity cannot set the book's length. Source artifacts
 and citations do not change.
 Recurring characters are prioritized for ongoing arcs without removing
 infrequent participants from essential events. Its first-call instructions specify string/list types and the

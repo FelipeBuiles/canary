@@ -45,6 +45,7 @@ import {
   getStageModelOptions,
   estimateStageModels,
   type ImageArm,
+  type StageModelArm,
   createLabsRun,
   deleteLabsRun,
   retryLabsCells,
@@ -938,7 +939,7 @@ export function useStageModelOptions() {
   return useQuery({ queryKey: ["labs", "stage-models"], queryFn: getStageModelOptions });
 }
 
-export function useStageModelEstimate(body: { project: string; phases: string[]; models: string[]; reasoning_efforts?: Record<string, Record<string, string>> } | null) {
+export function useStageModelEstimate(body: { project: string; part_id?: string | null; phases: string[]; arms: StageModelArm[] } | null) {
   return useQuery({
     queryKey: ["labs", "stage-models", "estimate", body],
     queryFn: () => estimateStageModels(body!),

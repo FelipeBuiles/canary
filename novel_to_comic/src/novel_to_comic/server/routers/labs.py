@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 
 from novel_to_comic.labs import image_compare, stage_models, storage
 from novel_to_comic.state import load_state
+from novel_to_comic.workspace import workspace_part_id
 
 from ..auth import get_current_user
 from ..deps import get_projects_dir
@@ -31,9 +32,21 @@ def _user_root(request: Request, user_id: str) -> Path:
 
 
 def _tasks(request: Request) -> dict[str, asyncio.Task[None]]:
+    """In-flight work keyed ``run_id`` for a run, ``run_id:retry:N`` for each retry."""
     if not hasattr(request.app.state, "labs_tasks"):
         request.app.state.labs_tasks = {}
     return request.app.state.labs_tasks
+
+
+def _task_cells(request: Request) -> dict[str, frozenset[str]]:
+    """The cells each retry task is rerunning."""
+    if not hasattr(request.app.state, "labs_task_cells"):
+        request.app.state.labs_task_cells = {}
+    return request.app.state.labs_task_cells
+
+
+def _run_task_keys(request: Request, run_id: str) -> list[str]:
+    return [key for key in _tasks(request) if key == run_id or key.startswith(f"{run_id}:")]
 
 
 def _project_dir(root: Path, project: str) -> Path:
@@ -82,11 +95,15 @@ def _projects(root: Path) -> list[dict[str, Any]]:
     for directory in sorted(root.iterdir()) if root.exists() else ():
         if directory.name.startswith(("_", ".")) or not (directory / "state.json").exists():
             continue
-        state = load_state(directory)
+        source = stage_models.source_workspace(directory)
+        state = load_state(source)
         statuses = {name: stage.status.value for name, stage in state.stages.items()}
-        novel = directory / "input" / Path(state.novel_path).name
+        novel = Path(state.novel_path)
+        if not novel.is_absolute():
+            novel = source / novel
         projects.append({
             "id": directory.name, "title": state.project_name, "statuses": statuses,
+            "part_id": workspace_part_id(source),
             "words": len(novel.read_text(errors="ignore").split()) if novel.exists() else None,
         })
     return projects
@@ -134,13 +151,14 @@ def stage_model_estimate(
     request: Request, body: dict[str, Any] = Body(...), user_id: str = Depends(get_current_user),
 ) -> dict[str, Any]:
     source = _project_dir(_user_root(request, user_id), str(body.get("project") or ""))
-    phases, models = list(body.get("phases") or []), list(body.get("models") or [])
+    phases = body.get("phases") or []
     try:
-        stage_models.validate_spec(source, phases, models)
-        stage_models.resolve_reasoning(phases, models, body.get("reasoning_efforts"))
+        source = stage_models.source_workspace(source, body.get("part_id"))
+        arms = stage_models.resolve_arms(phases, body.get("arms"))
+        stage_models.validate_spec(source, phases, stage_models.arm_models(arms))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"estimated_cost_usd": stage_models.estimate_usd(source, phases, models)}
+    return {"estimated_cost_usd": stage_models.estimate_arms_usd(source, phases, arms)}
 
 
 @router.post("/image-compare/estimate")
@@ -157,22 +175,39 @@ def image_compare_estimate(
         raise HTTPException(400, str(exc)) from exc
 
 
-def _start(request: Request, user_root: Path, run_id: str, work) -> None:
-    tasks = _tasks(request)
+def _start(request: Request, user_root: Path, run_id: str, work, cells: frozenset[str] | None = None) -> None:
+    """Run ``work`` in the background; ``cells`` marks it as a retry of those cells.
+
+    Retries of different cells run side by side. The run stays ``running``
+    until its last task ends, then records ``failed`` if any task raised.
+    """
+    tasks, task_cells = _tasks(request), _task_cells(request)
+    key = run_id
+    if cells is not None:
+        number = 1
+        while f"{run_id}:retry:{number}" in tasks:
+            number += 1
+        key = f"{run_id}:retry:{number}"
+        task_cells[key] = cells
 
     async def execute() -> None:
+        error = None
         try:
             await work
-            storage.update_run(user_root, run_id, status="complete", finished_at=storage.now())
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - recorded on the run for the reader
             log.exception("Labs run %s failed", run_id)
-            storage.update_run(user_root, run_id, status="failed", error=str(exc), finished_at=storage.now())
+            error = str(exc)
+            storage.update_run(user_root, run_id, error=error)
         finally:
-            tasks.pop(run_id, None)
+            tasks.pop(key, None)
+            task_cells.pop(key, None)
+        if not _run_task_keys(request, run_id):
+            failed = error is not None or bool((storage.read_run(user_root, run_id) or {}).get("error"))
+            storage.update_run(user_root, run_id, status="failed" if failed else "complete", finished_at=storage.now())
 
-    tasks[run_id] = asyncio.create_task(execute())
+    tasks[key] = asyncio.create_task(execute())
 
 
 @router.post("/runs")
@@ -198,16 +233,18 @@ async def create_run(
     elif kind == stage_models.KIND:
         project = str(body.get("project") or "")
         source = _project_dir(root, project)
-        phases, models = list(body.get("phases") or []), list(body.get("models") or [])
+        phases = body.get("phases") or []
         try:
-            stage_models.validate_spec(source, phases, models)
-            reasoning = stage_models.resolve_reasoning(phases, models, body.get("reasoning_efforts"))
+            source = stage_models.source_workspace(source, body.get("part_id"))
+            arms = stage_models.resolve_arms(phases, body.get("arms"))
+            stage_models.validate_spec(source, phases, stage_models.arm_models(arms))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        spec = {"project": project, "phases": phases, "models": models, "reasoning_efforts": reasoning,
-                "estimated_cost_usd": stage_models.estimate_usd(source, phases, models)}
+        part_id = workspace_part_id(source)
+        spec = {"project": project, "part_id": part_id, "phases": phases, "arms": arms,
+                "estimated_cost_usd": stage_models.estimate_arms_usd(source, phases, arms)}
         run = storage.create_run(root, kind=kind, label=str(body.get("label") or "Stage models")[:200], spec=spec)
-        _start(request, root, run["run_id"], stage_models.run(root, run["run_id"], project, phases, models, reasoning))
+        _start(request, root, run["run_id"], stage_models.run(root, run["run_id"], project, phases, arms, part_id))
     else:
         raise HTTPException(400, f"Unknown experiment kind: {kind!r}")
     return run
@@ -222,8 +259,6 @@ async def retry_cells(
     Image cells resend the same request; text-stage arms rerun their phase.
     """
     root = _user_root(request, user_id)
-    if run_id in _tasks(request):
-        raise HTTPException(409, "This run is still in progress")
     try:
         run = storage.read_run(root, run_id)
     except ValueError as exc:
@@ -236,10 +271,14 @@ async def retry_cells(
         cells = experiment.failed_cells(root, run_id, None if requested is None else [str(c) for c in requested])
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    # A failed cell has finished; only a retry already rerunning it is in flight.
+    retrying = set().union(*(_task_cells(request).get(key, frozenset()) for key in _run_task_keys(request, run_id)))
+    cells = [cell for cell in cells if cell["cell_id"] not in retrying]
     if not cells:
-        raise HTTPException(400, "No failed cells to retry")
-    storage.update_run(root, run_id, status="running", finished_at=None, error=None)
-    _start(request, root, run_id, experiment.retry(root, run_id, cells))
+        raise HTTPException(409 if retrying else 400, "Already retrying" if retrying else "No failed cells to retry")
+    storage.update_run(root, run_id, status="running", finished_at=None,
+                       **({} if _run_task_keys(request, run_id) else {"error": None}))
+    _start(request, root, run_id, experiment.retry(root, run_id, cells), frozenset(cell["cell_id"] for cell in cells))
     return {"status": "running", "cells": [cell["cell_id"] for cell in cells]}
 
 
@@ -257,8 +296,14 @@ def get_run(run_id: str, request: Request, user_id: str = Depends(get_current_us
         raise HTTPException(400, str(exc)) from exc
     if run is None:
         raise HTTPException(404, "Run not found")
-    if run["status"] == "running" and run_id not in _tasks(request):
+    if run["status"] == "running" and not _run_task_keys(request, run_id):
         # The server restarted mid-run; unfinished cells never completed here.
+        # Marking them failed keeps them retryable, with any partial spend shown.
+        for cell in run["cells"]:
+            if cell.get("status") == "running":
+                storage.write_cell(root, run_id, cell["cell_id"], cell | {
+                    "status": "failed", "error": "Interrupted by a server restart",
+                })
         storage.update_run(root, run_id, status="interrupted", finished_at=storage.now())
         run = storage.read_run(root, run_id)
     return run
@@ -266,10 +311,10 @@ def get_run(run_id: str, request: Request, user_id: str = Depends(get_current_us
 
 @router.delete("/runs/{run_id}")
 async def delete_run(run_id: str, request: Request, user_id: str = Depends(get_current_user)) -> dict[str, str]:
-    task = _tasks(request).pop(run_id, None)
-    if task is not None:
+    tasks = [_tasks(request).pop(key) for key in _run_task_keys(request, run_id)]
+    for task in tasks:
         task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    await asyncio.gather(*tasks, return_exceptions=True)
     try:
         deleted = storage.delete_run(_user_root(request, user_id), run_id)
     except ValueError as exc:

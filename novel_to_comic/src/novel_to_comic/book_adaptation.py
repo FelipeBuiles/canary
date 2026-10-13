@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from novel_to_comic.ai.prompt_parts import CACHE_BREAK
 from novel_to_comic.narrative_instructions import ADAPT_DEPICTION_GUIDANCE
 from novel_to_comic.ai.context import ai_source_context, execution_observer, stream_observer
 from novel_to_comic.book_context import book_context_instructions
@@ -3404,7 +3405,7 @@ def _reviewed_candidate_for_resume(source, story_bible, brief, *, artifacts, mod
     # The previous review's model proves provenance. The selected model owns
     # subsequent work; changing it does not invalidate the existing story.
     receipts = {c.request_sha256 for c in budget.calls if c.status == "completed" and c.model == review.model}
-    windows = list(_review_contexts({**context, "approved_story_instruction": story_instruction}))
+    windows = list(_review_contexts({**context, "approved_story_instruction": story_instruction}, review.model))
     if len(windows) != len(review.verdicts):
         return None
     for window in windows:
@@ -4253,7 +4254,7 @@ def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> st
     """Re-prompt with the exact schema errors from the previous payload."""
 
     return (
-        f"{base_prompt}\n\nYour previous response did not match the required JSON "
+        f"{base_prompt}{CACHE_BREAK}Your previous response did not match the required JSON "
         "contract. Correct the reported fields while preserving all unaffected "
         "structure, wording, provenance, requirement citations, and exceptions. "
         "A missing citation or accounting reason is a metadata correction; do not "
@@ -4312,7 +4313,7 @@ def _repair_prompt(
         ],
     }
     return (
-        f"{book_prompt}\n\n{_DISPLAY_EXCERPT_CONTRACT}"
+        f"{book_prompt}{CACHE_BREAK}{_DISPLAY_EXCERPT_CONTRACT}"
         "Your previous book adaptation violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
         "resolves every one of them without dropping content you already had. "

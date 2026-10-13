@@ -31,6 +31,7 @@ from novel_to_comic.ai.context import (
     mark_generation_first_content,
 )
 from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
+from novel_to_comic.ai.prompt_parts import plain_prompt, prompt_parts
 from novel_to_comic.ai.admission import (
     AdmissionRejected, cancelled_before_submission,
     post as admitted_post, stream as admitted_stream,
@@ -789,6 +790,12 @@ def _extract_usage(
     details = usage.get("input_tokens_details") or {}
     cached = details.get("cached_tokens_details") or {}
     cached_total = details.get("cached_tokens", 0)
+    # Chat completions (LiteLLM's Vertex and OpenAI text routes) report cache
+    # reads only as an aggregate; a text call's prompt is all text.
+    prompt_cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+    if not details and operation != "image" and type(prompt_cached) is int:
+        cached = {"text_tokens": prompt_cached}
+        cached_total = prompt_cached
     # Preserve modality detail; never assign aggregate cached tokens to text.
     cache_known = not cached_total or bool(cached)
     if cached and "cached_tokens" in details:
@@ -1687,7 +1694,10 @@ async def _chat_completion_once(
         "feature": feature, "json_schema": json_schema, "json_mode": json_mode,
     })
     system_prompt = effective_request["system_prompt"]
-    user_content = effective_request["user_content"]
+    # Cache-break markers never reach a model: Gemini receives the pieces as
+    # separate parts (ai/prompt_parts.py); everything else sees plain text.
+    user_parts = prompt_parts(effective_request["user_content"])
+    user_content = plain_prompt(effective_request["user_content"])
     json_schema = effective_request["json_schema"]
     json_mode = effective_request["json_mode"]
     route = route_for("text", model)
@@ -1707,6 +1717,8 @@ async def _chat_completion_once(
             },
         })
     wire = text_wire(model)
+    if image_attachments and not wire.vision:
+        raise ValueError(f"Vision is not enabled for {model}")
     effort = request_reasoning(config, model, feature)
     open_thinking = wire.provider_key in {"openrouter", "together_ai"} and effort != "none"
     response_format: dict[str, Any] | None
@@ -1734,6 +1746,8 @@ async def _chat_completion_once(
     # estimation, request summaries, and Langfuse logging stay comparable with
     # text-only calls; only the wire message becomes multimodal.
     message_content: str | list[dict[str, Any]] = user_content
+    if route is None and not image_attachments and len(user_parts) > 1 and is_gemini_model(model):
+        message_content = [{"type": "text", "text": part} for part in user_parts]
     if image_attachments and route is None:
         message_content = [{"type": "text", "text": user_content}]
         for image_bytes, media_type in image_attachments:
@@ -1752,7 +1766,9 @@ async def _chat_completion_once(
         ],
         "metadata": metadata,
     }
-    if route is None and wire.effort and not wire.claude_native_json:
+    if route is None and wire.native_vertex_thinking:
+        payload["thinkingConfig"] = {"thinkingLevel": effort, "includeThoughts": True}
+    elif route is None and wire.effort and not wire.claude_native_json:
         payload["reasoning_effort"] = effort
     if route is None and wire.provider_key in {"openrouter", "together_ai"}:
         payload["extra_body"] = {"reasoning": {"enabled": effort != "none"}}
@@ -1773,7 +1789,7 @@ async def _chat_completion_once(
             }
         if output_config:
             payload["output_config"] = output_config
-    elif response_format is not None:
+    elif response_format is not None and wire.json_mode:
         payload["response_format"] = response_format
     effective_max_output_tokens = (max_output_tokens or 16_384) + (16_384 if open_thinking else wire.thinking_headroom_tokens)
     if wire.max_output_tokens:
@@ -1783,7 +1799,7 @@ async def _chat_completion_once(
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.
-    streaming = route is None and _stream_text_enabled()
+    streaming = route is None and wire.streaming and _stream_text_enabled()
     if streaming:
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}

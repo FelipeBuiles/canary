@@ -9,6 +9,7 @@ aliases:
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
+  gemini-4-argon: vertex_ai/gemini-4-argon
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
   claude-haiku-5-5: anthropic/claude-haiku-5-5
@@ -48,6 +49,15 @@ model_overrides:
     mode: chat
     max_input_tokens: 1048576
     max_output_tokens: 65536
+  # Provisional launch rates, operator-approved 2026-10-13; not a verified
+  # Vertex tariff. Cache availability/storage and intro expiry unconfirmed.
+  # https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/
+  # Post-intro announced rates: $4/M input, $20/M output. Review before use.
+  gemini-4-argon:
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
+    mode: chat
   # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
   # Shared by the production API route and Labs Codex subscription usage.
   gpt-6.1-sol:

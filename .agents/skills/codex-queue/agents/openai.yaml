@@ -1,4 +1,0 @@
-interface:
-  display_name: '/codex-queue'
-  short_description: 'Run async work and notify its Codex session'
-  default_prompt: '$codex-queue: Run this long command or watcher asynchronously and notify this session once it reaches a terminal outcome.'

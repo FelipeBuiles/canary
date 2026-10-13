@@ -221,20 +221,66 @@ plus [Vertex pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing).
 
 ## Labs comparison reasoning
 
-**Labs → Stage models** compares two to six models and offers a reasoning selector for every selected model and
-stage in the chosen phases (Extract/Brief and Adapt/Plan). GPT and Claude API and
-subscription routes, and Gemini on Vertex, offer Low, Medium, and High; MiMo and DeepSeek offer Off and
-On. Labs defaults to Medium for GPT/Claude and Off for the open-model routes.
-These are run-specific experiment settings, independent of backoffice defaults.
+**Labs → Stage models** compares two to six arms and offers a model and a
+reasoning selector for every arm and stage in the chosen phases. Extract/Brief
+starts from the novel text and Adapt/Plan from the source's approved Brief, Style
+and Cast; both hold other stages' inputs fixed. **End to end** (`full`) runs
+Extract, Brief, Adapt and Plan on each arm's own outputs, keeping the approved
+Style and Cast: Plan validates against the arm's own Story Bible, and Cast images
+matter only to Draw, which Labs does not run. Its Extract and Brief stages see the
+same inputs as the Extract/Brief phase, so that phase adds a repeat, not a new
+comparison. A stage uses one model per arm in every phase that includes it.
+When a phase continues past a checkpoint, Labs approves it as the author's
+approve action would (the Brief as drafted) and marks that stage `auto_approved`. Select a model, then use **Duplicate arm** to add it again. Each
+copy has its own settings; **Remove** deletes just that arm. Changing one stage's
+model makes a mixed arm, such as one model's Adapt feeding another's Plan within
+the same phase; that stage's reasoning resets to the new model's default. GPT and Claude API and
+subscription routes, Gemini 3.8 Flash and Gemini 4 Argon on Vertex offer Low,
+Medium and High. MiMo and DeepSeek offer Off and On. Labs defaults to Low for
+Gemini 3.8 Flash and Gemini 4 Argon, Medium for GPT/Claude and Off for the
+open-model routes. These are run-specific
+settings, independent of backoffice defaults. Argon sends native thinking
+levels; see [verified Vertex controls](vertex-ai.md#gemini-4-argon-optional-text-route).
 
-The create and estimate APIs accept `reasoning_efforts` keyed by model, then
-stage, for example
-`{"gpt-6-sol": {"adapt": "high", "plan": "low"}, "mimo-v2.6-pro": {"adapt": "enabled", "plan": "none"}}`.
-Choices are validated against selected models and stages before a run is
-created. The run spec stores resolved defaults and explicit choices; each
-result cell records its phase's settings and displays them with its results.
-The isolated arm config applies them through the normal text client. Claude
-Code receives the selected effort; Codex pins `model_reasoning_effort` in its
-verified runtime configuration. Source projects and operator defaults are not
-modified. Cost estimates still use source-project token logs and cannot predict
-how changing reasoning will affect a new run's token usage.
+Create and estimate APIs accept `arms`, each with a unique `id`, a default
+`model`, optional `stage_models` overrides and a `reasoning_efforts` mapping by
+stage. Each stage's reasoning is validated against the model that stage runs on.
+For example:
+
+```json
+{
+  "kind": "stage_models",
+  "project": "my-story",
+  "phases": ["extract_brief"],
+  "arms": [
+    {"id": "low", "model": "gemini-4-argon", "reasoning_efforts": {"extract": "low", "brief": "low"}},
+    {"id": "high", "model": "gemini-4-argon", "reasoning_efforts": {"extract": "high", "brief": "high"}},
+    {"id": "mixed", "model": "gemini-4-argon", "stage_models": {"brief": "gemini-3.8-flash"},
+     "reasoning_efforts": {"extract": "low", "brief": "low"}}
+  ]
+}
+```
+
+The run spec stores resolved defaults and explicit choices per arm, including the
+model every stage runs on. Each phase cell uses `phase.model.arm-id` (the arm's
+default model) for its identity and independent workspace, and records
+`stage_models`; a cell that spends any USD reports as API-funded;
+reasoning is visible alongside results and in the stage table headings.
+Estimates are keyed by arm ID and count every repeated selection. They price each
+stage's source-project token log at that stage's model rates and cannot predict a new reasoning level's token
+usage. Missing source usage leaves an unknown estimate rather than a free run.
+
+Labs lists the project's current part (the first unfinished part, otherwise
+its last), using that part's Brief and the series' shared Style/Cast status.
+The create/estimate request pins its `part_id`; the run and retry preserve it.
+Each arm snapshots the series authorities and prior parts, then runs the chosen
+part under `parts/<part_id>/` inside that isolated copy. Shared Story Bible,
+Style and Cast paths retain their series-root meaning. The source remains read-only.
+
+Choices, IDs and model availability are validated before creation or dispatch.
+Retries keep the selected arm's identity, reasoning, input fingerprint and
+failed attempts; another arm of the same model is never overwritten. The
+isolated config uses the normal text client. Claude Code receives the selected
+effort; Codex pins `model_reasoning_effort` in its runtime configuration.
+Source projects and operator defaults are not modified. Completed historical
+runs remain readable; their recorded cells retain their own retry identity.

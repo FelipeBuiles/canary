@@ -9,6 +9,7 @@ export type LabsFunding = "api" | "codex_subscription" | "claude_subscription";
 
 export interface LabsProject {
   id: string;
+  part_id?: string | null;
   title: string;
   statuses: Record<string, string>;
   words: number | null;
@@ -64,7 +65,14 @@ export interface ImageEstimate {
   problems: { item: string; arm: number; error: string }[];
 }
 
-export type LabsReasoning = Record<string, Record<string, string>>;
+export interface StageModelArm {
+  id: string;
+  /** The arm's default model, for every stage it doesn't override. */
+  model: string;
+  /** Per-stage overrides, so one arm can, say, Adapt on one model and Plan on another. */
+  stage_models?: Record<string, string>;
+  reasoning_efforts: Record<string, string>;
+}
 
 export interface StageModelOption {
   id: string;
@@ -142,6 +150,8 @@ export interface StageResult {
 
 export interface StageModelCell {
   reasoning_efforts?: Record<string, string>;
+  /** The model each stage ran on; absent on runs recorded before mixed arms. */
+  stage_models?: Record<string, string>;
   variant?: string;
   cell_id: string;
   phase: string;
@@ -175,7 +185,7 @@ export interface LabsRunDetail extends Omit<LabsRunSummary, "cell_count"> {
 
 export type LabsRunCreatePayload =
   | { kind: "image_compare"; label?: string; project: string; items: string[]; arms: ImageArm[] }
-  | { kind: "stage_models"; label?: string; project: string; phases: string[]; models: string[]; reasoning_efforts?: LabsReasoning };
+  | { kind: "stage_models"; label?: string; project: string; part_id?: string | null; phases: string[]; arms: StageModelArm[] };
 
 export function labsRunFileUrl(runId: string, path: string): string {
   return `/api/labs/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -206,7 +216,7 @@ export function getStageModelOptions(): Promise<StageModelOptions> {
 }
 
 export function estimateStageModels(
-  body: { project: string; phases: string[]; models: string[]; reasoning_efforts?: LabsReasoning },
+  body: { project: string; part_id?: string | null; phases: string[]; arms: StageModelArm[] },
 ): Promise<{ estimated_cost_usd: Record<string, number | null> }> {
   return apiFetch("/labs/stage-models/estimate", { method: "POST", body: JSON.stringify(body) });
 }

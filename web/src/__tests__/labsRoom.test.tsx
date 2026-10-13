@@ -8,7 +8,9 @@ const state = vi.hoisted(() => ({
   options: {
     data: undefined as unknown, error: null as Error | null, isLoading: false, isFetching: false, refetch: vi.fn(),
   },
+  projectOptions: undefined as unknown,
   stageOptions: undefined as unknown,
+  stageEstimate: undefined as unknown,
   create: vi.fn(),
   run: undefined as unknown,
   retry: vi.fn(),
@@ -21,7 +23,7 @@ const targets = [
 ];
 
 vi.mock("../api/queries", () => ({
-  useLabsProjects: () => ({ data: { projects: [{ id: "story", title: "Story", statuses: {}, words: 1200 }] }, isLoading: false }),
+  useLabsProjects: () => ({ data: { projects: state.projectOptions ?? [{ id: "story", title: "Story", statuses: {}, words: 1200 }] }, isLoading: false }),
   useImageCompareOptions: () => state.options,
   useImageItems: () => ({ data: { items: [
     { id: "page:1", kind: "page", label: "Page 1 · 3 panels", preview: "pages/page_001.png" },
@@ -30,7 +32,7 @@ vi.mock("../api/queries", () => ({
   useImageArmPreview: () => ({ data: undefined }),
   useImageCompareEstimate: () => ({ data: undefined }),
   useStageModelOptions: () => ({ data: state.stageOptions, isLoading: !state.stageOptions }),
-  useStageModelEstimate: () => ({ data: undefined }),
+  useStageModelEstimate: () => ({ data: state.stageEstimate }),
   useCreateLabsRun: () => ({ mutate: state.create, isPending: false, error: null }),
   useDeleteLabsRun: () => ({ mutate: vi.fn(), isPending: false }),
   useRetryLabsCells: () => ({ mutate: state.retry, isPending: false, error: null }),
@@ -53,8 +55,10 @@ describe("Labs", () => {
     state.options.refetch.mockClear();
     state.run = undefined;
     state.stageOptions = undefined;
+    state.projectOptions = undefined;
+    state.stageEstimate = undefined;
     state.create.mockClear();
-    state.retry.mockClear();
+    state.retry.mockReset();
   });
 
   it("loads source thumbnails through the Labs slug-based file route", () => {
@@ -141,9 +145,9 @@ describe("Labs", () => {
     renderAt("/labs?run=r1");
 
     fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
-    expect(state.retry).toHaveBeenCalledWith([expect.stringMatching(/^page-1\.arm[12]$/)]);
+    expect(state.retry).toHaveBeenCalledWith([expect.stringMatching(/^page-1\.arm[12]$/)], expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "Retry 2 failed" }));
-    expect(state.retry).toHaveBeenLastCalledWith(undefined);
+    expect(state.retry).toHaveBeenLastCalledWith(["page-1.arm1", "page-1.arm2"], expect.anything());
   });
 
   it("retries one failed text arm, or every failure, and keeps earlier attempts' spend visible", () => {
@@ -167,9 +171,33 @@ describe("Labs", () => {
     expect(screen.getByText(/Succeeded on retry 1 · earlier spend \$0\.012/)).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(state.retry).toHaveBeenCalledWith(["extract_brief.haiku"]);
+    expect(state.retry).toHaveBeenCalledWith(["extract_brief.haiku"], expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed" }));
-    expect(state.retry).toHaveBeenLastCalledWith(undefined);
+    expect(state.retry).toHaveBeenLastCalledWith(["extract_brief.haiku"], expect.anything());
+  });
+
+  it("keeps other failed arms retryable while one retry runs", () => {
+    state.retry.mockImplementation((cells: string[], options: { onSuccess: (result: { cells: string[] }) => void }) =>
+      options.onSuccess({ cells }));
+    const failed = (id: string) => ({
+      cell_id: id, phase: "full", model: id, funding: "api" as const, status: "failed" as const,
+      workspace: `workspaces/${id}`, stages: [], error: "Adapt requires an approved adaptation brief",
+    });
+    state.run = {
+      ...base, run_id: "r4", kind: "stage_models", label: "E2E", status: "running",
+      spec: { phases: ["full"] }, cells: [failed("full.a"), failed("full.b")],
+    } satisfies LabsRunDetail;
+    renderAt("/labs?run=r4");
+
+    const [first, second] = screen.getAllByRole("button", { name: "Retry" }) as HTMLButtonElement[];
+    fireEvent.click(first);
+    expect(state.retry).toHaveBeenCalledWith(["full.a"], expect.anything());
+    expect(first.disabled).toBe(true);
+    expect(second.disabled).toBe(false);
+    expect(screen.getByRole("button", { name: "Retry 1 failed" })).toBeTruthy();
+    fireEvent.click(second);
+    expect(state.retry).toHaveBeenLastCalledWith(["full.b"], expect.anything());
+    expect(screen.queryByRole("button", { name: /failed$/ })).toBeNull();
   });
 
   it("compares stages side by side and reports subscription runs as allowance, not dollars", () => {
@@ -209,11 +237,72 @@ describe("Labs", () => {
       default_models: ["opus", "mimo"], phases: { extract_brief: ["extract", "brief"] },
     };
     renderAt("/labs?new=stage_models");
-    fireEvent.change(screen.getByRole("combobox", { name: "Opus extract reasoning" }), { target: { value: "high" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "MiMo brief reasoning" }), { target: { value: "enabled" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Opus arm-1 extract reasoning" }), { target: { value: "high" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "MiMo arm-2 brief reasoning" }), { target: { value: "enabled" } });
     fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
     expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
-      reasoning_efforts: { opus: { extract: "high", brief: "medium" }, mimo: { extract: "none", brief: "enabled" } },
+      arms: [
+        { id: "arm-1", model: "opus", stage_models: { extract: "opus", brief: "opus" }, reasoning_efforts: { extract: "high", brief: "medium" } },
+        { id: "arm-2", model: "mimo", stage_models: { extract: "mimo", brief: "mimo" }, reasoning_efforts: { extract: "none", brief: "enabled" } },
+      ],
+    }), expect.anything());
+  });
+
+  it("gives one stage of an arm its own model and that model's reasoning choices", () => {
+    state.stageOptions = {
+      models: [
+        { id: "argon", label: "Argon", provider: "Vertex", funding: "api", available: true,
+          reasoning_options: ["low", "medium", "high"], default_reasoning: "low" },
+        { id: "mimo", label: "MiMo", provider: "OpenRouter", funding: "api", available: true,
+          reasoning_options: ["none", "enabled"], default_reasoning: "none" },
+      ],
+      default_models: ["argon", "mimo"], phases: { adapt_plan: ["adapt", "plan"] },
+    };
+    state.projectOptions = [{ id: "story", title: "Story", statuses: { brief: "complete", style: "complete", cast: "complete" }, words: 1200 }];
+    renderAt("/labs?new=stage_models");
+    fireEvent.change(screen.getByRole("combobox", { name: "Argon arm-1 adapt reasoning" }), { target: { value: "high" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Argon arm-1 adapt model" }), { target: { value: "mimo" } });
+    const reasoning = screen.getByRole("combobox", { name: "Argon arm-1 adapt reasoning" }) as HTMLSelectElement;
+    expect([...reasoning.options].map((option) => option.value)).toEqual(["none", "enabled"]);
+    expect(reasoning.value).toBe("none");
+    expect(screen.getByText("Argon · adapt: MiMo · arm-1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      label: expect.stringContaining("argon · adapt: mimo vs mimo"),
+      arms: [
+        { id: "arm-1", model: "argon", stage_models: { adapt: "mimo", plan: "argon" }, reasoning_efforts: { adapt: "none", plan: "low" } },
+        { id: "arm-2", model: "mimo", stage_models: { adapt: "mimo", plan: "mimo" }, reasoning_efforts: { adapt: "none", plan: "none" } },
+      ],
+    }), expect.anything());
+  });
+
+  it("runs end to end alongside the controlled phases with one model per stage", () => {
+    state.stageOptions = {
+      models: [
+        { id: "argon", label: "Argon", provider: "Vertex", funding: "api", available: true,
+          reasoning_options: ["low", "medium", "high"], default_reasoning: "low" },
+        { id: "flash", label: "Flash", provider: "Vertex", funding: "api", available: true,
+          reasoning_options: ["low", "medium", "high"], default_reasoning: "low" },
+      ],
+      default_models: ["argon", "flash"],
+      phases: { extract_brief: ["extract", "brief"], adapt_plan: ["adapt", "plan"], full: ["extract", "brief", "adapt", "plan"] },
+    };
+    state.projectOptions = [{ id: "story", title: "Story", statuses: { style: "complete", cast: "complete" }, words: 1200 }];
+    renderAt("/labs?new=stage_models");
+    expect((screen.getByRole("checkbox", { name: /Adapt \+ Plan/ }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("Needs an approved Brief, Style, Cast")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: /End to end/ }));
+    expect(screen.getAllByRole("combobox", { name: "Argon arm-1 adapt model" })).toHaveLength(1);
+    fireEvent.change(screen.getByRole("combobox", { name: "Argon arm-1 adapt model" }), { target: { value: "flash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      phases: ["extract_brief", "full"],
+      arms: [
+        { id: "arm-1", model: "argon", stage_models: { extract: "argon", brief: "argon", adapt: "flash", plan: "argon" },
+          reasoning_efforts: { extract: "low", brief: "low", adapt: "low", plan: "low" } },
+        { id: "arm-2", model: "flash", stage_models: { extract: "flash", brief: "flash", adapt: "flash", plan: "flash" },
+          reasoning_efforts: { extract: "low", brief: "low", adapt: "low", plan: "low" } },
+      ],
     }), expect.anything());
   });
 
@@ -231,10 +320,76 @@ describe("Labs", () => {
     expect(seventh.disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
     expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
-      models: ["model-0", "model-1", "model-2", "model-3", "model-4", "model-5"],
+      arms: Array.from({ length: 6 }, (_, index) => ({
+        id: `arm-${index + 1}`, model: `model-${index}`, stage_models: { extract: `model-${index}`, brief: `model-${index}` },
+        reasoning_efforts: { extract: "medium", brief: "medium" },
+      })),
     }), expect.anything());
     fireEvent.click(screen.getByRole("checkbox", { name: "Model 5" }));
     expect(seventh.disabled).toBe(false);
+  });
+
+  it("duplicates one model with independent reasoning and counts both arm estimates", () => {
+    state.stageOptions = {
+      models: [{ id: "argon", label: "Argon", provider: "Vertex", funding: "api", available: true,
+        reasoning_options: ["low", "medium", "high"], default_reasoning: "medium" }],
+      default_models: ["argon"], phases: { extract_brief: ["extract", "brief"] },
+    };
+    state.stageEstimate = { estimated_cost_usd: { "arm-1": 1, "arm-2": 1 } };
+    renderAt("/labs?new=stage_models");
+    expect((screen.getByRole("button", { name: "Run comparison" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox", { name: "Argon arm-1 extract reasoning" }), { target: { value: "low" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate Argon arm-1" }));
+    expect((screen.getByRole("combobox", { name: "Argon arm-2 extract reasoning" }) as HTMLSelectElement).value).toBe("low");
+    fireEvent.change(screen.getByRole("combobox", { name: "Argon arm-2 extract reasoning" }), { target: { value: "high" } });
+    expect((screen.getByRole("combobox", { name: "Argon arm-1 extract reasoning" }) as HTMLSelectElement).value).toBe("low");
+    expect(screen.getByText(/≈\$2.00 est. for API arms/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({ arms: [
+      { id: "arm-1", model: "argon", stage_models: { extract: "argon", brief: "argon" }, reasoning_efforts: { extract: "low", brief: "medium" } },
+      { id: "arm-2", model: "argon", stage_models: { extract: "argon", brief: "argon" }, reasoning_efforts: { extract: "high", brief: "medium" } },
+    ] }), expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "Remove Argon arm-1" }));
+    expect(screen.queryByRole("combobox", { name: "Argon arm-1 extract reasoning" })).toBeNull();
+    expect((screen.getByRole("combobox", { name: "Argon arm-2 extract reasoning" }) as HTMLSelectElement).value).toBe("high");
+    expect((screen.getByRole("button", { name: "Run comparison" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("keeps repeated models distinct in the results table and artifact links", () => {
+    state.run = {
+      ...base, label: "Repeated Argon", run_id: "repeat", kind: "stage_models", spec: { phases: ["extract_brief"] }, cells: ["low", "high"].map((effort) => ({
+        cell_id: `extract_brief.argon.${effort}`, phase: "extract_brief", model: "argon", variant: effort,
+        reasoning_efforts: { extract: effort }, funding: "api", status: "ok", workspace: `workspaces/argon.${effort}`,
+        stages: [{ stage: "extract", status: "complete", error: null, seconds: 1, calls: 1, input_tokens: 100,
+          cached_input_tokens: 0, output_tokens: 10, cost_usd: 0.1, unpriced_calls: 0, models: ["argon"], funding: ["api"],
+          artifact: "extract/story_bible.json" }],
+      })),
+    } satisfies LabsRunDetail;
+    renderAt("/labs?run=repeat");
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("low reasoning")).toBeTruthy();
+    expect(within(table).getByText("high reasoning")).toBeTruthy();
+    expect(within(table).getAllByRole("link", { name: "Open story_bible.json" }).map((link) => link.getAttribute("href")))
+      .toEqual(["/api/labs/runs/repeat/files/workspaces/argon.low/extract/story_bible.json",
+        "/api/labs/runs/repeat/files/workspaces/argon.high/extract/story_bible.json"]);
+  });
+
+  it("enables Adapt + Plan for a completed part and pins that part in the Labs request", () => {
+    state.projectOptions = [{ id: "the-monkey-s-paw", title: "The Monkey's Paw", part_id: "part_0001",
+      statuses: { brief: "complete", style: "complete", cast: "complete" }, words: 3933 }];
+    state.stageOptions = {
+      models: ["argon", "flash"].map((id) => ({ id, label: id, provider: "Vertex", funding: "api", available: true,
+        reasoning_options: ["low", "medium", "high"], default_reasoning: "medium" })),
+      default_models: ["argon", "flash"], phases: { extract_brief: ["extract", "brief"], adapt_plan: ["adapt", "plan"] },
+    };
+    renderAt("/labs?new=stage_models");
+    const phase = screen.getByRole("checkbox", { name: /Adapt.*Plan/ }) as HTMLInputElement;
+    expect(phase.disabled).toBe(false);
+    expect(phase.checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      project: "the-monkey-s-paw", part_id: "part_0001", phases: ["extract_brief", "adapt_plan"],
+    }), expect.anything());
   });
 
 });

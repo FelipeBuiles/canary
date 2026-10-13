@@ -26,7 +26,7 @@ context, and Plan always uses the reviewed global map plus local detail workflow
 Detail requests use one shared page/panel template and a list of lettering-ID
 placements; local validators still enforce exact page count, beat ownership,
 lettering ownership/order, and visual authorities. Repairs use the same format.
-Every Gemini structured call compiles its schema with `gemini_output_schema`
+Every Gemini 3.8 Flash structured call compiles its schema with `gemini_output_schema`
 and sends it as JSON-mode instructions (`schema_instructions`, both in
 `ai/gemini_schema.py`, applied by `gemini_tuning.tuned_request`). No stage or
 feature has its own Gemini transport rule. The compiled schema requires every
@@ -67,6 +67,106 @@ The project in `VERTEXAI_PROJECT` determines the Google Cloud billing account
 that receives usage. Trial credits offset eligible charges on that account;
 they do not make provider usage free in Canary's cost records. Verify the
 project's billing account and remaining credit in Cloud Console before generation.
+
+## Gemini 4 Argon (optional text route)
+
+As of October 13, 2026, `gemini-4-argon` selects the exact gateway target
+`vertex_ai/gemini-4-argon`, using the same ADC credentials and
+`VERTEXAI_PROJECT` / `VERTEXAI_LOCATION` settings. The operator reported HTTP 200
+from direct `countTokens` and plain-text `generateContent` in `global`.
+The integration initially made no live calls; the bounded schema comparison below
+subsequently verified structured requests. Existing defaults are unchanged.
+
+Argon is selectable in Labs and Extract, Brief, Style/Cast text, Adapt and Plan.
+Finish has no model; image generation, OCR and visual review do not offer Argon.
+Structured stage calls place the compiled schema in the prompt, send JSON mode,
+and use the existing JSON parser and stage validators. Native constrained
+decoding accepts small schemas but rejects full Extract, so stages keep the
+same instruction-based contract as Gemini 3.8 Flash. Low, Medium and High
+thinking levels are verified in direct Vertex calls on October 13, 2026. The
+reasoning selector offers all three (route default Low), independently per Labs
+arm and stage; an operator's saved shared or per-stage effort still applies. Streaming, vision, tools, cache creation and sampling controls
+remain unverified and disabled. No Vertex input/output
+limit is registered: Google's launch post announces a million-token **output**
+limit, but it does not establish the configured Vertex endpoint's limits.
+The output budget adds 16,384 tokens of thinking headroom, and pre-call holds
+include a 4,096-token thinking allowance, following the existing Vertex
+reservation policy. These are conservative application allowances, not verified
+model limits or predicted thinking usage. Actual reported thinking is billed as
+output by the existing usage accounting.
+
+Argon sends `thinkingConfig: {thinkingLevel: <selected>, includeThoughts: true}`
+as a native top-level gateway parameter. LiteLLM 1.101's Gemini version check
+recognizes only `gemini-3`; its standard `reasoning_effort` would send an older
+`thinkingBudget` for Argon and would not preserve Medium as a level. Sending
+`thinkingConfig` in `extra_body` also drops it in this adapter. The app and route
+default use the verified native parameter; provider-free contracts inspect the
+actual Vertex request for all three levels and confirm billable thinking usage.
+
+The first Low and High probes received 429 capacity errors. One further bounded
+attempt at each succeeded; Medium succeeded initially. An invalid enum value
+returned 400 at `generation_config.thinking_config.thinking_level`. All accepted
+calls ended with STOP and answered the synthetic sock-count problem correctly.
+High reported 427 thinking tokens and one thought part; Low and Medium reported
+no thinking tokens. This supports configurable levels, not a quality or latency
+benchmark. The probes had a 2,048-token output cap and no automatic retries.
+Raw evidence is retained locally under
+`work/argon-reasoning-comparison-20261013/` and its `-attempt2` directory.
+
+The operator approved provisional USD rates of $2/M input, $10/M output and
+$0.10/M cached input on October 13, 2026. These are the
+[Google launch announcement](https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/)
+rates (95% cache discount), not independently confirmed Vertex tariffs.
+The [Vertex pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing)
+had no Argon entry when checked; the
+[Google SKU catalog](https://cloud.google.com/skus/sku-groups/gen-ai-gemini-models)
+lists Argon Cyber Permissive SKUs but does not establish rates for this exact
+model ID. Cache storage charges, endpoint-specific rates and the introductory
+expiry remain unconfirmed. The launch post says post-intro rates will be $4/M
+input and $20/M output; review both checked-in pricing tables when Vertex
+publishes applicable tariffs. Cache pricing registration does not enable caching. Bounded probes on October
+13, 2026 (`work/argon-cache-probe*.py`, synthetic text) found that Vertex rejects
+explicit `cachedContents` for Argon ("does not support explicit context
+caching"), while Gemini 3.8 Flash accepts it. Argon's implicit cache did serve
+repeated prefixes of about 9k tokens through the gateway (6,765–7,421 cached),
+but only best-effort: a new prefix needed one or two earlier sends, the last
+~2k tokens were never cached, and text appended inside the same content part
+missed. Gemini requests therefore keep a stable system prompt and split shared
+context from window-, shard- and repair-specific text with `ai/prompt_parts.py`
+part breaks. Argon carries the output contract as the final user part; Gemini
+3.8 Flash keeps it in the system prompt. In Labs run `20261013-171728-bf5a8d`
+only 3 of 226 Gemini calls read any cached tokens, because each repair or
+re-review re-sends its prefix once, and Flash's Plan rose to 11–19 calls after
+the move, so Flash returned to its earlier placement.
+Provider accounting uses these provisional rates; user-facing credit estimates
+continue through the separate existing credit system.
+
+Labs run `20261013-143611-7df22e` (one short story, October 13, 2026) set
+three route-specific defaults. Low matched Medium from Extract through Plan.
+Narrative review uses one window for up to 48 pages or 120,000 source
+characters, instead of 12 pages or 24,000 characters, because every window
+re-sends the story as reader context. Adapt lettering adds a show-don't-caption
+checklist, because Argon lettered about twice Flash's words and captioned actions
+that panels show. These are single-sample settings, not quality benchmarks.
+Run `20261013-160909-c706ad` added Argon-only checklists: Extract gathers anchor
+details stated anywhere in the source; Brief protects whole quotable lines,
+including tone-setting opening and closing sentences, rather than fragments;
+Plan mixes panel counts and reserves cliffhangers for withheld answers. Shared
+Gemini checklists stay unchanged for Flash (`gemini_tuning.MODEL_ADDENDA`).
+Run `20261013-171728-bf5a8d` settled the stage split: Argon for Extract, Brief
+and Plan (Plan in 7–8 calls without repairs, against 11–19 for Flash), Flash for
+Adapt. Flash Adapt adds a source-wording checklist: no invented cries, no
+reported narration voiced as dialogue, no narration rewritten as a thought.
+Stage selections are operator settings (see [model settings](account-model-settings.md)).
+
+Provider-free tests cover the exact ADC REST route, plain-text/JSON serialization,
+pricing registration, Labs availability, text-stage selections, local structured
+parsing and disabled capabilities. They do not establish image understanding or context limits.
+A [live schema comparison](../reviews/2026-10-13-argon-schemas.md) verified small
+native schemas, compiled Brief and JSON mode with the full Extract schema in
+instructions. Both models rejected the full native Extract schema. A running
+backend and gateway require the updated catalog/configuration before selecting Argon;
+the operator owns refreshes.
 
 ## Local credentials and project
 

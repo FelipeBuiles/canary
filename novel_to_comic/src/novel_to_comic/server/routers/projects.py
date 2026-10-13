@@ -667,16 +667,9 @@ def rename_project(
 
 def current_part_dir(root: Path) -> Path:
     """The part a project opens on: the first unfinished part, else the last."""
-    from novel_to_comic.workspace import part_workspaces
+    from novel_to_comic.workspace import current_part_workspace
 
-    workspaces = part_workspaces(root)
-    if not workspaces:
-        # A project that could not be migrated keeps its single-book layout.
-        return root
-    for workspace in workspaces:
-        if load_state(workspace).stages["finish"].status != StageStatus.COMPLETE:
-            return workspace
-    return workspaces[-1]
+    return current_part_workspace(root)
 
 
 def _series_cost_usd(root: Path, series=None) -> tuple[float, float]:

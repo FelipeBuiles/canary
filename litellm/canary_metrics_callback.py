@@ -12,7 +12,7 @@ from canary_metrics import record
 _MODELS = frozenset({
     "gpt-6.1-sol", "gpt-6-sol",
     "gpt-6-luna",
-    "gemini-3.8-flash",
+    "gemini-3.8-flash", "gemini-4-argon",
     "claude-opus-5-5",
     "claude-sonnet-5-5",
     "claude-haiku-5-5",

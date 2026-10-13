@@ -234,7 +234,7 @@ def test_brief_sees_source_grounded_identity_equipment_and_short_lived_principal
     assert any('blue jeweled crown' in state['visual_anchor'] for state in looks['states'])
     assert context['source_scenes'][-1]['scene_type'] == 'non_narrative'
     assert ''.join(scene['text'] for scene in context['source_scenes']) == TEXT
-    assert story_page_envelope(source, result) == (10, 20)
+    assert story_page_envelope(source, result) == (5, 7)
 
 
 @pytest.mark.parametrize('age,anchor', [('13', '1girl, 130 pounds, number 23 jersey'),

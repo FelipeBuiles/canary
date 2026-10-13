@@ -161,7 +161,7 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "claude-haiku-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash",
+        "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-argon",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract",
     }
@@ -450,12 +450,14 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
                "metadata": {"feature": "contract"}, wire.token_limit_field: 4096}
     if wire.temperature:
         payload["temperature"] = 0.7
+    if wire.native_vertex_thinking:
+        payload["thinkingConfig"] = {"thinkingLevel": wire.effort, "includeThoughts": True}
     if wire.claude_native_json:
         payload["output_config"] = {"effort": wire.effort, "format": {"type": "json_schema", "schema": schema}}
-    else:
+    elif wire.json_mode:
         payload["response_format"] = {"type": "json_schema",
                                       "json_schema": {"name": "contract", "strict": True, "schema": schema}}
-        if wire.effort:
+        if wire.effort and not wire.native_vertex_thinking:
             payload["reasoning_effort"] = wire.effort
     if wire.provider_key == "vertex_ai":
         _vertex_adc(monkeypatch)
@@ -722,3 +724,51 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
     assert generation["thinkingConfig"] == {"thinkingLevel": "medium", "includeThoughts": True}
     # Thinking bills as output: 1000 * $0.75/M + 150 * $3.75/M.
     assert response._hidden_params["response_cost"] == pytest.approx(0.0013125)
+
+
+@pytest.mark.parametrize("output_mode", ["plain", "json_object", "json_schema"])
+@pytest.mark.parametrize("effort", [None, "low", "medium", "high"])
+def test_argon_route_serializes_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort):
+    import json
+    import litellm
+
+    _vertex_adc(monkeypatch)
+    monkeypatch.setattr(litellm, "model_cost", _bundled_cost_map())
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-4-argon")
+    seen = []
+
+    def send(self, request, **kwargs):
+        seen.append(request)
+        return httpx.Response(200, request=request, json={
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "answer"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 100, "thoughtsTokenCount": 50, "totalTokenCount": 1150},
+        })
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    router = litellm.Router(model_list=[{**route, "litellm_params": {
+        **route["litellm_params"], "vertex_project": "fixture-project", "vertex_location": "global",
+    }}])
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    output = {}
+    if effort:
+        output["thinkingConfig"] = {"thinkingLevel": effort, "includeThoughts": True}
+    if output_mode == "json_object":
+        output["response_format"] = {"type": "json_object"}
+    elif output_mode == "json_schema":
+        output["response_format"] = {"type": "json_schema", "json_schema": {"name": "probe", "schema": schema}}
+    response = router.completion(model="gemini-4-argon", messages=[
+        {"role": "system", "content": "Return an answer."}, {"role": "user", "content": "Hello"},
+    ], max_completion_tokens=4096, **output)
+    request = seen[-1]
+    assert request.url.host == "aiplatform.googleapis.com"
+    assert request.url.path.endswith("/projects/fixture-project/locations/global/publishers/google/models/gemini-4-argon:generateContent")
+    assert request.headers["authorization"] == "Bearer fixture-token"
+    assert "x-goog-api-key" not in request.headers
+    generation = json.loads(request.content)["generationConfig"]
+    expected = {"max_output_tokens": 4096, "thinkingConfig": {"thinkingLevel": effort or "medium", "includeThoughts": True}}
+    if output_mode != "plain":
+        expected["response_mime_type"] = "application/json"
+    if output_mode == "json_schema":
+        expected["response_json_schema"] = schema
+    assert generation == expected
+    assert response._hidden_params["response_cost"] == pytest.approx(0.0035)

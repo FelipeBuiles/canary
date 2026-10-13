@@ -33,10 +33,15 @@ def recommended_page_envelope(
     units or prose pages with comic pages while leaving the draft editable.
     """
 
+    # Story length sets the range; scenes only nudge it. Scaling by scene count
+    # made page count follow Extract's segmentation: in Labs run
+    # 20261013-171728-bf5a8d the same 3,931-word story got 14-28 pages from
+    # Flash's 7 scenes and 30-60 from Argon's 15, and Draw spend scales with
+    # pages. A scene still needs at least one page.
     words = max(1, word_count)
     scenes = max(1, scene_count)
-    minimum = max(scenes * 2, (words + 399) // 400)
-    maximum = max(minimum, scenes * 4, (words + 249) // 250)
+    minimum = max(scenes, (words + 399) // 400)
+    maximum = max(minimum + scenes // 2, (words + 249) // 250)
     return minimum, maximum
 
 
