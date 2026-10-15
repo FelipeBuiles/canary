@@ -1,13 +1,15 @@
-"""Selected proof survives compilation without becoming an identity/pose reference."""
+"""Draw carries Cast authorities only; the Style proof conditions Cast, never pages.
 
-import hashlib
-import json
+A proof drawn from the book's own scene depicts the cast. Sent beside the
+approved sheets it acts as a second, conflicting version of the same people
+(Monkey's Paw 2026-10-14: Morris's proof costume replaced his Cast coat), so
+style reaches Draw through the proof-conditioned Cast sheets and plates.
+"""
 
 import pytest
-from PIL import Image
 
-from novel_to_comic.models.draw import FrozenPageGenerationRequest, PageRenderCorrection, RetryProvenance
-from novel_to_comic.page_drawing import compile_page_generation_request, _prepare_complete_page, _integrated_page_profile
+from novel_to_comic.models.draw import RetryProvenance
+from novel_to_comic.page_drawing import compile_page_generation_request, _integrated_page_profile
 from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_MARKER
 from novel_to_comic.style_reference import require_style_reference
 
@@ -16,105 +18,30 @@ from .test_complete_page_draw import _edition, _inventory, _page, _profile, _ref
 
 
 @pytest.mark.parametrize("integrated", [False, True])
-def test_proof_is_separate_rendering_authority_and_identity_pose_contract_survives(tmp_path, integrated):
+def test_draw_uploads_only_cast_authorities_and_identity_pose_contract_survives(tmp_path, integrated):
     files = _reference_files(tmp_path)
-    proof = write_style_proof(tmp_path)
+    write_style_proof(tmp_path)
     edition = _edition(_integrated_page_profile(_profile()) if integrated else _profile())
     compiled = compile_page_generation_request(
         _page(), edition, _inventory(), files, retry=RetryProvenance(attempt=1),
-        style_reference_path=proof, style_template="Torn paper silhouettes.",
+        style_template="Torn paper silhouettes.",
     )
     request = compiled.request
     payload = _provider_brief(request.prompt)
-    # The proof leads: it is the rendering every subject asset is redrawn in.
-    assert [ref.id for ref in request.references] == ["selected-style-proof", "ward-bloodied-ref", "idol-ref"]
-    assert compiled.reference_bytes == (proof.read_bytes(), files["ward-bloodied-ref"].path.read_bytes(),
+    assert [ref.id for ref in request.references] == ["ward-bloodied-ref", "idol-ref"]
+    assert [ref.order for ref in request.references] == [1, 2]
+    assert compiled.reference_bytes == (files["ward-bloodied-ref"].path.read_bytes(),
                                        files["idol-ref"].path.read_bytes())
-    assert request.references[0].entity_id is None
-    assert payload["selected_style_proof"]["image"] == "asset-A"
-    assert list(payload)[:2] == ["reference_scope", "selected_style_proof"]
-    assert [ref["image"] for ref in payload["approved_page_references"]] == ["asset-B", "asset-C"]
-    authority = payload["selected_style_proof"]["authority"]
-    assert "facial abstraction" in authority
-    assert "Where an asset's shading, modeling, line or texture differs from this proof, this proof wins" in authority
-    assert "Take no identities, hairstyles, costumes, rooms" in authority
-    assert "redrawn in the selected_style_proof's rendering language" in payload["reference_scope"]
+    assert "selected_style_proof" not in payload
+    assert [ref["image"] for ref in payload["approved_page_references"]] == ["asset-A", "asset-B"]
+    assert "proof" not in request.prompt.lower()
     assert "do not default to the reference portrait's three-quarter view" in payload["reference_scope"]
     assert "not a fixed pose, facing direction, gaze, expression or camera angle" in payload["reference_scope"]
     assert "do not mirror asymmetric features" in payload["reference_scope"]
     assert request.prompt.count(RENDERING_FIDELITY_MARKER) == 1
     assert "confine surface cleanup to the authorized change" in request.prompt
     assert len(request.lettering) == int(integrated)
-    assert request.estimated_cost_usd == edition.capability_profile.price_per_page_usd + 3 * edition.capability_profile.price_per_reference_usd
-    assert _prepare_complete_page(compiled, edition.capability_profile).reference_bytes == compiled.reference_bytes
-
-
-def test_proof_pixels_are_frozen_and_change_request_identity_without_rebinding_edition(tmp_path):
-    files = _reference_files(tmp_path)
-    proof = write_style_proof(tmp_path)
-    args = (_page(), _edition(), _inventory(), files)
-    before = compile_page_generation_request(*args, retry=RetryProvenance(attempt=1), style_reference_path=proof)
-    saved = before.request.model_dump_json()
-    Image.new("RGB", (32, 40), "blue").save(proof)
-    after = compile_page_generation_request(*args, retry=RetryProvenance(attempt=1), style_reference_path=proof)
-    assert before.request.request_sha256 != after.request.request_sha256
-    assert before.request.references[1:] == after.request.references[1:]
-    assert before.request.profile_sha256 == after.request.profile_sha256
-    assert before.request.edition_sha256 == after.request.edition_sha256
-    assert before.reference_bytes[0] != proof.read_bytes()
-    assert FrozenPageGenerationRequest.model_validate_json(saved) == before.request
-
-
-@pytest.mark.parametrize("correction", [False, True])
-def test_proof_and_edit_parent_reserve_slots_before_subject_packing(tmp_path, correction, monkeypatch):
-    files = _reference_files(tmp_path)
-    for ref in files.values():
-        Image.new("RGB", (32, 40), "gray").save(ref.path)
-    proof = write_style_proof(tmp_path)
-    page = _page()
-    parent = b"parent"
-    edits = {}
-    if correction:
-        edits = dict(edit_source_bytes=parent, correction=PageRenderCorrection(
-            page_number=page.page_number, comic_page_revision=page.revision,
-            comic_page_sha256=page.content_sha256, parent_render_revision=1,
-            parent_render_image_sha256=hashlib.sha256(parent).hexdigest(),
-            mode="instructed", instruction="Turn Ward toward the idol.", note="Turn Ward toward the idol.",
-        ))
-    # Two subject refs fit in one lossless sheet; proof always has its own slot.
-    profile = _profile(provider="codex-dev", model="gpt-image-2",
-                       id="codex-dev-complete-page-hybrid-v1-" + "a" * 64,
-                       max_image_references=2 + int(correction))
-    monkeypatch.setattr("novel_to_comic.page_drawing.current_page_capability_profile", lambda: profile)
-    compiled = compile_page_generation_request(
-        page, _edition(profile), _inventory(), files, retry=RetryProvenance(attempt=1),
-        style_reference_path=proof, **edits,
-    )
-    assert len(compiled.request.references) == 2
-    style, sheet = compiled.request.references
-    assert sheet.id.startswith("reference-sheet-") and sheet.order == 2
-    members = json.loads(sheet.visual_anchor)["members"]
-    assert {member["authority"]["id"] for member in members} == {"ward-bloodied-ref", "idol-ref"}
-    assert style.id == "selected-style-proof" and style.order == 1
-    assert compiled.reference_bytes[0] == proof.read_bytes()
-    if correction:
-        # Image 1 is the parent, the proof is upload 2 and both sheet members bind upload 3.
-        prompt = compiled.request.prompt
-        assert prompt.count("Image 3 (asset-B) = ") == 2
-        assert "sheet binding" in prompt
-        assert "Image 2 (asset-A) = style proof" in prompt
-        assert prompt.index("Image 2 (asset-A) = style proof") < prompt.index("Image 3 (asset-B) = ")
-    else:
-        payload = _provider_brief(compiled.request.prompt)
-        assert {ref["image"] for ref in payload["approved_page_references"]} == {"asset-B"}
-        assert payload["selected_style_proof"]["image"] == "asset-A"
-    assert _prepare_complete_page(compiled, profile).edit_source_bytes == (parent if correction else None)
-    profile = _profile(provider="openai", max_image_references=2 + int(correction))
-    with pytest.raises(ValueError, match="Identity references will not be silently dropped"):
-        compile_page_generation_request(
-            page, _edition(profile),
-            _inventory(), files, retry=RetryProvenance(attempt=1), style_reference_path=proof, **edits,
-        )
+    assert request.estimated_cost_usd == edition.capability_profile.price_per_page_usd + 2 * edition.capability_profile.price_per_reference_usd
 
 
 def test_resolver_rejects_missing_or_different_proof_and_never_uses_lettered_derivative(tmp_path):
@@ -125,16 +52,3 @@ def test_resolver_rejects_missing_or_different_proof_and_never_uses_lettered_der
     proof.rename(proof.with_name("style_1_lettered.png"))
     with pytest.raises(ValueError, match="Rerun Style"):
         require_style_reference(tmp_path, "Flat ink.")
-
-
-def test_gateway_labels_proof_by_authority_scope(tmp_path):
-    from litellm_handlers.vertex_multimodal import _exact_complete_page_contents
-    files = _reference_files(tmp_path)
-    compiled = compile_page_generation_request(
-        _page(), _edition(), _inventory(), files, retry=RetryProvenance(attempt=1),
-        style_reference_path=write_style_proof(tmp_path),
-    )
-    parts = _exact_complete_page_contents(compiled.request.model_dump(mode="json"), ["proof", "cast", "prop"])
-    assert parts[0] == "proof"
-    assert "asset-A" in parts[1] and "authority scope" in parts[1]
-    assert parts[-1] == compiled.request.prompt

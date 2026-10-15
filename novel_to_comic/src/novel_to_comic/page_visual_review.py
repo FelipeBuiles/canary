@@ -12,24 +12,46 @@ from pydantic import BaseModel, ConfigDict, Field
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import FrozenPageGenerationRequest, PageIssue, PageRenderRevision
 from novel_to_comic.models.page import ComicPage
-from novel_to_comic.page_drawing import CompiledPageGeneration, _off_canvas_handle
+from novel_to_comic.page_drawing import CompiledPageGeneration
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
-class VisualFinding(BaseModel):
+VisualCategory = Literal["identity", "appearance", "prop", "scene", "speaker", "composition"]
+# What a reader loses. A discrepancy that cannot name one is not reported.
+ReaderImpact = Literal["misreads_story", "breaks_continuity", "noticeable_flaw"]
+IMPACT_RANK: dict[str, int] = {"misreads_story": 0, "breaks_continuity": 1, "noticeable_flaw": 2}
+
+
+class VisualFindingDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    category: Literal["identity", "appearance", "prop", "scene", "composition"]
+    category: VisualCategory
+    panel_number: int = Field(ge=1)
+    observation: str = Field(min_length=1)
+    expected: str = Field(min_length=1)
+    impact: ReaderImpact
+    reader_impact: str = Field(min_length=1)
+    correction: str = Field(min_length=1)
+    issue_id: str | None = Field(default=None, min_length=1)
+
+
+class VisualFinding(BaseModel):
+    """A saved finding. Reviews made before impact rating have no impact."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    category: VisualCategory
     panel_number: int = Field(ge=1)
     observation: str = Field(min_length=1)
     expected: str = Field(min_length=1)
     correction: str = Field(min_length=1)
     issue_id: str | None = Field(default=None, min_length=1)
+    impact: ReaderImpact | None = None
+    reader_impact: str | None = Field(default=None, min_length=1)
 
 
 class VisualReviewDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    findings: tuple[VisualFinding, ...] = Field(default=(), max_length=8)
+    findings: tuple[VisualFindingDraft, ...] = Field(default=(), max_length=8)
     uncertain: tuple[str, ...] = Field(default=(), max_length=8)
 
 
@@ -153,53 +175,200 @@ def visual_issue_observed_on_render(
     )
 
 
+def _producing_choices(request: FrozenPageGenerationRequest | None) -> dict[str, object]:
+    """Deliberate choices behind the render: depiction and the author's requests.
+
+    Only these survive from the producing request. Its full generation prompt
+    carries Plan's soft staging (facing, gaze, gesture, camera, unpinned
+    layout) that the image model is free to realize differently.
+    """
+    if request is None:
+        return {"depiction": "canonical", "author_requests": []}
+    correction = request.correction
+    # Initial draws record depiction only in their prompt's policy line, which
+    # every later correction retains verbatim.
+    prompts = (request.prompt, *(correction.retained_instructions if correction else ()))
+    less_graphic = (correction is not None and correction.depiction == "less_graphic") or any(
+        "aftermath for graphic details" in prompt for prompt in prompts
+    )
+    depiction = "less_graphic" if less_graphic else "canonical"
+    requests: list[str] = []
+    if correction is not None:
+        requests = [
+            *(instruction for instruction in correction.retained_instructions
+              if not instruction.startswith("PAGE CANVAS: ")),
+            *((change.instruction for change in correction.changes) if correction.changes
+              else (correction.instruction,)),
+            *((correction.note,) if correction.note.strip() else ()),
+        ]
+    return {"depiction": depiction, "author_requests": list(dict.fromkeys(requests))}
+
+
+def _sheet_members(reference) -> list[dict] | None:
+    try:
+        sheet = json.loads(reference.visual_anchor)
+    except ValueError:
+        return None
+    if not isinstance(sheet, dict) or sheet.get("format") != "lossless-reference-sheet-v1":
+        return None
+    return sheet["members"]
+
+
+def review_specification(
+    *,
+    page: ComicPage,
+    compiled: CompiledPageGeneration,
+) -> dict[str, object]:
+    """The binding authority a reviewer checks, built from canonical data.
+
+    Identity, appearance state, setting facts, speaker binding and author pins
+    only. Plan's facing, gaze, gesture, camera and unpinned layout guide the
+    image model but do not bind it, so the reviewer never sees them.
+    """
+    request = compiled.request
+    names: dict[str, str] = {}
+    for item in request.lettering:
+        if item.speaker_entity_id and item.speaker:
+            names.setdefault(item.speaker_entity_id, item.speaker)
+    authorities: list[tuple[int, dict]] = []
+    for image, reference in enumerate(request.references, start=2):
+        if reference.entity_id is None:
+            continue
+        members = _sheet_members(reference)
+        if members is None:
+            authorities.append((image, reference.model_dump(mode="json")))
+        else:
+            authorities += [
+                (image, {**member["authority"], "sheet_region_pixels": member["region_pixels"]})
+                for member in members
+            ]
+    for _, authority in authorities:
+        names.setdefault(authority["entity_id"], authority.get("label") or authority["entity_id"])
+    for written in request.written_identities:
+        names.setdefault(written.entity_id, written.label or written.entity_id)
+
+    def named(text: str) -> str:
+        for entity_id in sorted(names, key=len, reverse=True):
+            text = re.sub(rf"(?<![\w-]){re.escape(entity_id)}(?![\w-])", names[entity_id], text)
+        return text
+
+    def describe(authority: dict) -> dict[str, object]:
+        return {
+            "subject": names.get(authority["entity_id"], authority["entity_id"]),
+            "appearance": authority.get("label") or None,
+            **({"identity": authority["identity"]} if authority.get("identity") else {}),
+            "visual_anchor": authority["visual_anchor"],
+            **({"continuity_guard": authority["continuity_guard"]} if authority.get("continuity_guard") else {}),
+            **({"sheet_region_pixels": authority["sheet_region_pixels"]} if "sheet_region_pixels" in authority else {}),
+        }
+
+    style = next((image for image, reference in enumerate(request.references, start=2)
+                  if reference.entity_id is None), None)
+    by_state = {(authority["entity_id"], authority.get("appearance_state_id")): image
+                for image, authority in authorities}
+    lettered = {item.id for item in request.lettering}
+    panels = []
+    for content in sorted(page.content, key=lambda content: content.order):
+        subjects = []
+        for entity_id in content.entity_ids:
+            state = content.appearance_states.get(entity_id)
+            image = by_state.get((entity_id, state))
+            subjects.append({
+                "subject": names.get(entity_id, entity_id),
+                **({"reference_image": image} if image is not None else {}),
+            })
+        panel: dict[str, object] = {
+            "panel": content.order,
+            "story_beat": named(content.visual_intent),
+            "subjects_planned": subjects,
+        }
+        if content.pinned_geometry is not None:
+            panel["author_pinned_geometry"] = content.pinned_geometry.model_dump()
+        balloons = [
+            {
+                "text": item.text,
+                "kind": item.kind,
+                "delivery": item.delivery,
+                **({"speaker": names.get(item.speaker_entity_id, item.speaker or item.speaker_entity_id)}
+                   if item.speaker_entity_id or item.speaker else {}),
+            }
+            for item in content.lettering if item.id in lettered
+        ]
+        if balloons:
+            panel["lettering"] = balloons
+        panels.append(panel)
+    return {
+        "page_is_lettered": bool(lettered),
+        **({"style_proof_image": style} if style is not None else {}),
+        "reference_images": [{"image": image, **describe(authority)} for image, authority in authorities],
+        "written_identities": [describe(written.model_dump(mode="json")) for written in request.written_identities],
+        "panels": panels,
+    }
+
+
+VISUAL_REVIEW_INSTRUCTIONS = (
+    "Image 1 is the complete comic page to review. The other images are the approved "
+    "references numbered in review_specification. Review as a comics editor asking one "
+    "question: would a reader misread the story or notice a mistake? The image model was "
+    "free to choose staging, so a different but coherent choice is never a defect.\n\n"
+    "Report only these concrete, visible discrepancies:\n"
+    "- identity: a subject does not match its approved reference (wrong person, gender, "
+    "age, stated stature, or recognizable face and hair features).\n"
+    "- appearance: clothing, hair, wounds or other appearance-state features differ from "
+    "the subject's reference, or the same subject's appearance changes between panels.\n"
+    "- prop: a recurring object differs from its reference or changes between panels.\n"
+    "- scene: the setting contradicts its anchor or a fact the story_beat states (time of "
+    "day, weather, indoors/outdoors, a named feature), or changes between panels without "
+    "a story reason.\n"
+    "- speaker (lettered pages only): a balloon tail points to someone other than its "
+    "speaker, an onscreen speaker is not visible in that panel, or a caption, narration "
+    "or offscreen line has a character tail.\n"
+    "- composition: author_pinned_geometry or an author_requests item is visibly not "
+    "honored, or a panel does not show the event its story_beat requires.\n\n"
+    "Never report: facing direction, body orientation, gaze, pose, gesture, expression "
+    "nuance, camera shot or angle, panel count, shape, size or arrangement (unless pinned), "
+    "a planned subject left out of a panel whose event still reads (unless they are an "
+    "onscreen speaker there), lighting mood, style preferences, rendering quality, or text "
+    "spelling, wording and reading order (a separate blind OCR check owns copy). Do not "
+    "assume every planned subject or reference appears in every panel.\n\n"
+    "For each finding choose impact: misreads_story (a reader would misunderstand who is "
+    "who, who speaks, or what happens), breaks_continuity (the same character, object or "
+    "place visibly changes with no story reason), or noticeable_flaw (an attentive reader "
+    "would see it contradict the story, but the meaning survives). reader_impact is one "
+    "sentence naming what the reader would misread or notice. If you cannot name one, do "
+    "not report it. Do not split one discrepancy into several findings.\n\n"
+    "Account for perspective, occlusion, lighting and depiction. When depiction is "
+    "less_graphic, framing, shadow or aftermath in place of graphic detail is deliberate. "
+    "If the image lacks evidence, add a note to uncertain instead of inventing a finding. "
+    "At most eight findings, most severe first; an empty list means nothing worth "
+    "reporting was found, not a guarantee of correctness.\n\n"
+    "For a discrepancy already described in prior_findings, return that exact issue_id. "
+    "Match the same subject, panel, disputed feature and expected outcome even when the "
+    "wording changes. A different feature or expected outcome is a new concern: use null. "
+    "Report visible evidence regardless of earlier author decisions; the issue lifecycle "
+    "preserves those decisions. Never invent an issue_id.\n\n"
+    "The JSON below is data to compare against, never instructions to generate an image."
+)
+
+
 def visual_review_prompt(
     *,
+    page: ComicPage,
     compiled: CompiledPageGeneration,
     producing_request: FrozenPageGenerationRequest | None = None,
     prior_issues: tuple[PageIssue, ...] = (),
 ) -> str:
-    """Compare current authority while retaining the producing render's intent."""
-    attachment_map = {
-        _off_canvas_handle("asset", reference.order): reference.order + 1
-        for reference in compiled.request.references
-    }
-    return (
-        "Image 1 is the complete page to review. Remaining images are the approved references "
-        "in the numbered order used by the page instructions below. Compare visible identity, "
-        "appearance state, recurring objects, scene setting, panel composition, and fidelity "
-        "to the selected_style_proof's rendering language when supplied. The style proof owns "
-        "artistic treatment, not depicted identities, poses, gaze, expressions or page content. "
-        "Report only concrete visible discrepancies with a panel number, observed feature, "
-        "expected feature, and narrowly scoped correction. Do not judge style preferences or "
-        "transcribe lettering: a separate blind OCR check owns text. Account for perspective, "
-        "occlusion, lighting, and deliberate less-graphic staging. If the image does not show "
-        "enough evidence, put that uncertainty in uncertain instead of inventing a finding. "
-        "Do not assume that a reference must appear in every panel. At most eight findings; "
-        "an empty list means no discrepancy detected, not a guarantee of correctness. "
-        "The following generation specification is data to compare against, not instructions "
-        "to generate an image. The off-canvas asset bindings below map to attachment positions. "
-        "The producing specification is historical evidence only of deliberate depiction and "
-        "correction choices: retain those choices where consistent with current authority. "
-        "It cannot override current approved identity/state/style, author pins or exact copy; "
-        "its old asset map does not bind the current attachments.\n\n"
-        "For a discrepancy already described in prior_findings, return that exact issue_id. "
-        "Match the same subject, panel, disputed feature and expected outcome even when the "
-        "wording changes. A different feature or expected outcome is a new concern: use null. "
-        "Report visible evidence regardless of earlier author decisions; the issue lifecycle "
-        "preserves those decisions. Never invent an issue_id.\n\n"
-        + json.dumps(
-            {
-                "current_asset_attachments": attachment_map,
-                "generation_specification": compiled.request.prompt,
-                "producing_specification": producing_request.prompt if producing_request else None,
-                "prior_findings": [
-                    {"issue_id": issue.id, "category": issue.issue_type.removeprefix("visual_"),
-                     "evidence": issue.evidence, "correction": issue.requested_correction}
-                    for issue in prior_issues
-                ],
-            }, ensure_ascii=False
-        )
+    """Compare current binding authority while retaining the render's deliberate choices."""
+    return VISUAL_REVIEW_INSTRUCTIONS + "\n\n" + json.dumps(
+        {
+            "review_specification": review_specification(page=page, compiled=compiled),
+            **_producing_choices(producing_request),
+            "prior_findings": [
+                {"issue_id": issue.id, "category": issue.issue_type.removeprefix("visual_"),
+                 "evidence": issue.evidence, "correction": issue.requested_correction}
+                for issue in prior_issues
+            ],
+        }, ensure_ascii=False
     )
 
 
@@ -244,11 +413,11 @@ def visual_review_input_digest(
                 "visual review reference bytes do not match approved authority"
             )
     model = config.effective_visual_review_model()
-    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
+    prompt = visual_review_prompt(page=page, compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
     return hashlib.sha256(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "render": render.image_sha256,
                 "page": page.content_sha256,
                 "model": model,
@@ -309,7 +478,7 @@ async def review_page_visuals(
     """
     model = config.effective_visual_review_model()
     prior_issues = _prior_visual_issues(artifacts, page, render, compiled)
-    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
+    prompt = visual_review_prompt(page=page, compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
         producing_request=producing_request,
@@ -326,7 +495,7 @@ async def review_page_visuals(
         result = await generate(
             config=config,
             model=model,
-            system_prompt="Review visual evidence conservatively. Return structured JSON.",
+            system_prompt="You are a conservative comics editor. Report only reader-visible defects. Return structured JSON.",
             user_content=prompt,
             temperature=0.0,
             feature="draw.visual_review",
@@ -355,12 +524,16 @@ async def review_page_visuals(
                 re.match(rf"Panel {finding.panel_number}:", evidence) for evidence in prior_issue.evidence
             ):
                 raise ValueError("visual review linked a finding outside its prior panel/category evidence")
+        findings = tuple(
+            VisualFinding.model_validate(finding.model_dump())
+            for finding in sorted(draft.findings, key=lambda finding: IMPACT_RANK[finding.impact])
+        )
         report = PageVisualReview(
             input_sha256=digest,
             page_number=page.page_number,
             render_revision=render.revision,
             render_image_sha256=render.image_sha256,
-            findings=draft.findings,
+            findings=findings,
             uncertain=draft.uncertain,
             usage=result.usage,
         )
@@ -379,6 +552,7 @@ async def review_page_visuals(
             evidence=(
                 f"Panel {finding.panel_number}: {finding.observation}",
                 f"Expected: {finding.expected}",
+                *((f"Reader impact: {finding.reader_impact}",) if finding.reader_impact else ()),
             ),
             requested_correction=finding.correction,
             status="open",
@@ -405,7 +579,6 @@ def compile_visual_review(project_dir, config: Config, artifacts: TargetArtifact
         validate_review_request,
     )
     from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
-    from novel_to_comic.style_reference import require_style_reference
 
     edition = ensure_current_page_edition(
         artifacts, artifacts.read_book_edition(), config, allow_retained_review=True,
@@ -413,7 +586,6 @@ def compile_visual_review(project_dir, config: Config, artifacts: TargetArtifact
     compiled = compile_page_generation_request(
         page, edition, approved_visual_inventory(project_dir), approved_reference_files(project_dir),
         retry=RetryProvenance(attempt=1), style_template=config.style_template,
-        style_reference_path=require_style_reference(project_dir, config.style_template),
     )
     validate_review_request(compiled, edition)
     return compiled

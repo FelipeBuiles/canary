@@ -135,24 +135,24 @@ def _words(item_id: str, count: int) -> LetteringItem:
 def test_crowded_hybrid_page_names_its_word_load() -> None:
     crowded = _page(1, ("beat_0001",), panels=4,
                     lettering=(_words("lettering_a", 45), _words("lettering_b", 30)))
-    light = _page(2, ("beat_0002",), panels=3, lettering=(_words("lettering_c", 40),))
+    light = _page(2, ("beat_0002",), panels=3, lettering=(_words("lettering_c", 30),))
 
     issues = _crowded_lettering_issues([crowded, light])
 
     assert [issue.code for issue in issues] == ["crowded_lettering"]
     assert issues[0].artifact_ids == ("page_001",)
-    assert issues[0].evidence[1] == "Page 1: 75 words across 4 panels; panels [1] each hold more than 50."
+    assert issues[0].evidence[1] == "Page 1: 75 words across 4 panels; panels [1] each hold more than 35."
 
 
 def test_a_long_page_without_a_crowded_panel_is_still_crowded() -> None:
     page = _page(1, ("beat_0001",), panels=5)
     page = page.model_copy(update={"content": tuple(
-        panel.model_copy(update={"lettering": (_words(f"l_{panel.order}", 45),)}) for panel in page.content
+        panel.model_copy(update={"lettering": (_words(f"l_{panel.order}", 32),)}) for panel in page.content
     )})
 
     issues = _crowded_lettering_issues([page])
 
-    assert issues[0].evidence[1] == "Page 1: 225 words across 5 panels."
+    assert issues[0].evidence[1] == "Page 1: 160 words across 5 panels."
 
 
 def test_four_pages_with_one_panel_count_read_as_a_grid() -> None:
@@ -246,7 +246,7 @@ def test_establishing_panel_in_another_location_does_not_clear_the_previous_move
     assert issues[0].artifact_ids == ("beat_0002", "page_002")
 
 
-@pytest.mark.parametrize("integrated,budget", [(True, "110 words and 10 lettering items"), (False, "210 words")])
+@pytest.mark.parametrize("integrated,budget", [(True, "110 words and 10 lettering items"), (False, "150 words")])
 def test_allocation_uses_edition_budget_and_approved_tone(integrated, budget) -> None:
     from novel_to_comic.gemini_tuning import tuned_user_content
 

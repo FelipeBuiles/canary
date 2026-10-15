@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Eye, EyeOff, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Download, Eye, EyeOff, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import {
   useCreateLabsRun,
   useDeleteLabsRun,
@@ -14,6 +14,10 @@ import {
   useLabsRuns,
   useStageModelEstimate,
   useStageModelOptions,
+  useModernizeEstimate,
+  useModernizeExcerpt,
+  useModernizeOptions,
+  useModernizeSource,
 } from "../api/queries";
 import {
   labsRunFileUrl,
@@ -28,6 +32,15 @@ import {
   type StageModelCell,
   type StageModelArm,
   type StageResult,
+  type StageModelOption,
+  type ModernizeArm,
+  type ModernizeCell,
+  type ModernizeChange,
+  type ModernizeControls,
+  type ModernizeIntensity,
+  type ModernizeScope,
+  type ModernizeSensitive,
+  type ModernizeSource,
 } from "../api/labs";
 import { SectionHeader } from "../components/composites";
 import { Button } from "../components/ui/Button";
@@ -36,6 +49,8 @@ import { Surface } from "../components/ui/Surface";
 import { cn } from "../lib/cn";
 import { InspectBadge } from "../components/ui/InspectButton";
 import { useImageViewer } from "../hooks/useImageViewer";
+import { wordDiff } from "../lib/wordDiff";
+import { modernizedFilename, modernizedText } from "../lib/modernizedText";
 
 /*
  * Labs is a local-development room for model experiments on the operator's own
@@ -54,6 +69,7 @@ const PHASE_NEEDS: Record<string, string[]> = { adapt_plan: ["brief", "style", "
 const KIND_LABEL: Record<LabsRunSummary["kind"], string> = {
   image_compare: "Image comparison",
   stage_models: "Stage models",
+  modernize: "Modernize source",
 };
 const PROMPT_LABEL: Record<ImagePrompt, string> = {
   production: "Production prompt",
@@ -938,7 +954,404 @@ function RunView({ runId, onDeleted }: { runId: string; onDeleted: () => void })
       </div>
       {run.kind === "image_compare"
         ? <ImageCompareRun run={run} targets={options.data?.targets} />
-        : <StageModelsRun run={run} />}
+        : run.kind === "modernize" ? <ModernizeRun run={run} /> : <StageModelsRun run={run} />}
+    </div>
+  );
+}
+
+// ── Modernize source ─────────────────────────────────────────────────────────
+
+const INTENSITY_LABEL: Record<ModernizeIntensity, [string, string]> = {
+  light: ["Light", "Archaic words and forms only; sentences keep their shape."],
+  moderate: ["Moderate", "Also rephrases stiff or obsolete constructions, keeping the author's rhythm."],
+  contemporary: ["Contemporary", "Present-day English with short, restructured sentences; usually 10–20% shorter, every beat kept."],
+};
+const SCOPE_LABEL: Record<ModernizeScope, [string, string]> = {
+  dialogue: ["Dialogue", "Only text inside quotation marks changes."],
+  narration: ["Narration", "Only text outside quotation marks changes."],
+  both: ["Both", "Dialogue and narration."],
+};
+const SENSITIVE_LABEL: Record<ModernizeSensitive, [string, string]> = {
+  keep: ["Keep, flag", "Offensive language stays as written and is listed for review."],
+  soften: ["Soften", "Slurs become neutral terms; the speaker's attitude still shows."],
+  remove: ["Remove", "Prejudice is shown by action or implication instead of voiced."],
+};
+const CATEGORY_TONE: Record<ModernizeChange["category"], string> = {
+  archaic: "bg-pulp-paper text-ink-black",
+  offensive: "bg-hero-red text-bristol",
+  clarity: "bg-ink-black text-bristol",
+  idiom: "bg-narrator-gold text-ink-black",
+  tightened: "bg-pulp-paper text-ink-muted",
+  inferred: "bg-narrator-gold text-ink-black",
+};
+const DEFAULT_CONTROLS: ModernizeControls = {
+  intensity: "moderate", scope: "both", sensitive: "soften", keep_setting: true, comic_ready: true, notes: "",
+};
+
+function Segmented<T extends string>({ label, value, options, labels, disabled, onChange }: {
+  label: string; value: T; options: T[]; labels: Record<T, [string, string]>; disabled?: boolean; onChange: (next: T) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className={META}>{label}</legend>
+      <div className="mt-1 flex flex-wrap gap-1.5" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <Button key={option} size="xs" role="radio" aria-checked={value === option} disabled={disabled}
+            variant={value === option ? "secondary" : "outline"} onClick={() => onChange(option)}>
+            {labels[option][0]}
+          </Button>
+        ))}
+      </div>
+      <p className="mt-1 font-body text-xs text-ink-muted">{labels[value][1]}</p>
+    </fieldset>
+  );
+}
+
+function ModernizeSetup({ projects, onStarted }: { projects: LabsProject[]; onStarted: (runId: string) => void }) {
+  const { data, isLoading, isFetching, error, refetch } = useModernizeOptions();
+  const create = useCreateLabsRun();
+  const [picked, setProject] = useState("");
+  const project = picked || projects[0]?.id || "";
+  const source = projects.find((candidate) => candidate.id === project);
+  const [mode, setMode] = useState<"excerpt" | "paste">("excerpt");
+  const [start, setStart] = useState(0);
+  const [maxWords, setMaxWords] = useState(1200);
+  const [pasted, setPasted] = useState("");
+  const [controls, setControls] = useState<ModernizeControls>(DEFAULT_CONTROLS);
+  const [arms, setArms] = useState<ModernizeArm[] | null>(null);
+  const chosenArms = arms ?? (data?.models.filter((model) => model.available).slice(0, 1) ?? [])
+    .map<ModernizeArm>((model) => ({ id: "arm-1", model: model.id }));
+  const excerptQuery = mode === "excerpt" && source ? { part_id: source.part_id, start, max_words: maxWords } : null;
+  const excerpt = useModernizeExcerpt(project, excerptQuery);
+  const sourceBody: ModernizeSource | null = mode === "paste"
+    ? (pasted.trim() ? { text: pasted } : null)
+    : excerptQuery;
+  const request = source && sourceBody && chosenArms.length
+    ? { project, controls, arms: chosenArms, ...sourceBody } : null;
+  const estimate = useModernizeEstimate(request);
+  const providers = useMemo(() => {
+    const groups = new Map<string, StageModelOption[]>();
+    for (const model of data?.models ?? []) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
+    return [...groups.entries()];
+  }, [data]);
+
+  if (error) return <LoadError error={error} retrying={isFetching} onRetry={() => void refetch()} />;
+  if (isLoading || !data) return <p className={META}>Loading models…</p>;
+
+  const busy = create.isPending;
+  const modelOption = (id: string) => data.models.find((candidate) => candidate.id === id);
+  const addArm = (model: string) => {
+    const next = Math.max(0, ...chosenArms.map((arm) => Number(arm.id.replace("arm-", "")))) + 1;
+    setArms([...chosenArms, { id: `arm-${next}`, model }]);
+  };
+  const apiTotal = Object.values(estimate.data?.estimated_cost_usd ?? {}).reduce<number>((total, value) => total + (value ?? 0), 0);
+  const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+  const pastedWords = words(pasted);
+
+  return (
+    <div className="space-y-5">
+      <p className="max-w-3xl font-body text-sm leading-6 text-ink-muted">
+        Rewrites a passage&apos;s archaic, obscure or offensive language for today&apos;s readers, once per model, and
+        shows each version beside the original with a word diff and the changes worth a second look: offensive language, inferred details and cuts. Plot, names and each character&apos;s attitude
+        are kept; only the wording changes. Your project is only read.
+      </p>
+      <ProjectPicker projects={projects} value={project} onChange={(next) => { setProject(next); setStart(0); }} />
+      <fieldset className="space-y-3">
+        <legend className={META}>Passage</legend>
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="xs" variant={mode === "excerpt" ? "secondary" : "outline"} onClick={() => setMode("excerpt")}>From manuscript</Button>
+          <Button size="xs" variant={mode === "paste" ? "secondary" : "outline"} onClick={() => setMode("paste")}>Paste text</Button>
+        </div>
+        {mode === "excerpt" ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="font-body text-xs">
+                Start paragraph
+                <input type="number" min={1} max={excerpt.data?.total_paragraphs ?? undefined} value={start + 1}
+                  aria-label="Start paragraph" disabled={busy}
+                  onChange={(event) => setStart(Math.max(0, Number(event.target.value || 1) - 1))}
+                  className="mt-1 block w-28 border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm" />
+              </label>
+              <label className="font-body text-xs">
+                Up to words
+                <input type="number" min={100} max={data.max_words} step={100} value={maxWords}
+                  aria-label="Up to words" disabled={busy}
+                  onChange={(event) => setMaxWords(Math.min(data.max_words, Math.max(1, Number(event.target.value || 1))))}
+                  className="mt-1 block w-28 border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm" />
+              </label>
+              <Button size="sm" variant="outline" disabled={busy || start === 0} onClick={() => setStart(Math.max(0, start - (excerpt.data ? excerpt.data.end - excerpt.data.start : 1)))}>Previous passage</Button>
+              <Button size="sm" variant="outline" disabled={busy || !excerpt.data || excerpt.data.end >= excerpt.data.total_paragraphs}
+                onClick={() => excerpt.data && setStart(excerpt.data.end)}>Next passage</Button>
+            </div>
+            {excerpt.error ? <p className="font-body text-sm text-hero-red">{String(excerpt.error)}</p> : excerpt.data && (
+              <>
+                <p className={META}>
+                  Paragraphs {excerpt.data.start + 1}–{excerpt.data.end} of {count(excerpt.data.total_paragraphs)} ·{" "}
+                  {count(excerpt.data.words)} words of {count(excerpt.data.total_words)}
+                </p>
+                <div className="max-h-72 space-y-2 overflow-y-auto border-2 border-ink-black/10 bg-bristol p-3 font-body text-sm leading-6">
+                  {excerpt.data.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div>
+            <textarea aria-label="Passage text" rows={10} value={pasted} disabled={busy}
+              onChange={(event) => setPasted(event.target.value)}
+              placeholder="Paste a passage. Separate paragraphs with a blank line."
+              className="block w-full border-2 border-ink-black/20 bg-bristol p-3 font-body text-sm leading-6" />
+            <p className={cn(META, "mt-1", pastedWords > data.max_words && "text-hero-red")}>
+              {count(pastedWords)} / {count(data.max_words)} words
+            </p>
+          </div>
+        )}
+      </fieldset>
+      <div className="grid gap-5 md:grid-cols-3">
+        <Segmented label="Intensity" value={controls.intensity} options={data.intensities} labels={INTENSITY_LABEL}
+          disabled={busy} onChange={(intensity) => setControls({ ...controls, intensity })} />
+        <Segmented label="Scope" value={controls.scope} options={data.scopes} labels={SCOPE_LABEL}
+          disabled={busy} onChange={(scope) => setControls({ ...controls, scope })} />
+        <Segmented label="Offensive language" value={controls.sensitive} options={data.sensitive} labels={SENSITIVE_LABEL}
+          disabled={busy} onChange={(sensitive) => setControls({ ...controls, sensitive })} />
+      </div>
+      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <div>
+          <Checkbox checked={controls.comic_ready} disabled={busy}
+            onChange={(comic_ready) => setControls({ ...controls, comic_ready })}>
+            <span className="font-body text-sm font-bold">Comic-ready</span>
+            <span className={cn(META, "block")}>Short, speakable dialogue that keeps tone cues for the artist; drawable narration; additions and cuts listed for review.</span>
+          </Checkbox>
+          <Checkbox checked={controls.keep_setting} disabled={busy}
+            onChange={(keep_setting) => setControls({ ...controls, keep_setting })}>
+            <span className="font-body text-sm font-bold">Keep the period setting</span>
+            <span className={cn(META, "block")}>No modern technology, slang or references the original setting couldn&apos;t have.</span>
+          </Checkbox>
+        </div>
+        <label className="font-body text-xs">
+          <span className={META}>Direction (optional)</span>
+          <textarea aria-label="Direction" rows={2} maxLength={1000} value={controls.notes} disabled={busy}
+            onChange={(event) => setControls({ ...controls, notes: event.target.value })}
+            placeholder="e.g. Keep Holmes formal; Watson can sound casual."
+            className="mt-1 block w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm" />
+        </label>
+      </div>
+      <fieldset>
+        <legend className={META}>Models (1–{data.max_arms})</legend>
+        <div className="grid gap-x-5 sm:grid-cols-2 lg:grid-cols-3">
+          {providers.map(([provider, group]) => (
+            <div key={provider} className="mt-2">
+              <div className="font-meta text-xs font-bold">{provider}</div>
+              {group.map((model) => {
+                const selected = chosenArms.some((arm) => arm.model === model.id);
+                return <Checkbox key={model.id} checked={selected}
+                  disabled={busy || !model.available || (!selected && chosenArms.length >= data.max_arms)}
+                  onChange={(next) => next ? addArm(model.id) : setArms(chosenArms.filter((arm) => arm.model !== model.id))}>
+                  <span className="font-body text-sm">{model.label}</span>
+                  {!model.available && <span className={cn(META, "block")}>Not enabled in this server</span>}
+                </Checkbox>;
+              })}
+            </div>
+          ))}
+        </div>
+      </fieldset>
+      {chosenArms.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {chosenArms.map((arm) => {
+            const model = modelOption(arm.model);
+            if (!model) return null;
+            const reasoning = arm.reasoning ?? model.default_reasoning;
+            const estimated = estimate.data?.estimated_cost_usd[arm.id];
+            const basis = estimate.data?.estimate_basis[arm.id];
+            return <Surface key={arm.id} padding="sm" shadow="none" border="soft">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-meta text-xs font-bold">{model.label}<FundingTag funding={model.funding} /></span>
+                <span className={META}>
+                  {model.funding !== "api" ? "subscription" : estimated != null ? `≈${usd(estimated, 3)} est.` : "—"}
+                  {basis?.basis === "history" && ` · from ${basis.runs} past run${basis.runs > 1 ? "s" : ""}`}
+                </span>
+              </div>
+              <label className="mt-2 block font-body text-xs">
+                Reasoning
+                <select aria-label={`${model.label} reasoning`} value={reasoning} disabled={busy}
+                  onChange={(event) => setArms(chosenArms.map((candidate) => candidate.id === arm.id ? { ...candidate, reasoning: event.target.value } : candidate))}
+                  className="mt-1 block w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm">
+                  {model.reasoning_options.map((value) => <option key={value} value={value}>{value === "none" ? "Off" : value === "enabled" ? "On" : value[0].toUpperCase() + value.slice(1)}</option>)}
+                </select>
+              </label>
+            </Surface>;
+          })}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button disabled={!request || busy || (mode === "paste" && pastedWords > data.max_words)}
+          onClick={() => request && create.mutate(
+            {
+              kind: "modernize",
+              label: `${source?.title} · ${INTENSITY_LABEL[controls.intensity][0]} · ${chosenArms.map((arm) => modelOption(arm.model)?.label ?? arm.model).join(" vs ")}`,
+              ...request,
+            },
+            { onSuccess: (run) => onStarted(run.run_id) },
+          )}>Modernize passage</Button>
+        <span className={META}>
+          {estimate.isFetching ? "Estimating…" : estimate.error ? String(estimate.error)
+            : estimate.data ? `≈${usd(apiTotal, 3)} est. for API models · ${count(estimate.data.words)} words in ${estimate.data.paragraphs} paragraphs`
+              : "Choose a passage and at least one model"}
+        </span>
+        {create.error && <span className="font-body text-sm text-hero-red">{String(create.error)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function DiffText({ before, after, showDiff }: { before: string; after: string; showDiff: boolean }) {
+  if (!showDiff || before === after) return <>{after}</>;
+  return <>{wordDiff(before, after).map((segment, index) => segment.kind === "same" ? <span key={index}>{segment.text}</span>
+    : segment.kind === "added" ? <ins key={index} className="bg-narrator-gold/40 no-underline">{segment.text}</ins>
+      : <del key={index} className="text-hero-red/80">{segment.text}</del>)}</>;
+}
+
+/** Copy or download one model's clean text, to start a new production from it. */
+function ModernizedTextActions({ title, cell }: { title: string; cell: ModernizeCell }) {
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  const text = modernizedText(cell.paragraphs ?? []);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("copied");
+    } catch {
+      setCopied("failed");
+    }
+    window.setTimeout(() => setCopied("idle"), 2000);
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    const link = Object.assign(document.createElement("a"), { href: url, download: modernizedFilename(title, cell.model) });
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="sm" aria-label={`Copy ${cell.model} text`} onClick={() => void copy()}>
+        {copied === "copied" ? <Check className="mr-1.5 inline h-4 w-4" aria-hidden /> : <Copy className="mr-1.5 inline h-4 w-4" aria-hidden />}
+        {copied === "copied" ? "Copied" : "Copy text"}
+      </Button>
+      <Button variant="outline" size="sm" aria-label={`Download ${cell.model} text`} onClick={download}>
+        <Download className="mr-1.5 inline h-4 w-4" aria-hidden />
+        .txt
+      </Button>
+      {copied === "failed" && <span className="font-body text-xs text-hero-red">Clipboard blocked; use .txt</span>}
+    </div>
+  );
+}
+
+function ModernizeRun({ run }: { run: LabsRunDetail }) {
+  const source = useModernizeSource(run.run_id);
+  const [showDiff, setShowDiff] = useState(true);
+  const [changedOnly, setChangedOnly] = useState(false);
+  const controls = run.spec.controls as ModernizeControls | undefined;
+  const order = ((run.spec.arms as ModernizeArm[] | undefined) ?? []).map((arm) => arm.id);
+  const cells = (run.cells as ModernizeCell[]).slice().sort((a, b) => order.indexOf(a.cell_id) - order.indexOf(b.cell_id));
+  const retry = useCellRetry(run.run_id, cells.filter((cell) => cell.status === "failed").map((cell) => cell.cell_id));
+  const original = source.data?.paragraphs ?? [];
+  const done = cells.filter((cell) => cell.status === "ok" && cell.paragraphs);
+  const projects = useLabsProjects();
+  const projectTitle = projects.data?.projects.find((project) => project.id === run.spec.project)?.title
+    ?? String(run.spec.project ?? "");
+  const rows = original.map((text, index) => ({ index, text }))
+    .filter((row) => !changedOnly || done.some((cell) => cell.paragraphs![row.index] !== row.text));
+
+  return (
+    <div className="space-y-6">
+      {controls && (
+        <p className={META}>
+          {INTENSITY_LABEL[controls.intensity][0]} · {SCOPE_LABEL[controls.scope][0]} · Offensive language:{" "}
+          {SENSITIVE_LABEL[controls.sensitive][0]} · {controls.keep_setting ? "Period setting kept" : "Modern idiom allowed"}
+          {controls.comic_ready && " · Comic-ready"}
+          {controls.notes && <span className="block normal-case tracking-normal">Direction: {controls.notes}</span>}
+        </p>
+      )}
+      {retry.error && <p className="font-body text-sm text-hero-red">{String(retry.error)}</p>}
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {cells.map((cell) => {
+          const checks = cell.checks;
+          const byCategory = (cell.changes ?? []).reduce<Record<string, number>>((totals, change) =>
+            ({ ...totals, [change.category]: (totals[change.category] ?? 0) + 1 }), {});
+          return <Surface key={cell.cell_id} padding="sm" shadow="none" border="soft">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-meta text-xs font-bold">{cell.model}<FundingTag funding={cell.funding} /></span>
+              <StatusChip status={cell.status} />
+            </div>
+            <p className="mt-1 font-body text-sm tabular-nums">
+              {seconds(cell.seconds)} · {costWithEquivalent(cell.cost_usd, cell.usage?.api_equivalent_usd, cell.funding)}
+            </p>
+            {checks && (
+              <ul className="mt-1 space-y-0.5 font-body text-xs tabular-nums">
+                <li>{checks.changed_paragraphs} of {original.length || "—"} paragraphs changed · {count(checks.words_before)} → {count(checks.words_after)} words</li>
+                <li>{Object.entries(byCategory).map(([category, total]) => `${total} ${category}`).join(" · ") || "No notable changes listed"}</li>
+                {checks.comic_before && checks.comic_after && <>
+                  <li>Sentences {checks.comic_before.avg_sentence_words} → {checks.comic_after.avg_sentence_words} words on average</li>
+                  <li>Longest speech {checks.comic_before.longest_speech_words} → {checks.comic_after.longest_speech_words} words · {checks.comic_before.long_speeches} → {checks.comic_after.long_speeches} over 25</li>
+                </>}
+                {checks.scope_violations.length > 0 && <li className="text-hero-red">Edited outside scope: ¶{checks.scope_violations.map((index) => index + 1).join(", ")}</li>}
+                {checks.missing_paragraphs.length > 0 && <li className="text-hero-red">Dropped ¶{checks.missing_paragraphs.map((index) => index + 1).join(", ")} (original kept)</li>}
+              </ul>
+            )}
+            {cell.status === "ok" && cell.paragraphs && <ModernizedTextActions title={projectTitle} cell={cell} />}
+            {cell.error && <p className="mt-1 font-body text-sm text-hero-red">{cell.error}</p>}
+            {cell.status === "failed" && (
+              <Button className="mt-2" variant="outline" size="sm" disabled={!retry.canRetry(cell.cell_id)} onClick={() => retry.retryCell(cell.cell_id)}>
+                <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
+                Retry
+              </Button>
+            )}
+          </Surface>;
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="outline" size="sm" onClick={() => setShowDiff(!showDiff)}>{showDiff ? "Clean text" : "Show changes"}</Button>
+        <Button variant="outline" size="sm" onClick={() => setChangedOnly(!changedOnly)}>{changedOnly ? "All paragraphs" : "Changed paragraphs only"}</Button>
+        <span className={META}>{showDiff ? "Additions highlighted; removals struck through." : "Clean text, as a reader would see it."}</span>
+      </div>
+      {source.error && <p className="font-body text-sm text-hero-red">{String(source.error)}</p>}
+      <div className="overflow-x-auto">
+        <div className="grid gap-x-4 font-body text-sm leading-6"
+          style={{ gridTemplateColumns: `2.5rem repeat(${1 + cells.length}, minmax(240px, 1fr))`, minWidth: `${(1 + cells.length) * 250}px` }}>
+          <div />
+          <div className={cn(META, "sticky top-0 pb-2")}>Original</div>
+          {cells.map((cell) => <div key={cell.cell_id} className={cn(META, "pb-2")}>{cell.model}</div>)}
+          {rows.map((row) => (
+            <Fragment key={row.index}>
+              <div className={cn(META, "border-t border-ink-black/10 py-2")}>¶{row.index + 1}</div>
+              <p className="border-t border-ink-black/10 py-2 text-ink-muted">{row.text}</p>
+              {cells.map((cell) => {
+                const revised = cell.paragraphs?.[row.index];
+                const flagged = cell.checks?.scope_violations.includes(row.index) || cell.checks?.missing_paragraphs.includes(row.index);
+                return <p key={cell.cell_id} className={cn("border-t border-ink-black/10 py-2", flagged && "border-l-[3px] border-l-hero-red pl-2")}>
+                  {revised == null ? <span className={META}>{cell.status === "running" ? "Running…" : "—"}</span>
+                    : <DiffText before={row.text} after={revised} showDiff={showDiff} />}
+                </p>;
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+      {done.map((cell) => (
+        <details key={cell.cell_id} className="border-t-2 border-ink-black/10 pt-3">
+          <summary className="cursor-pointer font-meta text-xs font-bold">{cell.model} · {cell.changes?.length ?? 0} notable changes</summary>
+          <ul className="mt-2 space-y-2">
+            {(cell.changes ?? []).map((change, index) => (
+              <li key={index} className="font-body text-sm">
+                <span className={cn("mr-2 inline-block px-1.5 py-0.5 font-meta text-[0.68rem] font-bold uppercase tracking-[0.1em]", CATEGORY_TONE[change.category])}>{change.category}</span>
+                {change.paragraph != null && <span className={cn(META, "mr-2")}>¶{change.paragraph + 1}</span>}
+                <del className="text-hero-red/80">{change.original}</del>{" → "}
+                {change.revised ? <ins className="bg-narrator-gold/40 no-underline">{change.revised}</ins> : <span className={META}>cut</span>}
+                {change.note && <span className="block text-xs text-ink-muted">{change.note}</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
     </div>
   );
 }
@@ -965,7 +1378,7 @@ export function LabsRoom() {
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="min-w-0 space-y-5">
           <nav aria-label="New experiment" className="grid gap-2">
-            {(["image_compare", "stage_models"] as const).map((kind) => (
+            {(["image_compare", "stage_models", "modernize"] as const).map((kind) => (
               <Button key={kind} variant={view === kind ? "primary" : "outline"} size="sm" onClick={() => open({ new: kind })}>
                 New {KIND_LABEL[kind]}
               </Button>
@@ -1008,6 +1421,9 @@ export function LabsRoom() {
           )}
           {view === "stage_models" && !!projects.data?.projects.length && (
             <StageModelsSetup projects={projects.data.projects} onStarted={(id) => open({ run: id })} />
+          )}
+          {view === "modernize" && !!projects.data?.projects.length && (
+            <ModernizeSetup projects={projects.data.projects} onStarted={(id) => open({ run: id })} />
           )}
           {!view && runId && <RunView runId={runId} onDeleted={() => open({ new: "image_compare" })} />}
         </main>

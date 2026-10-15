@@ -5,6 +5,7 @@ from __future__ import annotations
 from .plan_detail_support import with_reservations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -33,6 +34,7 @@ from novel_to_comic.models.draw import (
     PageCapabilityProfile,
     PageGenerationProvenance,
     PageIssue,
+    PageReference,
     PageRenderRevision,
     RenderAnalysis,
     RetryProvenance,
@@ -337,6 +339,22 @@ def _prepare(
     )
 
 
+def test_edit_check_restates_the_whole_request_and_bare_marks_add_no_wording(tmp_path: Path) -> None:
+    # A seeded issue line followed by the author's own wording: the final check
+    # must name both, and a mark without a note sends only its location.
+    artifacts, page, render = _setup(tmp_path)
+    instruction = "Correct the comic lettering so it reads exactly: \"Run!\".\n\nThis text should read Run! in caps."
+    prepared = _prepare(artifacts, page, render, changes=(_change(
+        "fix", instruction,
+        annotations=(CorrectionAnnotation(kind="pin", points=({"x": 0.36, "y": 0.1},)),),
+    ),))
+    prompt = prepared.compiled.request.prompt
+    check = prompt[prompt.index("BEFORE RETURNING, CHECK"):]
+    assert "This text should read Run! in caps." in check.split("Everything else")[0]
+    assert "   Marked pin: 36-36% across, 10-10% down the page\n" in prompt
+    assert "Apply the enclosing change request" not in prompt
+
+
 def test_edited_change_aggregates_one_request_and_leaves_rest_open(tmp_path: Path) -> None:
     artifacts, page, render = _setup(
         tmp_path, issues=(_issue("issue-dark"), _issue("issue-hand", requested_correction="Fix the extra finger."))
@@ -550,10 +568,13 @@ def test_revision_does_not_replay_the_disputed_pose_or_page_generation_brief(tmp
     assert prepared.compiled.reference_bytes == (reference_path.read_bytes(),)
     assert bool(prepared.compiled.request.lettering) == integrated
     if integrated:
-        assert "keep Image 1's existing lettering and typesetting" in prompt
+        assert "apart from the requested changes, keep Image 1's lettering and typesetting" in prompt
     else:
         assert "No comic lettering" in prompt
     assert producing.prompt in prepared.correction.retained_instructions
+
+
+_IMPACT = {"impact": "noticeable_flaw", "reader_impact": "A reader would notice the change."}
 
 
 @pytest.mark.parametrize("status", ["open", "revised", "resolved", "accepted", "dismissed"])
@@ -573,9 +594,9 @@ def test_recurring_visual_finding_keeps_one_issue_and_author_decision(tmp_path: 
     )
     generate = AsyncMock(return_value=ApiResult(value={"findings": [
         {"category": "composition", "panel_number": 1, "observation": "The room remains brightly lit.",
-         "expected": "A dark reveal.", "correction": "Reduce the room lighting.", "issue_id": issue.id},
+         "expected": "A dark reveal.", "correction": "Reduce the room lighting.", "issue_id": issue.id, **_IMPACT},
         {"category": "composition", "panel_number": 1, "observation": "The door is cropped out.",
-         "expected": "The opening door is visible.", "correction": "Show the door.", "issue_id": None},
+         "expected": "The opening door is visible.", "correction": "Show the door.", "issue_id": None, **_IMPACT},
     ]}))
     args = dict(config=Config(), page=page, render=render, image=image, compiled=compiled,
                 artifacts=artifacts, generate=generate, producing_request=artifacts.producing_request(render))
@@ -618,7 +639,7 @@ def test_visual_review_rejects_links_outside_the_render_branch(tmp_path: Path) -
     )
     generate = AsyncMock(return_value=ApiResult(value={"findings": [
         {"category": "composition", "panel_number": 1, "observation": "Too bright.",
-         "expected": "Dark.", "correction": "Darken it.", "issue_id": issue.id},
+         "expected": "Dark.", "correction": "Darken it.", "issue_id": issue.id, **_IMPACT},
     ]}))
     with pytest.raises(ValueError, match="prior panel/category"):
         asyncio.run(review_page_visuals(
@@ -642,12 +663,21 @@ def test_prior_decision_cannot_hide_a_changed_visual_concern(tmp_path: Path, cha
     render = _advance(artifacts, page, revision=2, image=image)
     compiled = compile_page_generation_request(
         page, _edition(), ApprovedVisualReferenceInventory(references=()), {}, retry=RetryProvenance(attempt=1),
-        style_reference_path=artifacts.project_dir / "samples" / "style_1.png" if change == "references" else None,
     )
+    if change == "references":
+        added = b"new authority"
+        reference = PageReference(
+            id="added-ref", entity_id="added", order=1, media_type="image/png",
+            content_sha256=hashlib.sha256(added).hexdigest(), label="Added", visual_anchor="Added.",
+        )
+        compiled = dataclasses.replace(
+            compiled, request=compiled.request.model_copy(update={"references": (reference,)}),
+            reference_bytes=(added,),
+        )
     generate = AsyncMock(return_value=ApiResult(value={"findings": [
         {"category": "prop" if change == "category" else "composition", "panel_number": 1,
          "observation": "A visible discrepancy.", "expected": "Current authority.",
-         "correction": "Restore the current authority.", "issue_id": issue.id},
+         "correction": "Restore the current authority.", "issue_id": issue.id, **_IMPACT},
     ]}))
     with pytest.raises(ValueError, match="prior panel/category"):
         asyncio.run(review_page_visuals(

@@ -33,9 +33,8 @@ export function annotationProblem(mark: PageCorrectionAnnotation): string | null
 
 /**
  * A location belongs to a change, whose full instruction is already in the
- * prompt. The API requires a nonblank mark note, not another author input.
- * A short relational note also handles 501–1000 character parent requests
- * without truncating or duplicating the author's instruction.
+ * prompt. A note is sent only when the author wrote one, so a bare mark adds
+ * a location, not placeholder wording, to the image request.
  */
 export function serializeAnnotation(mark: PageCorrectionAnnotation): PageCorrectionAnnotation {
   const problem = annotationProblem(mark);
@@ -44,7 +43,7 @@ export function serializeAnnotation(mark: PageCorrectionAnnotation): PageCorrect
     id: mark.id,
     kind: mark.kind,
     points: mark.points.map(roundPoint),
-    note: mark.note?.trim() || "Apply the enclosing change request at this location.",
+    ...(mark.note?.trim() ? { note: mark.note.trim() } : {}),
     ...(mark.label ? { label: mark.label } : {}),
   };
 }

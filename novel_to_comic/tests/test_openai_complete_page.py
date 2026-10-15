@@ -269,7 +269,7 @@ def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_pat
     artifacts.plan_path.write_text('{}')
     compiled = compile_page_generation_request(
         page, edition, _inventory(), files, retry=RetryProvenance(attempt=1),
-        style_template=config.style_template, style_reference_path=tmp_path / "samples" / "style_1.png",
+        style_template=config.style_template,
     )
     expected = dict(correction_credit_estimate(compiled, config=config, reserve=True))
     app = FastAPI()

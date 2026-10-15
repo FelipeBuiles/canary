@@ -7,7 +7,7 @@ const pin: PageCorrectionAnnotation = { id: "pin-1", kind: "pin", points: [{ x: 
 describe("optional correction locations", () => {
   it("grounds a location in its parent request without requiring duplicate wording", () => {
     const submitted = serializeAnnotation(pin);
-    expect(submitted.note).toBe("Apply the enclosing change request at this location.");
+    expect(submitted.note).toBeUndefined();
     expect(submitted.points).toEqual(pin.points);
     expect(pin.note).toBeUndefined();
   });
@@ -38,7 +38,9 @@ describe("optional correction locations", () => {
   it("supports every saved mark kind with or without extra detail", () => {
     for (const kind of ["rectangle", "highlight", "arrow", "freehand"] as const) {
       const mark = { ...pin, kind, points: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.6 }], note: " " };
-      expect(serializeAnnotation(mark).note?.length).toBeGreaterThan(0);
+      // A blank note is dropped, never padded: the change's instruction directs the mark.
+      expect(serializeAnnotation(mark)).not.toHaveProperty("note");
+      expect(serializeAnnotation({ ...mark, note: "Only the coat." }).note).toBe("Only the coat.");
     }
   });
   it("moves a whole shape to an edge without squashing its width or height", () => {

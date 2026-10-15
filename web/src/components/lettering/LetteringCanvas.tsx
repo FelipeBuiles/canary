@@ -17,8 +17,9 @@ interface Props {
   commit: () => void;
   cancel: () => void;
   change: (id: string, patch: Partial<LetteringElement>) => void;
-  /** Evidence drawn over the art: faces from the page read and the focused check's mark. */
-  guides?: { faces: Array<Rect & { label: string }>; focus: (Rect & { severity: "fix" | "consider" }) | null };
+  /** Evidence drawn over the art: faces from the page read and the focused check's mark.
+   * ``dragFaces`` show only while a balloon or tail is dragged, so faces are visible no-go areas. */
+  guides?: { faces: Array<Rect & { label: string }>; dragFaces?: Array<Rect & { label: string }>; focus: (Rect & { severity: "fix" | "consider" }) | null };
 }
 interface Drag {
   id: string;
@@ -48,6 +49,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     top: number;
   } | null>(null);
   const pending = useRef<{ id: string; patch: Partial<LetteringElement> } | null>(null);
+  const [dragging, setDragging] = useState(false);
   const frame = useRef<number | null>(null);
   const overlay = useMemo(() => renderOverlay(state, style), [state, style]);
   useEffect(() => () => {
@@ -93,6 +95,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       return;
     begin();
     drag.current = { id: element.id, mode, x: event.clientX, y: event.clientY, rect, original: element };
+    setDragging(mode !== "resize");
     event.currentTarget.setPointerCapture(event.pointerId);
   }
   function move(event: PointerEvent<HTMLButtonElement>) {
@@ -128,6 +131,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       // Commit the final pointer position even if its frame has not painted yet.
       flushPreview();
       drag.current = null;
+      setDragging(false);
       commit();
     }
   }
@@ -137,6 +141,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       frame.current = null;
       pending.current = null;
       drag.current = null;
+      setDragging(false);
       cancel();
     }
   }
@@ -184,7 +189,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
           <img key={artUrl} src={artUrl} alt={t("Immutable base artwork")} className="lettering-base-art" draggable={false} onError={() => { setArtFailed(true); onArtReady(null); }} onLoad={() => { setArtFailed(false); onArtReady(artUrl); }} />
           <div className="lettering-svg" aria-hidden="true" dangerouslySetInnerHTML={{ __html: overlay }} />
           {guides && <div className="lettering-guides" aria-hidden="true">
-            {guides.faces.map((face, index) => <span key={index} className="lettering-guide-face" style={at(face)}><span>{face.label}</span></span>)}
+            {(dragging && guides.dragFaces?.length ? guides.dragFaces : guides.faces).map((face, index) => <span key={index} className="lettering-guide-face" style={at(face)}><span>{face.label}</span></span>)}
             {guides.focus && <span className={`lettering-guide-focus is-${guides.focus.severity}`} style={at(guides.focus)} />}
           </div>}
           {state.elements.filter(e => !e.hidden).map((element, index) => {

@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from novel_to_comic.labs import image_compare, stage_models, storage
+from novel_to_comic.labs import image_compare, modernize, stage_models, storage
 from novel_to_comic.state import load_state
 from novel_to_comic.workspace import workspace_part_id
 
@@ -175,6 +175,56 @@ def image_compare_estimate(
         raise HTTPException(400, str(exc)) from exc
 
 
+@router.get("/modernize/options")
+def modernize_options(user_id: str = Depends(get_current_user)) -> dict[str, Any]:  # noqa: ARG001
+    return {
+        "models": modernize.selectable_models(),
+        "intensities": list(modernize.INTENSITIES), "scopes": list(modernize.SCOPES),
+        "sensitive": list(modernize.SENSITIVE), "max_words": modernize.MAX_WORDS, "max_arms": modernize.MAX_ARMS,
+    }
+
+
+@router.get("/modernize/projects/{project}/excerpt")
+def modernize_excerpt(
+    project: str, request: Request, start: int = 0, max_words: int = 1500, part_id: str | None = None,
+    user_id: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    directory = _project_dir(_user_root(request, user_id), project)
+    if not (directory / "state.json").exists():
+        raise HTTPException(404, "Project not found")
+    try:
+        return modernize.excerpt(modernize.manuscript(directory, part_id), start, max_words)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _modernize_spec(root: Path, body: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    project = str(body.get("project") or "")
+    directory = _project_dir(root, project)
+    if not (directory / "state.json").exists():
+        raise HTTPException(404, "Project not found")
+    try:
+        controls = modernize.validate_controls(body.get("controls") or {})
+        arms = modernize.validate_arms(body.get("arms"))
+        source = modernize.validate_source(body, directory)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return project, controls, arms, source
+
+
+@router.post("/modernize/estimate")
+def modernize_estimate(
+    request: Request, body: dict[str, Any] = Body(...), user_id: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    root = _user_root(request, user_id)
+    _, controls, arms, source = _modernize_spec(root, body)
+    estimates = modernize.estimate_usd(root, source, arms, controls)
+    return {"estimated_cost_usd": {arm: estimate["usd"] for arm, estimate in estimates.items()},
+            "estimate_basis": {arm: {"basis": estimate["basis"], "runs": estimate["runs"]}
+                               for arm, estimate in estimates.items()},
+            "words": source["words"], "paragraphs": len(source["paragraphs"])}
+
+
 def _start(request: Request, user_root: Path, run_id: str, work, cells: frozenset[str] | None = None) -> None:
     """Run ``work`` in the background; ``cells`` marks it as a retry of those cells.
 
@@ -245,6 +295,16 @@ async def create_run(
                 "estimated_cost_usd": stage_models.estimate_arms_usd(source, phases, arms)}
         run = storage.create_run(root, kind=kind, label=str(body.get("label") or "Stage models")[:200], spec=spec)
         _start(request, root, run["run_id"], stage_models.run(root, run["run_id"], project, phases, arms, part_id))
+    elif kind == modernize.KIND:
+        project, controls, arms, source = _modernize_spec(root, body)
+        spec = {"project": project, "controls": controls, "arms": arms,
+                "source": {key: value for key, value in source.items() if key != "paragraphs"}
+                | {"paragraphs": len(source["paragraphs"]), "sha256": modernize.source_sha256(source)},
+                "estimated_cost_usd": {arm: estimate["usd"] for arm, estimate
+                                       in modernize.estimate_usd(root, source, arms, controls).items()}}
+        run = storage.create_run(root, kind=kind, label=str(body.get("label") or "Modernize source")[:200], spec=spec)
+        modernize.write_source(root, run["run_id"], source)
+        _start(request, root, run["run_id"], modernize.run(root, run["run_id"], project, arms, controls))
     else:
         raise HTTPException(400, f"Unknown experiment kind: {kind!r}")
     return run
@@ -256,14 +316,16 @@ async def retry_cells(
 ) -> dict[str, Any]:
     """Resubmit failed cells with their recorded inputs; ``cells`` omitted retries all.
 
-    Image cells resend the same request; text-stage arms rerun their phase.
+    Image cells resend the same request; text-stage arms rerun their phase;
+    modernize arms resend the run's frozen excerpt.
     """
     root = _user_root(request, user_id)
     try:
         run = storage.read_run(root, run_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    experiment = {image_compare.KIND: image_compare, stage_models.KIND: stage_models}.get((run or {}).get("kind"))
+    experiment = {image_compare.KIND: image_compare, stage_models.KIND: stage_models,
+                  modernize.KIND: modernize}.get((run or {}).get("kind"))
     if experiment is None:
         raise HTTPException(404, "Run not found")
     requested = body.get("cells")

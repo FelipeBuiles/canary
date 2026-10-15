@@ -24,7 +24,7 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from tests.test_complete_page_draw import _page
 
 
-CODEX_DRAW = "codex-dev/image/gpt-5.5"
+CODEX_DRAW = "codex-dev/image/gpt-6.1-sol"
 
 
 def _codex_config():
@@ -39,7 +39,7 @@ def dev_routes(monkeypatch):
         CANARY_CODEX_DEV_ENABLED="1",
         CANARY_ENV="development",
         # Pin the fixture's reasoners independently of the operator defaults.
-        CANARY_CODEX_DEV_MODELS=json.dumps(["gpt-5.5", "gpt-5.6-terra"]),
+        CANARY_CODEX_DEV_MODELS=json.dumps(["gpt-6.1-sol", "gpt-5.6-terra"]),
     )
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
@@ -374,7 +374,7 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     assert not artifacts.book_edition_path.exists()
 
 
-@pytest.mark.parametrize("reasoner", [None, "gpt-5.5", "gpt-5.6-terra"])
+@pytest.mark.parametrize("reasoner", [None, "gpt-6.1-sol", "gpt-5.6-terra"])
 @pytest.mark.parametrize("canvas", [(106, 158), (80, 120)])
 def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(tmp_path, monkeypatch, dev_routes, reasoner, canvas):
     import time
@@ -385,8 +385,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
 
     page, inventory, files = _authorities(tmp_path, 2)
     config = Config(draw_model=f"codex-dev/image/{reasoner}") if reasoner else _codex_config()
-    proof = tmp_path / "samples" / "style_1.png"
-    compiled = _compiled(page, inventory, files, config=config, style_reference_path=proof)
+    compiled = _compiled(page, inventory, files, config=config)
     adapter = page_drawing.complete_page_adapter(config)
     output = io.BytesIO()
     Image.new("RGB", canvas, "navy").save(output, format="PNG")
@@ -394,7 +393,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     reference_digests = [
         hashlib.sha256(files[ref.id].path.read_bytes()).hexdigest()
         for ref in inventory.references
-    ] + [hashlib.sha256(proof.read_bytes()).hexdigest()]
+    ]
     runtime = AsyncMock(return_value=SimpleNamespace(
         image_bytes=native, input_tokens=12, output_tokens=3,
         metadata={
@@ -443,14 +442,14 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     asyncio.run(job.runner())
     assert created
     database.rpc.assert_not_called()
-    assert runtime.call_args.kwargs["reasoning_model"] == (reasoner or "gpt-5.5")
+    assert runtime.call_args.kwargs["reasoning_model"] == (reasoner or "gpt-6.1-sol")
     assert runtime.await_count == 1
     assert runtime.call_args.kwargs["prompt"] == compiled.request.prompt
-    assert runtime.call_args.kwargs["references"] == ((proof.read_bytes(), "image/png"),) + tuple(
+    assert runtime.call_args.kwargs["references"] == tuple(
         (files[ref.id].path.read_bytes(), "image/png") for ref in inventory.references
     )
-    assert runtime.call_args.kwargs["reference_roles"] == ("style", "approved_asset", "approved_asset")
-    assert runtime.call_args.kwargs["reference_instructions"][0] == compiled.request.references[0].visual_anchor
+    assert runtime.call_args.kwargs["reference_roles"] == ("approved_asset", "approved_asset")
+    assert all(instruction.startswith("Apply this approved asset only") for instruction in runtime.call_args.kwargs["reference_instructions"])
     assert runtime.call_args.kwargs["edit_parent_indices"] == ()
     provenance = artifacts.read_provenance(page.page_number, 1)
     assert artifacts.read_render(page.page_number, 1) == native
@@ -590,7 +589,7 @@ def test_failed_codex_correction_can_be_explicitly_retried(tmp_path, dev_routes)
 
 
 def test_explicit_codex_draw_selection_cannot_reroute_frozen_request(tmp_path, dev_routes):
-    first = Config(draw_model="codex-dev/image/gpt-5.5")
+    first = Config(draw_model="codex-dev/image/gpt-6.1-sol")
     second = Config(draw_model="codex-dev/image/gpt-5.6-terra")
     page, inventory, files = _authorities(tmp_path, 1)
     compiled = _compiled(page, inventory, files, config=first)

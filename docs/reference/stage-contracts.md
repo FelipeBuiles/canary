@@ -764,8 +764,9 @@ source shard's beats once its blueprint validates and its lettering once that
 validates, and each validation round's blocking and editorial counts with the
 beats its failures cite. Neither snapshot is ever an input to generation. Text work is sized to the transport that carries it
 (`ai/transport.py`): the local Codex runtime executes one request at a time
-under a 15-minute deadline, so Plan and Adapt clamp concurrency to 1 there and
-Plan uses 4-page detail batches. A call counts as started only when the
+under a 15-minute deadline, so Plan and Adapt clamp concurrency to 1 there.
+Plan uses 4-page detail batches on every transport: detail latency is
+output-bound, so smaller parallel batches shorten the wall clock. A call counts as started only when the
 transport begins executing it (`GenerationCall.started_at`); admitted calls
 may be queued.
 
@@ -864,12 +865,13 @@ when the story moves to a new place. Plan computes these advisory notes:
 or more consecutive pages with one count), `unestablished_location_change`
 (the first two panels after a place transition, across beat/page boundaries
 but stopping at another place transition, are all close shots), and, for
-editable editions, one grouped `crowded_lettering` note (a panel over 50 words
-or a page over 210). Integrated editions keep `dense_integrated_lettering`. None of these block,
+editable editions, one grouped `crowded_lettering` note (a panel over 35 words
+or a page over 150: editable art is lettered after drawing, so it keeps to the
+low end of editorial norms). Integrated editions keep `dense_integrated_lettering`. None of these block,
 repair or alter lettering. Repeated counts invite review, not mandatory variation.
 
 Page allocation uses the edition's advisory budget before locking lettering IDs:
-editable pages aim for at most about 210 words; integrated pages for about 110
+editable pages aim for at most about 150 words; integrated pages for about 110
 words and 10 items, matching their density signal. Protected items remain whole.
 The Gemini checklist reinforces the same budgets rather than supplying a
 conflicting cap.
@@ -916,7 +918,9 @@ Adapt normally permits one repair of the cited source scope. One final bounded
 repair is allowed when blocking codes strictly decrease or the repaired candidate
 exposes a changed narrative-review finding. Repeated failures do not extend the
 loop. Plan permits at most one narrative repair pass. Plan repairs the compact
-map before detail, or the affected detail batches (in parallel) after composition; a narrative map revision consumes that
+map before detail, or after composition only the cited pages (in parallel; contiguous cited pages
+stay together), and such a repair may split a cited beat into more panels than the map's rhythm intent
+names; a narrative map revision consumes that
 allowance. It never escalates an unresolved detail finding into whole-book
 regeneration. Map, whole-book, and detail schema corrections retain a separate
 bounded allowance and preserve the current repair feedback. Plan evicts completed
@@ -1088,11 +1092,13 @@ camera angles, text or composition. Cast design and canonical/state anchors own
 identity; scene instructions own acting. Missing selected proofs reject generation
 before spend. Existing artwork is versioned only on an explicit regeneration.
 
-Draw includes the same selected raw proof as a separate rendering reference,
-with a null entity binding, alongside all required Cast authorities. Its bytes
-are hashed into the frozen request and included in estimates. Reserve a proof
-slot and any correction-parent slot before packing subject reference sheets;
-never drop identities or the proof to fit a provider limit. Integrated and editable
+Draw never uploads the proof. A proof drawn from the book's own scene depicts
+the cast, so beside the approved sheets it acts as a conflicting second version
+of the same people (2026-10-14: a proof costume replaced a Cast costume across
+pages). Style reaches pages through the proof-conditioned Cast sheets and the
+board-conditioned plates, which Cast Check reviews for style. Reserve any
+correction-parent slot before packing subject reference sheets; never drop
+identities to fit a provider limit. Integrated and editable
 pages both receive surface-fidelity guidance. Corrections retain their requested
 scope and untouched artwork. Saved requests and rendered pages are not rewritten.
 
@@ -1173,7 +1179,10 @@ Editable profiles set `exact_visible_lettering=false`: their wire lettering
 array is empty and their prompt forbids balloons, caption boxes, SFX glyphs,
 placeholder words, pseudo-writing, and reserved blank areas. They request continuous
 scene artwork; Plan placement reservations seed the editor only and are omitted
-from image requests. Canonical copy remains in Adapt/Plan; it
+from image requests. Editable Plan detail and Draw prompts share `lettering/room.py`
+framing: a panel with more than 25 words framed tighter than a medium shot is drawn
+as a medium shot or wider, and lettered panels keep faces out of their top quarter
+with the scene continuing there. Integrated prompts keep Plan's framing. Canonical copy remains in Adapt/Plan; it
 is not a typesetting payload for the image provider. Excess
 references fail before submission. Less-graphic framing retains identity
 references. An edition retains its profile while it remains spendable. Otherwise, new

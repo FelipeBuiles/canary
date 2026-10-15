@@ -44,6 +44,7 @@ from novel_to_comic.page_planning import (
     _detail_matches_map,
     _merged_editorial_issues,
     _planning_view,
+    _speaker_changed_in_panel_issues,
     PlanInvariantError,
     build_book_plan_prompt,
     produce_book_plan,
@@ -330,6 +331,29 @@ def test_gemini_detail_wire_format_compiles_under_the_existing_page_map_validato
     assert "lettering_placements: {}" not in seen[0]["user_content"]
 
 
+@pytest.mark.parametrize("editable", [True, False])
+def test_only_editable_detail_asks_for_room_to_letter(tmp_path, editable):
+    from novel_to_comic.page_planning import _generate_detail_batch
+    from novel_to_comic.gemini_tuning import generic_detail_view
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    seen = []
+
+    async def generate(**request):
+        seen.append(request)
+        return ApiResult(value=generic_detail_view(raw))
+
+    mapping = _BookPageMap(rhythm_summary="Two locked pages.", pages=mapped)
+    state = PipelineState(project_name="detail", novel_path="novel.txt", created_at=datetime.now(timezone.utc))
+    asyncio.run(_generate_detail_batch(
+        adaptation, _inventory(), mapping, start=0, stop=2, model="gemini-3.8-flash", generate=generate,
+        ctx=StageRuntime("plan", state, tmp_path), editable_lettering=editable,
+    ))
+    asked = "EDITABLE LETTERING FRAMING" in seen[0]["user_content"]
+    assert asked is editable
+    if editable:
+        assert "more than 25 words of copy uses a medium shot or wider" in seen[0]["user_content"]
+
+
 @pytest.mark.parametrize("defect", ["duplicate", "foreign", "wrong_page", "extra_page", "wrong_beat"])
 def test_gemini_generic_detail_cannot_relax_locked_ownership(defect):
     from novel_to_comic.gemini_tuning import generic_detail_view, ungeneric_detail_response
@@ -595,21 +619,22 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
     assert all('"approved_story_tone":"Restrained dread."' in call["user_content"] for call in calls)
     assert "110 words and 10 lettering items" in calls[0]["user_content"]
     assert len(plan.pages) == 12
-    assert detail_attempts[tuple(range(1, 9))] == (2 if invalid_batch_start == 1 else 1)
+    assert detail_attempts[tuple(range(1, 5))] == (2 if invalid_batch_start == 1 else 1)
+    assert detail_attempts[tuple(range(5, 9))] == 1
     # A defect on one page of a compiled batch re-details only that page.
     assert detail_attempts[tuple(range(9, 13))] == 1
     assert detail_attempts.get((9,), 0) == (1 if invalid_batch_start == 9 else 0)
     assert [call["feature"] for call in calls].count("plan.map") == 1
     map_call = next(call for call in calls if call["feature"] == "plan.map")
     assert map_call["max_output_tokens"] == _PAGE_MAP_MAX_OUTPUT_TOKENS
-    assert [call["feature"] for call in calls].count("plan.detail") == 3
+    assert [call["feature"] for call in calls].count("plan.detail") == 4
     if defect != "rewound_beats":
         page = TargetArtifacts(tmp_path).read_page(9)
         assert page.content[0].appearance_states == {"character_johansen": "wet"}
         assert page.content[0].lettering == (adaptation.beats[16].lettering[0],)
 
 
-@pytest.mark.parametrize("beat_count,upper_target,expected", [(2, 2, 64), (42, 34, 64), (120, 34, 144), (24, 120, 144)])
+@pytest.mark.parametrize("beat_count,upper_target,expected", [(2, 2, 64), (42, 34, 80), (120, 34, 204), (24, 120, 204)])
 def test_default_plan_budget_covers_review_and_repairs_and_scales_with_book(beat_count, upper_target, expected):
     from novel_to_comic.page_planning import _default_plan_call_limit
 
@@ -668,7 +693,7 @@ def test_map_schema_corrections_do_not_consume_narrative_revision(tmp_path, monk
 
 
 def test_invalid_reference_detail_stops_after_bounded_correction_with_page_location(tmp_path):
-    from novel_to_comic.page_planning import _generate_detail_batch, _concern_batch_indexes
+    from novel_to_comic.page_planning import _generate_detail_batch, _concern_page_spans
 
     adaptation = _long_adaptation(10)
     page_map = _BookPageMap.model_validate({"rhythm_summary": "One event per page.", "pages": [
@@ -704,7 +729,7 @@ def test_invalid_reference_detail_stops_after_bounded_correction_with_page_locat
     assert [f.code for f in failures] == ["reference_authority"]
     assert "page_009_content_001" in failures[0].artifact_ids
     assert "character_johansen:base" in failures[0].artifact_ids
-    assert _concern_batch_indexes(failures, page_count=10, batch_pages=8) == {1: [failures[0]]}
+    assert _concern_page_spans(failures, page_count=10, max_pages=4) == {(8, 9): [failures[0]]}
     assert not TargetArtifacts(tmp_path).plan_path.exists()
 
 
@@ -829,16 +854,97 @@ def test_long_plan_retains_composition_warnings_without_automatic_polishing(
     )
 
     assert [call["feature"] for call in calls].count("plan.map") == 1
-    assert [call["feature"] for call in calls].count("plan.detail") == 3
-    assert detail_targets.count(tuple(range(1, 9))) == 1
-    assert detail_targets.count(tuple(range(9, 17))) == 1
-    assert detail_targets.count(tuple(range(17, 25))) == 1
+    assert [call["feature"] for call in calls].count("plan.detail") == 6
+    assert all(detail_targets.count(tuple(range(start, start + 4))) == 1 for start in range(1, 25, 4))
     assert all("json_schema" in call for call in calls)
     assert len(plan.pages) == 24
     assert len(artifacts.read_page(1).content) == 1
     assert artifacts.read_page(1).content[0].lettering[0].id == "lettering_0001"
     assert progress_at_repair == []
-    assert state.stages["plan"].items_done == state.stages["plan"].items_total == 5
+    assert state.stages["plan"].items_done == state.stages["plan"].items_total == 8
+
+
+def test_repair_spans_cover_only_cited_pages():
+    from novel_to_comic.models.validation import InvariantFailure
+    from novel_to_comic.page_planning import _concern_page_spans
+
+    def concern(name, *artifact_ids):
+        return InvariantFailure(id=name, owner_stage="plan", code="narrative_review_unsupported_event",
+                                message="Defect.", evidence=["Cited."], artifact_ids=list(artifact_ids))
+
+    one = concern("one", "page_004", "beat_0004", "page_004_content_002")
+    across = concern("across", "page_005", "page_006")
+    overlap = concern("overlap", "page_006_content_001", "page_007")
+    apart = concern("apart", "page_002", "page_011", "page_099")
+    wide = concern("wide", *(f"page_{n:03d}" for n in range(13, 23)))
+    assert _concern_page_spans((one, across, overlap, apart, wide), page_count=24, max_pages=4) == {
+        (1, 2): [apart],
+        (3, 4): [one],
+        (4, 7): [across, overlap],
+        (10, 11): [apart],
+        (12, 16): [wide], (16, 20): [wide], (20, 22): [wide],
+    }
+
+
+def test_narrative_repair_redetails_only_the_cited_page_and_may_split_its_panel(tmp_path, monkeypatch):
+    from novel_to_comic.models.validation import InvariantFailure
+
+    adaptation = _long_adaptation()
+    detail_targets: list[tuple[int, ...]] = []
+    repair_prompts: list[str] = []
+    reviews = []
+
+    async def review(context, **kwargs):
+        reviews.append(context["phase"])
+        if context["phase"] == "plan" and reviews.count("plan") == 1:
+            return (InvariantFailure(
+                id="plan_review_1_1", owner_stage="plan", code="narrative_review_unsupported_event",
+                message="Evidence-backed narrative defect requires review before drawing.",
+                artifact_ids=["page_004", "beat_0004", "page_004_content_001"],
+                evidence=["Panel 1 shows the throw while its lettering is spoken before it."],
+            ),)
+        return ()
+
+    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", review)
+
+    async def generate(**request):
+        if request["feature"] == "plan.map":
+            return ApiResult(value=plan_response({"rhythm_summary": "One event per page.", "pages": [
+                {"beat_ids": [f"beat_{n:04d}"], "lettering_ids": [f"lettering_{n:04d}"],
+                 "emphasis": "initial", "density_intent": "standard", "rhythm_intent": f"One panel for event {n}."}
+                for n in range(1, 25)
+            ]}))
+        context, _ = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])
+        numbers = tuple(context["target_page_numbers"])
+        detail_targets.append(numbers)
+        repairing = "unsupported_event" in request["user_content"]
+        if repairing:
+            repair_prompts.append(request["user_content"])
+        return ApiResult(value=detail_response({"rhythm_summary": "Local detail.", "pages": [{
+            "emphasis": "initial", "density_intent": "standard", "rhythm_intent": f"Event {n}.",
+            "layout_intent": "Ordered moments.",
+            "content": [
+                {"beat_ids": [f"beat_{n:04d}"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [],
+                 "visual_intent": f"Moment {n}.{panel}.", "lettering_ids": [f"lettering_{n:04d}"] if panel == 1 else [],
+                 "entity_ids": [], **({"panel_role": "reaction"} if panel > 1 else {})}
+                for panel in range(1, (3 if repairing else 2))
+            ],
+        } for n in numbers]}))
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(produce_book_plan(
+        adaptation, ApprovedVisualReferenceInventory(), ApprovedPageRange(minimum=24, maximum=24),
+        artifacts=artifacts, ctx=StageRuntime("plan", PipelineState(
+            project_name="page-repair", novel_path="novel.txt", created_at=datetime.now(timezone.utc),
+        ), tmp_path), model="test-planner", generate=generate,
+    ))
+
+    assert len(plan.pages) == 24
+    assert detail_targets == [tuple(range(n, n + 4)) for n in range(1, 25, 4)] + [(4,)]
+    assert "PREVIOUS DETAIL" in repair_prompts[0]
+    assert "split that beat into consecutive panels" in repair_prompts[0]
+    assert [len(artifacts.read_page(n).content) for n in (3, 4, 5)] == [1, 2, 1]
+    assert reviews.count("plan") == 2
 
 
 def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
@@ -947,8 +1053,8 @@ def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
 
     assert len(plan.pages) == 24
     assert [call["feature"] for call in calls].count("plan.map") == 1
-    assert [call["feature"] for call in calls].count("plan.detail") == 4
-    assert detail_attempts[tuple(range(1, 9))] == 2
+    assert [call["feature"] for call in calls].count("plan.detail") == 7
+    assert detail_attempts[tuple(range(1, 5))] == 2
     assert [
         item.id
         for content in artifacts.read_page(1).content
@@ -3651,8 +3757,8 @@ def test_repeated_beat_across_parallel_detail_batches_has_one_lettering_owner(tm
         ), tmp_path), model="test-planner", generate=generate,
     ))
     assert len(plan.pages) == 25
-    assert attempts[tuple(range(1, 9))] == 1
-    assert attempts[tuple(range(9, 17))] == 2
+    assert attempts[tuple(range(5, 9))] == 1
+    assert attempts[tuple(range(9, 13))] == 2
     assert tuple(item for page in plan.pages for content in artifacts.read_page(page.page_number).content for item in content.lettering) == tuple(
         item for beat in adaptation.beats for item in beat.lettering
     )
@@ -4095,7 +4201,7 @@ def test_plan_progress_snapshots_report_only_validated_work(tmp_path: Path) -> N
     assert all(page["panels"] is None for page in mapped["pages"])
     planned = next(s for s in snapshots if s["phase"] == "laying_out")
     assert [(b["first"], b["last"], b["state"]) for b in planned["batches"]] == [
-        (1, 8, "queued"), (9, 16, "queued"), (17, 24, "queued"),
+        (first, first + 3, "queued") for first in range(1, 25, 4)
     ]
     final = snapshots[-1]
     assert final["pages_laid_out"] == len(plan.pages) == 24
@@ -4105,7 +4211,7 @@ def test_plan_progress_snapshots_report_only_validated_work(tmp_path: Path) -> N
     assert state.stages["plan"].snapshot == final
 
 
-def test_a_serialized_deadline_bound_transport_gets_smaller_detail_batches() -> None:
+def test_detail_batches_stay_small_on_parallel_and_deadline_bound_transports() -> None:
     from novel_to_comic.ai.transport import text_transport_limits
     from novel_to_comic.page_planning import detail_batch_pages
 
@@ -4113,7 +4219,7 @@ def test_a_serialized_deadline_bound_transport_gets_smaller_detail_batches() -> 
     assert (codex.parallel_calls, codex.call_deadline_seconds) == (1, 900)
     assert detail_batch_pages("codex-dev/text/gpt-6-luna") == 4
     assert text_transport_limits("test-planner").parallel_calls is None
-    assert detail_batch_pages("test-planner") == 8
+    assert detail_batch_pages("test-planner") == 4
 
 
 def _two_look_adaptation() -> BookAdaptation:
@@ -4266,6 +4372,31 @@ def test_replanning_refuses_a_page_with_nothing_to_repair_before_spending(tmp_pa
 
     with pytest.raises(ValueError, match="no problem to repair"):
         asyncio.run(replan_page(artifacts, _two_look_inventory(), 3, generate=generate, model="test-planner"))
+
+
+def test_replanning_carries_out_an_author_request_on_a_valid_page(tmp_path: Path) -> None:
+    # A change the image model cannot make (which panel shows what) reaches
+    # the planner as a concern, even when the page has no plan problem.
+    from novel_to_comic.page_planning import estimate_page_replan_cost, replan_page
+
+    artifacts = _accepted_look_ahead_plan(tmp_path)
+    request = "Show Johansen from behind at the wheel, not facing us."
+    assert estimate_page_replan_cost(artifacts, _two_look_inventory(), 3, model="test-planner",
+                                     author_request=request) >= 0
+    prompts: list[str] = []
+    corrected = _three_page_page(3, None, "Johansen at the wheel, seen from behind.")
+
+    async def generate(**call):
+        prompts.append(call["user_content"])
+        return ApiResult(value=detail_response({"rhythm_summary": "x", "pages": [corrected]}))
+
+    revised = asyncio.run(replan_page(artifacts, _two_look_inventory(), 3, generate=generate,
+                                      model="test-planner", author_request=request))
+
+    assert "[author_request]" in prompts[0] and request in prompts[0]
+    assert "keep the page's beats and exact lettering wording" in prompts[0]
+    assert revised.revision == 2
+    assert revised.content[0].visual_intent == "Johansen at the wheel, seen from behind."
 
 
 def test_replanning_keeps_the_old_revision_when_the_repair_still_looks_ahead(tmp_path: Path) -> None:
@@ -4693,6 +4824,30 @@ def test_uncast_character_drawn_on_several_pages_is_an_editorial_issue(layout, f
     if flagged:
         assert issues[0].artifact_ids == ("page_001", "page_002")
         assert not issues[0].blocking
+
+
+@pytest.mark.parametrize(("layout", "flagged"), [
+    ([["beat_0001", "beat_0002"]], True),
+    # Split across panels, only the beat's last panel takes the fainted state.
+    ([["beat_0001", "beat_0002", "beat_0002"]], False),
+])
+def test_speaker_drawn_already_fainted_while_asking_is_an_editorial_issue(layout, flagged) -> None:
+    payload = _adaptation().model_dump()
+    payload["content_sha256"] = ""
+    beat = payload["beats"][1]
+    beat["lettering"][0].update(speaker_entity_id="character_johansen", delivery="onscreen")
+    beat["appearance_changes"] = [{"entity_id": "character_johansen", "to_state_id": "fainted",
+                                   "description": "He faints."}]
+    adaptation = BookAdaptation.model_validate(payload)
+    pages = _pages_from(adaptation, layout, entity_ids=("location_alert", "character_johansen"))
+    content = list(pages[0].content)
+    content[-1] = content[-1].model_copy(update={"appearance_states": {"character_johansen": "fainted"}})
+    pages[0] = pages[0].model_copy(update={"content": tuple(content)})
+    issues = _speaker_changed_in_panel_issues(adaptation, pages)
+    assert bool(issues) is flagged
+    if flagged:
+        assert issues[0].code == "speaker_changed_in_panel" and not issues[0].blocking
+        assert "Hard to port" in issues[0].evidence[0]
 
 
 @pytest.mark.parametrize("integrated", [True, False])

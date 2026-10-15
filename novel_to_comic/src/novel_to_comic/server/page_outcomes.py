@@ -14,10 +14,12 @@ import uuid
 OUTCOMES = frozenset({
     "redraw_requested", "correction_submitted", "render_selected", "issue_reported",
     "issue_accepted", "issue_dismissed", "visual_review_requested", "replan_requested",
-    "lettering_saved", "lettering_reset",
+    "lettering_saved", "lettering_reset", "change_check_requested",
 })
 # Lettering is independent of the art; its verdicts never score the image.
-_ART_VERDICTS = OUTCOMES - {"lettering_saved", "lettering_reset"}
+# Checking draft changes precedes any verdict: the author has not asked for
+# a redraw yet, and may not.
+_ART_VERDICTS = OUTCOMES - {"lettering_saved", "lettering_reset", "change_check_requested"}
 
 
 def record_page_outcome(app, outcome: str, *, user_id: str | None, project_id: str | None,

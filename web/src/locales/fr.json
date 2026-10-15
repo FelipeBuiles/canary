@@ -2337,6 +2337,7 @@
   "Sources": "Sources",
   "Spacing": "Espacement",
   "Sparse": "Aérée",
+  "Speaker": "Locuteur",
   "Speech balloon": "Bulle de dialogue",
   "Speech balloon. Drag to move it, or press Enter to edit its words.": "Bulle de dialogue. Faites-la glisser pour la déplacer ou appuyez sur Entrée pour modifier son texte.",
   "Speech": "Dialogue",
@@ -3514,5 +3515,18 @@
   "{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}": "{count, plural, =0 {VÉRIFIER LES MODIFICATIONS} one {VÉRIFIER # MODIFICATION} other {VÉRIFIER # MODIFICATIONS}}",
   "{count, plural, one {# changed reference still to redraw. Its current image stays until the new one lands.} other {# changed references still to redraw. Their current images stay until the new ones land.}}": "{count, plural, one {# référence modifiée reste à redessiner. Son image actuelle reste affichée jusqu’à l’arrivée de la nouvelle.} other {# références modifiées restent à redessiner. Leurs images actuelles restent affichées jusqu’à l’arrivée des nouvelles.}}",
   "{count, plural, one {# mark} other {# marks}}": "{count, plural, one {# repère} other {# repères}}",
-  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# autre vérification reste ouverte.} other {# autres vérifications restent ouvertes.}}"
+  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# autre vérification reste ouverte.} other {# autres vérifications restent ouvertes.}}",
+  "BELONGS TO THE PAGE PLAN": "RELÈVE DU PLAN DE PAGE",
+  "BELONGS TO THE SCRIPT": "RELÈVE DU SCÉNARIO",
+  "CHECK CHANGES": "VÉRIFIER LES MODIFICATIONS",
+  "Change this line in Story, then re-plan the page. A redraw can’t change the script.": "Modifiez cette ligne dans Histoire, puis replanifiez la page. Redessiner ne peut pas changer le scénario.",
+  "Checking…": "Vérification…",
+  "Page {page} was re-planned. Redraw it so the art matches.": "La page {page} a été replanifiée. Redessinez-la pour que l’illustration corresponde.",
+  "RE-PLAN THIS PAGE": "REPLANIFIER CETTE PAGE",
+  "Reads each change against the current page. Nothing is redrawn and your draft stays as it is until you apply a suggestion.": "Lit chaque modification au regard de la page actuelle. Rien n’est redessiné et votre brouillon reste inchangé jusqu’à ce que vous appliquiez une suggestion.",
+  "Reads your changes against this page: suggests precise wording, and flags changes the artwork can’t make.": "Lit vos modifications au regard de cette page : propose une formulation précise et signale celles que l’illustration ne peut pas faire.",
+  "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Réécrit les cases de cette page pour faire cette modification. Ses temps forts et le texte de chaque ligne restent identiques. L’illustration actuelle est conservée jusqu’à ce que vous redessiniez la page.",
+  "SUGGESTED WORDING": "FORMULATION PROPOSÉE",
+  "The draft is not ready to check.": "Le brouillon n’est pas prêt à être vérifié.",
+  "USE THIS WORDING": "UTILISER CETTE FORMULATION"
 }

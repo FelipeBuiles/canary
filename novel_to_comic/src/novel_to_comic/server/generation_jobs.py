@@ -70,20 +70,32 @@ def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout
 
 
 # Complete-page providers whose pages may render in parallel for one account.
-# Each call is one independent paid submission; provider rate limits answer
-# with 429s, which are retried before anything is generated.
+# API pages use twelve slots; subscription pages have a separate smaller pool.
 PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal", "vertex-multimodal"})
 PARALLEL_PAGES_PER_ACCOUNT = 12
 
 
-def is_parallel_page_draw(job: GenerationJob) -> bool:
+def parallel_page_limit(job: GenerationJob) -> int:
     """Use the frozen request, not mutable project settings, as routing authority."""
-    return bool(
-        job.kind == "complete_page_draw"
-        and job.command is not None
-        and job.command.operation == "page_draw"
-        and job.command.arguments.get("request", {}).get("provider") in PARALLEL_PAGE_PROVIDERS
-    )
+    if job.kind != "complete_page_draw" or job.command is None or job.command.operation != "page_draw":
+        return 0
+    request = job.command.arguments.get("request", {})
+    if request.get("provider") == "codex-dev":
+        # Corrections depend on an existing render and keep the exclusive lane.
+        if request.get("correction") is not None or job.command.arguments.get("edit_source"):
+            return 0
+        from novel_to_comic.ai.codex_runtime import IMAGE_PARALLEL_CALLS
+
+        return IMAGE_PARALLEL_CALLS
+    return PARALLEL_PAGES_PER_ACCOUNT if request.get("provider") in PARALLEL_PAGE_PROVIDERS else 0
+
+
+def is_parallel_page_draw(job: GenerationJob) -> bool:
+    return parallel_page_limit(job) > 0
+
+
+def _page_pool(job: GenerationJob) -> str:
+    return "codex-page" if job.command.arguments["request"]["provider"] == "codex-dev" else "page"
 
 
 # Text-only work with no image spend. It gets its own per-account lane so
@@ -104,8 +116,8 @@ def is_light_job(job: GenerationJob) -> bool:
 
 
 def account_lane_key(job: GenerationJob) -> str:
-    if is_parallel_page_draw(job):
-        return f"page:{job.sequence % PARALLEL_PAGES_PER_ACCOUNT}"
+    if limit := parallel_page_limit(job):
+        return f"{_page_pool(job)}:{job.sequence % limit}"
     return "light" if is_light_job(job) else "exclusive"
 
 
@@ -116,10 +128,11 @@ class _AccountLane:
         self.condition = asyncio.Condition()
         self.waiters: deque[tuple[object, bool]] = deque()
         self.parallel = 0
+        self.pools: dict[str, int] = {}
         self.exclusive = False
 
     @asynccontextmanager
-    async def enter(self, parallel: bool):
+    async def enter(self, parallel: bool, *, pool: str = "page", limit: int = PARALLEL_PAGES_PER_ACCOUNT):
         token = object()
         admitted = False
         async with self.condition:
@@ -131,13 +144,15 @@ class _AccountLane:
                     earlier_exclusive = any(not sibling_parallel for _, sibling_parallel in ahead[:position])
                     if parallel:
                         admitted = (not self.exclusive and not earlier_exclusive
-                                    and self.parallel < PARALLEL_PAGES_PER_ACCOUNT)
+                                    and self.parallel < PARALLEL_PAGES_PER_ACCOUNT
+                                    and self.pools.get(pool, 0) < limit)
                     else:
                         admitted = position == 0 and not self.exclusive and self.parallel == 0
                     if admitted:
                         self.waiters.remove((token, parallel))
                         if parallel:
                             self.parallel += 1
+                            self.pools[pool] = self.pools.get(pool, 0) + 1
                         else:
                             self.exclusive = True
                         break
@@ -152,6 +167,7 @@ class _AccountLane:
             async with self.condition:
                 if parallel:
                     self.parallel -= 1
+                    self.pools[pool] -= 1
                 else:
                     self.exclusive = False
                 self.condition.notify_all()
@@ -447,7 +463,10 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
         async with AsyncExitStack() as stack:
             if job.user_id:
                 lane = _account_lane(app, job.user_id, light=is_light_job(job))
-                await stack.enter_async_context(lane.enter(is_parallel_page_draw(job)))
+                limit = parallel_page_limit(job)
+                await stack.enter_async_context(lane.enter(
+                    bool(limit), pool=_page_pool(job) if limit else "page", limit=limit,
+                ))
             for semaphore in semaphores:
                 await stack.enter_async_context(semaphore)
             if not await _start_when_open(app, job):

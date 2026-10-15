@@ -120,6 +120,57 @@ def normalize_ocr_punctuation(text: str) -> str:
     return normalize_display_text(text)
 
 
+def _evidence_list(evidence, prefix: str) -> list[str]:
+    for line in evidence:
+        if line.startswith(prefix):
+            try:
+                values = json.loads(line[len(prefix):])
+            except ValueError:
+                return []
+            return [value for value in values if isinstance(value, str)]
+    return []
+
+
+def _quoted(texts) -> str:
+    return "; ".join(json.dumps(text, ensure_ascii=False) for text in texts)
+
+
+def lettering_correction_instruction(code: str, evidence) -> str:
+    """The edit an image model can act on for one lettering check result.
+
+    Issues seed correction drafts verbatim, so this is a direction for the
+    artwork, never a note to the author: whether the checker misread the page
+    is shown by the issue's evidence and title, and the author decides whether
+    to request the edit at all.
+    """
+    if code == "unexpected_generated_lettering":
+        observed = next((line.split(": ", 1)[1] for line in evidence
+                         if line.startswith("Blind base-art observation: ")), "")
+        return ("Remove the comic lettering drawn in the marked region"
+                + (f" ({json.dumps(observed, ensure_ascii=False)})" if observed else "")
+                + " and paint continuous scene artwork there. Add no balloons, captions or text.")
+    expected = Counter(_evidence_list(evidence, "expected_text="))
+    observed = Counter(_evidence_list(evidence, "recognized_text="))
+    missing = sorted((expected - observed).elements())
+    surplus = sorted((observed - expected).elements())
+    keep = " Keep all other lettering and artwork unchanged."
+    if code == "misspelled_lettering" and missing:
+        return (f"Correct the comic lettering so it reads exactly: {_quoted(missing)}."
+                + (f" The page currently shows {_quoted(surplus)} instead." if surplus else "") + keep)
+    if code == "missing_lettering" and missing:
+        return f"Add this missing comic lettering in its assigned panel, worded exactly: {_quoted(missing)}." + keep
+    if code == "duplicated_lettering":
+        duplicated = sorted(text for text, count in observed.items() if text in expected and count > expected[text])
+        if duplicated:
+            return f"Letter each of these only once, in its assigned panel: {_quoted(duplicated)}." + keep
+    if code == "invented_lettering" and surplus:
+        return f"Remove comic lettering that is not in the script: {_quoted(surplus)}." + keep
+    if code == "reordered_lettering":
+        return ("Arrange the balloons and captions so they read in the script's order, keeping each "
+                "string's exact wording." + keep)
+    return "Render every comic lettering string exactly once, with the exact wording." + keep
+
+
 def _canonical_lettering(page: ComicPage):
     by_id = {
         lettering.id: lettering
@@ -664,23 +715,18 @@ def record_analysis_issues(
             page_number=analysis.page_number,
             render_revision=analysis.render_revision,
             evidence=result.evidence,
-            requested_correction=(
-                "Inspect this detected region on the base art. It may contain unwanted generated lettering; "
-                "dismiss a false positive or correct the artwork explicitly. Software lettering edits do not remove raster text."
-                if result.code == "unexpected_generated_lettering" else
-                "Possible text difference. Compare the saved artwork with the script; "
-                "the checker may have misread it. Redraw only if the artwork needs a correction."
-            ),
+            requested_correction=lettering_correction_instruction(result.code, result.evidence),
             lettering_item_ids=() if result.code == "unexpected_generated_lettering" else (lettering_item_ids or result.artifact_ids),
             detected_region_ids=result.artifact_ids if result.code == "unexpected_generated_lettering" else (),
             status="open",
         )
         existing = next((item for item in prior if item.id == issue.id), None)
         if existing is not None:
-            if existing.evidence != issue.evidence:
+            if (existing.evidence, existing.requested_correction) != (issue.evidence, issue.requested_correction):
                 # Refresh machine evidence after an opt-in local check without
                 # resetting the author's dismissal or resolution decision.
-                prior = tuple(item.model_copy(update={"evidence": issue.evidence})
+                prior = tuple(item.model_copy(update={"evidence": issue.evidence,
+                                                      "requested_correction": issue.requested_correction})
                               if item.id == issue.id else item for item in prior)
                 artifacts.write_issues(analysis.page_number, prior)
             continue
@@ -1003,7 +1049,7 @@ def ensure_correction_issues(
             render_revision=correction.parent_render_revision,
             evidence=(
                 change.instruction,
-                *(annotation.note for annotation in change.annotations),
+                *(annotation.note for annotation in change.annotations if annotation.note.strip()),
             ),
             requested_correction=change.instruction,
             status="open",

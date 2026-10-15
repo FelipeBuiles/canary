@@ -56,7 +56,7 @@ def test_classification_allows_mixed_jobs_without_weakening_local_gate(monkeypat
     )
     assert routes.classify_operations(()) == "api"
     assert routes.classify_operations((("text", "gpt-5.6-terra"),)) == "codex_subscription"
-    codex_page = ("complete_page", "codex-dev/image/gpt-5.5")
+    codex_page = ("complete_page", "codex-dev/image/gpt-6.1-sol")
     assert routes.classify_operations((codex_page,)) == "codex_subscription"
     for operations in (
         (("text", "gpt-5.6-terra"), ("text", "deepseek-v4.1-flash")),

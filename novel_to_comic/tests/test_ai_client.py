@@ -2411,18 +2411,25 @@ def test_argon_structured_stage_uses_json_mode_native_thinking_and_local_json_pa
     assert sent["max_completion_tokens"] == 32_768
 
 
-def test_argon_rejects_images_before_provider_submission(monkeypatch):
-    async def forbidden(*args, **kwargs):
-        pytest.fail("Unverified vision must not submit a request")
-
-    monkeypatch.setattr(client, "_post_with_retry", forbidden)
-    with pytest.raises(ValueError, match="Vision is not enabled"):
-        asyncio.run(client._chat_completion_once(
-            config=Config(), model="gemini-4-argon", system_prompt="Read this image.",
-            user_content="Image", temperature=0.2, max_output_tokens=128,
-            feature="draw.page_ocr", json_mode=False,
-            image_attachments=((b"image", "image/png"),),
-        ))
+def test_argon_sends_page_images_with_native_thinking(monkeypatch):
+    # Gateway image input verified 2026-10-13, so lettering checks and visual
+    # review can run on Argon.
+    _patch_http(monkeypatch, {
+        "model": "gemini-4-argon",
+        "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1213, "completion_tokens": 43},
+    })
+    asyncio.run(client._chat_completion_once(
+        config=Config(), model="gemini-4-argon", system_prompt="Read this image.",
+        user_content="Image", temperature=0.2, max_output_tokens=128,
+        feature="draw.page_ocr", json_mode=False,
+        image_attachments=((b"image", "image/png"),),
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    content = sent["messages"][1]["content"]
+    assert content[0] == {"type": "text", "text": "Image"}
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert sent["thinkingConfig"]["includeThoughts"] is True
 
 
 @pytest.mark.parametrize("model", ["gemini-4-argon", "gemini-3.8-flash", "gpt-6.1-sol", "claude-opus-5-5"])

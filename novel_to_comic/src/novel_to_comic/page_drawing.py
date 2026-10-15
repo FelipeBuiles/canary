@@ -66,6 +66,7 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.style_contract import page_style_template, page_art_style_template, POST_LETTERING_MARKER, DESIGN_MARKER
 from novel_to_comic.reference_sheets import MAX_MEMBERS_PER_SHEET, pack_page_references
+from novel_to_comic.lettering.room import framing_notes
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_BLOCK
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
@@ -75,25 +76,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-# Cast sheets and plates are design records whose rendering can drift from
-# the proof; the proof must win on rendering while supplying no content.
-SELECTED_STYLE_PROOF_AUTHORITY = (
-    "Rendering authority for every panel: draw all people, rooms and objects in this "
-    "proof's medium, palette, value range, line weight, edge treatment, shadow depth, "
-    "facial abstraction, character proportion system and degree of simplification. "
-    "Subject and location assets are design records whose own rendering may differ: take "
-    "only identity and design from them (silhouette, hairstyle, recognizable features, "
-    "costume, recurring object and room features) and redraw them in this proof's rendering "
-    "language. Where an asset's shading, modeling, line or texture differs from this proof, "
-    "this proof wins. Take no identities, hairstyles, costumes, rooms, poses, gaze, "
-    "expressions, camera angles, composition, panels, text or lettering from the proof. "
-    "Plan owns staging and acting; the selected written standards own page framing and "
-    "lettering. Preserve authored material marks without amplifying incidental texture. "
-    "For corrections preserve untouched artwork; this reference does not authorize "
-    "restyling outside the requested scope."
-)
-
 
 @dataclass(frozen=True, slots=True)
 class ApprovedReferenceFile:
@@ -576,9 +558,6 @@ def _edit_image_numbers(payload: dict) -> dict[str, int]:
     are bound to their actual upload order, which follows asset order.
     """
     handles = dict.fromkeys(ref["image"] for ref in payload["approved_page_references"])
-    style = payload.get("selected_style_proof")
-    if style is not None:
-        handles[style["image"]] = None
     return {
         handle: index
         for index, handle in enumerate(sorted(handles, key=lambda handle: (len(handle), handle)), start=2)
@@ -616,7 +595,9 @@ def _edit_prompt(
     summaries = []
     for index, change in enumerate(edit["changes"], 1):
         instruction = change["instruction"].strip()
-        summaries.append(instruction.split("\n\n", 1)[0].strip())
+        # The whole request: a seeded issue line may be followed by the
+        # author's own wording, which the final check must not drop.
+        summaries.append(" ".join(instruction.split()))
         lines.append(f"{index}. {instruction}")
         for mark in change.get("annotations", ()):
             points = [(point["x"], point["y"]) for point in mark["points"]]
@@ -642,14 +623,10 @@ def _edit_prompt(
         RENDERING_FIDELITY_BLOCK,
         "",
         "CONSTRAINTS (keep these while editing):",
-        "- Images 2 onward are the style proof and approved reference sheets listed below. Reference "
+        "- Images 2 onward are the approved reference sheets listed below. Reference "
         "sheets give identity, costume and design only. Never copy their pose, facial expression, "
         "background or layout, and never draw them as extra panels.",
     ]
-    style = payload.get("selected_style_proof")
-    if style is not None:
-        lines.append(f"- Image {numbers[style['image']]} ({style['image']}) = style proof, rendering reference "
-                     f"only: {style['authority']}")
     known = {"image", "subject", "appearance", "identity", "visual_anchor", "continuity_guard", "art_direction"}
     for reference in payload["approved_page_references"]:
         detail = (f"- Image {numbers[reference['image']]} ({reference['image']}) = "
@@ -698,8 +675,10 @@ def _edit_prompt(
     if exact_visible_lettering:
         lettering = payload["exact_lettering"]["panels"]
         if any(panel["lettering"] for panel in lettering):
-            lines.append("- Lettering: keep Image 1's existing lettering and typesetting. Each string appears exactly "
-                         "once, in its panel, with this exact wording:")
+            # Requested typesetting fixes (a tail, a typo) are allowed; the
+            # canonical list below stays the authority for wording and panel.
+            lines.append("- Lettering: apart from the requested changes, keep Image 1's lettering and typesetting. "
+                         "Each string must appear exactly once, in its assigned panel, with this exact wording:")
             lines += [
                 f"  * Panel {panel['panel']} {item['kind']}"
                 + (f" ({item['speaker']})" if item.get("speaker") else "")
@@ -737,7 +716,6 @@ def _compile_prompt(
     cast_art_direction: Mapping[str, str] | None = None,
     exact_visible_lettering: bool = True,
     reference_bindings: Mapping[str, dict] | None = None,
-    style_reference: PageReference | None = None,
     text_authorities: tuple[ApprovedVisualReference, ...] = (),
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
@@ -815,14 +793,13 @@ def _compile_prompt(
             "All asset and subject handles are off-canvas bindings, not illustration callouts. "
             "Each asset label binds the immediately preceding supplied image. The separately "
             "labeled parent-edit-base, when present, is not an approved asset and does not "
-            "advance asset ordering. The selected_style_proof owns how everything is drawn "
-            "and supplies no subjects, rooms, props, staging or story events. "
-            "Do not borrow rooms, background props, staging or story events from style proofs "
-            "or character/prop reference backgrounds. The panel setting controls the environment. "
+            "advance asset ordering. "
+            "Do not borrow rooms, background props, staging or story events from "
+            "character/prop reference backgrounds. The panel setting controls the environment. "
             "Use each subject asset only for its assigned subject and state; "
             "preserve hairstyle, age, recognizable facial features, clothing design and recurring "
             "object features shown by that authority unless the assigned state explicitly changes "
-            "them, redrawn in the selected_style_proof's rendering language. "
+            "them. "
             "A subject's identity line states canonical gender, age and any unusual stature: "
             "keep that gender and age legible in every panel, and keep a stated stature at its "
             "true scale beside other figures, furniture and doorways in every panel, seated or "
@@ -944,16 +921,6 @@ def _compile_prompt(
             "authority; take acting and staging from the panel. During corrections preserve "
             "their existing identity in the parent artwork unless the author changes it."
         )
-    if style_reference is not None:
-        # Rendering authority precedes the subject bindings it restyles.
-        payload = {
-            "reference_scope": payload.pop("reference_scope"),
-            "selected_style_proof": {
-                "image": _off_canvas_handle("asset", style_reference.order),
-                "authority": style_reference.visual_anchor,
-            },
-            **payload,
-        }
     if not exact_visible_lettering and page.lettering_reservations is None:
         raise ValueError("This Plan predates lettering reservations. Rerun Plan before drawing a hybrid edition.")
     if correction is not None:
@@ -1055,26 +1022,29 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         "LETTERING POLICY: Final dialogue, thoughts, narration, captions and sound effects are added "
         "after illustration by Canary. Draw NO speech or thought balloons, caption/narration boxes, "
         "SFX glyphs, subtitles, words, placeholder text, lorem ipsum or pseudo-writing for these elements. "
-        "Draw continuous scene artwork throughout every panel. Do not reserve space for lettering "
-        "or draw blank boxes, empty balloons, parchment patches, placeholder areas or tail corridors, "
-        "even if layout notes or reference images suggest them. "
+        "Draw continuous scene artwork throughout every panel. Never draw blank boxes, empty balloons, "
+        "parchment patches, placeholder areas or tail corridors, even if layout notes or reference "
+        "images suggest them. "
         "Legitimate in-world signage is distinct; never substitute it for publishable copy.\n"
         "AUTHORITY: preserve approved subject/state references, physical anchors and continuity guards "
         "verbatim in meaning, current staging, selected art direction, page framing and author pins. "
         "Realize the planned panel proportions, grouping and reading order within the selected style; "
         "do not add unplanned overlaps, insets or extra panels. Compose each scene naturally within its panel. "
-        "Style proof images are RENDERING/STYLE authority only: do not copy their words, balloons, "
-        "captions or page content. Subject and location assets own identity, state, architecture "
-        "and material identity; they do not prescribe an additional surface-texture layer. "
-        "The selected style proof and art direction own rendering: where an asset's shading, "
-        "modeling, line or texture differs from the proof, redraw it in the proof's rendering "
-        "language. Preserve authored markings and deliberate "
+        "Subject and location assets own identity, state, architecture and material identity "
+        "and were drawn in the selected style; they do not prescribe an additional "
+        "surface-texture layer. "
+        "Preserve authored markings and deliberate "
         "medium texture, but do not transfer incidental paper stains or mottling onto skin, "
         "clothing, sky and other unrelated materials. Reconstruct new surfaces with coherent "
         "tonal areas and material-specific marks.\n"
     )
     if depiction == "less_graphic":
         policy += "Use framing, shadow, reaction or aftermath for graphic details; preserve identity, story and references.\n"
+    if notes := framing_notes(page):
+        # Lettering lands on the finished art: leave it scene to sit on, not gaps.
+        policy += "FRAMING (continuous scene artwork, never empty areas):\n" + "".join(
+            f"- {note}\n" for note in notes
+        )
     return policy + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + (
         "\nOUTPUT: one complete page of continuous scene artwork. NO generated comic lettering."
     )
@@ -1091,7 +1061,6 @@ def compile_page_generation_request(
     edit_source_bytes: bytes | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
-    style_reference_path: Path | None = None,
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
@@ -1126,10 +1095,8 @@ def compile_page_generation_request(
     max_references = selected_edition.capability_profile.max_image_references
     if correction is not None and _edit_source_counts_as_reference(selected_edition.capability_profile):
         max_references -= 1  # The parent is an input image, never an authority replacement.
-    if style_reference_path is not None:
-        max_references -= 1  # Keep the proof separate from subject transport sheets.
     if max_references < 0:
-        raise ValueError("This edition has no image capacity for the selected Style proof and edit parent")
+        raise ValueError("This edition has no image capacity for the edit parent")
     sheet_capacity = max_references * MAX_MEMBERS_PER_SHEET if selected_edition.capability_profile.provider == "codex-dev" else max_references
     if len(authorities) > sheet_capacity:
         raise ValueError(
@@ -1139,12 +1106,9 @@ def compile_page_generation_request(
             "the book's page composition. Identity references will not be silently dropped."
         )
     uploaded_authorities = authorities
-    # The selected proof uploads first: it is the rendering authority every
-    # subject and plate is redrawn in, so it leads the reference images.
-    first_subject_order = 1 if style_reference_path is None else 2
     references: list[PageReference] = []
     loaded: list[bytes] = []
-    for order, authority in enumerate(uploaded_authorities, start=first_subject_order):
+    for order, authority in enumerate(uploaded_authorities, start=1):
         source = reference_files.get(authority.id)
         if source is None or source.reference_id != authority.id:
             raise ValueError(
@@ -1185,25 +1149,8 @@ def compile_page_generation_request(
             if isinstance(direction, str) and direction.strip():
                 cast_art_direction[reference.id] = direction
     uploaded_references, uploaded_bytes, reference_bindings = pack_page_references(
-        references, loaded, max_references, first_order=first_subject_order,
+        references, loaded, max_references,
     ) if selected_edition.capability_profile.provider == "codex-dev" else (tuple(references), tuple(loaded), {})
-    style_reference = None
-    if style_reference_path is not None:
-        try:
-            style_bytes = style_reference_path.read_bytes()
-        except OSError as exc:
-            raise ValueError("Selected Style proof is unreadable. Rerun Style before Draw.") from exc
-        if not style_bytes:
-            raise ValueError("Selected Style proof is empty. Rerun Style before Draw.")
-        style_reference = PageReference(
-            id="selected-style-proof", entity_id=None,
-            order=1, media_type="image/png",
-            content_sha256=hashlib.sha256(style_bytes).hexdigest(),
-            label="Selected Style proof",
-            visual_anchor=SELECTED_STYLE_PROOF_AUTHORITY,
-        )
-        uploaded_references = (style_reference, *uploaded_references)
-        uploaded_bytes = (style_bytes, *uploaded_bytes)
     profile = selected_edition.capability_profile
     prompt_context = correction_context
     if correction is not None and correction_context is not None:
@@ -1234,7 +1181,6 @@ def compile_page_generation_request(
         cast_art_direction,
         exact_visible_lettering=profile.exact_visible_lettering,
         reference_bindings=reference_bindings,
-        style_reference=style_reference,
         text_authorities=text_authorities,
     )
     if reference_bindings:
@@ -1293,7 +1239,6 @@ def prepare_page_correction(
     context_source_unit_ids: tuple[str, ...] = (),
     artifacts: TargetArtifacts,
     style_template: str = "",
-    style_reference_path: Path | None = None,
 ) -> PreparedPageCorrection:
     """Validate and compile one explicit correction set, without spending.
 
@@ -1333,7 +1278,6 @@ def prepare_page_correction(
         correction_context=context,
         edit_source_bytes=artifacts.read_render(page.page_number, parent.revision),
         style_template=style_template,
-        style_reference_path=style_reference_path,
         depiction=correction.depiction,
     )
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)

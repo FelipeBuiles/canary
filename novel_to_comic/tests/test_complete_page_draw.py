@@ -483,13 +483,12 @@ def test_selecting_nano_banana_compiles_a_native_page_and_advances_only_new_work
         request_page_profile(config, old_request)
 
 
-@pytest.mark.parametrize("authority_count,edit,style,allowed", [
-    (14, False, False, True), (15, False, False, False),
-    (13, True, False, True), (14, True, False, False),
-    (12, True, True, True), (13, True, True, False),
+@pytest.mark.parametrize("authority_count,edit,allowed", [
+    (14, False, True), (15, False, False),
+    (13, True, True), (14, True, False),
 ])
-def test_nano_banana_counts_edit_parent_and_style_proof_in_14_input_limit(
-    tmp_path: Path, authority_count: int, edit: bool, style: bool, allowed: bool,
+def test_nano_banana_counts_edit_parent_in_14_input_limit(
+    tmp_path: Path, authority_count: int, edit: bool, allowed: bool,
 ) -> None:
     from novel_to_comic.page_drawing import complete_page_adapter
 
@@ -515,11 +514,8 @@ def test_nano_banana_counts_edit_parent_and_style_proof_in_14_input_limit(
         parent_render_revision=1, parent_render_image_sha256=hashlib.sha256(b"parent").hexdigest(),
         mode="instructed", instruction="Correct the hand.",
     ) if edit else None
-    style_path = tmp_path / "style.png" if style else None
-    if style_path:
-        style_path.write_bytes(b"style proof")
     options = {"retry": RetryProvenance(attempt=1), "correction": correction,
-               "edit_source_bytes": b"parent" if edit else None, "style_reference_path": style_path}
+               "edit_source_bytes": b"parent" if edit else None}
     if not allowed:
         with pytest.raises(ValueError, match="Identity references will not be silently dropped"):
             compile_page_generation_request(page, _edition(profile), inventory, files, **options)
@@ -1403,7 +1399,8 @@ def test_visual_review_uses_exact_references_and_reuses_saved_result(tmp_path):
     ))
     generate = AsyncMock(return_value=ApiResult(value={
         'findings': [{'category': 'prop', 'panel_number': 1, 'observation': 'The idol has two horns.',
-                      'expected': 'The reference has one horn.', 'correction': 'Restore the single horn.'}],
+                      'expected': 'The reference has one horn.', 'correction': 'Restore the single horn.',
+                      'impact': 'breaks_continuity', 'reader_impact': 'The idol visibly changes design.'}],
         'uncertain': ['The rear of the idol is occluded.'],
     }))
     kwargs = dict(config=Config(), page=_page(), render=provenance.render,
@@ -1418,6 +1415,10 @@ def test_visual_review_uses_exact_references_and_reuses_saved_result(tmp_path):
     assert len(artifacts.read_issues(_page().page_number)) == 1
     assert artifacts.read_issues(_page().page_number)[0].classification == 'editorial_issue'
     assert artifacts.read_issues(_page().page_number)[0].status == 'open'
+    assert artifacts.read_issues(_page().page_number)[0].evidence[-1] == (
+        'Reader impact: The idol visibly changes design.'
+    )
+    assert report.value.findings[0].impact == 'breaks_continuity'
 
 
 def test_final_page_prompt_preserves_geometry_reading_order_and_state_guard(tmp_path):
@@ -1722,6 +1723,56 @@ def test_region_only_correction_changes_native_content_without_shifting_referenc
     assert provider_contents[0][-1] != provider_contents[1][-1]
 
 
+@pytest.mark.parametrize("lettered", [True, False])
+def test_visual_review_checks_binding_authority_not_plan_staging(tmp_path, lettered):
+    """Facing, gaze, gesture, camera and unpinned layout guide Draw; they never bind review."""
+    from novel_to_comic.models.page import CharacterActing, PanelCamera, PinnedGeometry
+    from novel_to_comic.page_visual_review import review_specification, visual_review_prompt
+
+    base = _page(visual_intent="ward raises the idol toward the window at night.")
+    content = base.content[0].model_copy(update={
+        "lettering": (
+            *base.content[0].lettering,
+            LetteringItem(id="letter-2", kind="dialogue", text="It moved.", speaker="Ward",
+                          speaker_entity_id="ward", delivery="onscreen", source_unit_ids=["source-1"]),
+        ),
+        "camera": PanelCamera(shot="medium_close_up", angle="low_angle"),
+        "acting": (CharacterActing(entity_id="ward", facing="three_quarter_left", gaze="idol",
+                                   expression="dread", gesture="clutching the idol"),),
+        "pinned_geometry": PinnedGeometry(x=0, y=0, width=1, height=0.5),
+    })
+    page = with_reservations(base.model_copy(update={"content": (content,), "reading_order": (
+        "content-1", "letter-1", "letter-2")}))
+    compiled = compile_page_generation_request(
+        page, _edition(current_page_capability_profile(Config(
+            draw_model="image-nano-banana-2.1", lettering_mode="integrated" if lettered else "editable",
+        ))), _inventory(), _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+    )
+    prompt = visual_review_prompt(page=page, compiled=compiled)
+    spec = _provider_brief(prompt)["review_specification"]
+    assert spec == review_specification(page=page, compiled=compiled)
+    for soft in ("three quarter left", "three_quarter_left", "clutching the idol", "dread",
+                 "low angle", "medium close up", "Three semantic moments", "held reveal"):
+        assert soft not in prompt.split("\n\n")[-1]
+    images = {ref["image"]: ref for ref in spec["reference_images"]}
+    assert images[2]["visual_anchor"] == "Ward’s torn left sleeve; blood below the right eye"
+    assert images[3]["visual_anchor"] == "green-black stone; exact seven-pointed crown"
+    panel = spec["panels"][0]
+    assert panel["subjects_planned"] == [{"subject": images[2]["subject"], "reference_image": 2},
+                                         {"subject": images[3]["subject"], "reference_image": 3}]
+    assert panel["author_pinned_geometry"] == {"x": 0, "y": 0, "width": 1, "height": 0.5}
+    assert spec["page_is_lettered"] is lettered
+    if lettered:
+        assert images[2]["subject"] == "Ward"
+        assert panel["story_beat"] == "Ward raises the idol toward the window at night."
+        assert panel["lettering"][1] == {"text": "It moved.", "kind": "dialogue",
+                                         "delivery": "onscreen", "speaker": "Ward"}
+    else:
+        assert "lettering" not in panel
+        assert "It moved." not in prompt
+
+
 def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(tmp_path):
     from novel_to_comic.page_visual_review import visual_review_input_digest, visual_review_prompt
 
@@ -1736,10 +1787,12 @@ def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(t
         producing, adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page,
     ))
-    prompt = visual_review_prompt(compiled=current, producing_request=producing.request)
+    prompt = visual_review_prompt(page=page, compiled=current, producing_request=producing.request)
     data = _provider_brief(prompt)
-    assert data["producing_specification"] == producing.request.prompt
-    assert data["generation_specification"] == current.request.prompt
+    assert data["depiction"] == "less_graphic"
+    assert data["author_requests"] == []
+    assert "generation_specification" not in data
+    assert visual_review_prompt(page=page, compiled=current) != prompt
     args = dict(
         config=Config(), page=page, render=rendered.render,
         image=_provider_result().image_bytes, compiled=current,
@@ -1797,10 +1850,11 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
         page, edition, inventory, {}, retry=RetryProvenance(attempt=1),
     )
     brief = _provider_brief(visual_review_prompt(
-        compiled=current, producing_request=prepared.compiled.request,
+        page=page, compiled=current, producing_request=prepared.compiled.request,
     ))
-    assert brief["producing_specification"] == prepared.compiled.request.prompt
-    assert brief["generation_specification"] == current.request.prompt
+    assert brief["depiction"] == "less_graphic"
+    assert "Keep the door edge readable." in brief["author_requests"]
+    assert not any(request.startswith("PAGE CANVAS: ") for request in brief["author_requests"])
     assert corrected.render.parent_revision == original.render.revision
     assert following.compiled.reference_bytes == ()
 
@@ -1910,7 +1964,7 @@ def test_panel_reference_bindings_follow_packed_images(tmp_path, exact_visible_l
                 authority = authorities[(subject["subject"], ref["appearance"])]
                 assert ref["image"] == authority["image"]
                 assert ref.get("region_pixels") == authority.get("region_pixels")
-                assert ref.get("source_image_sha256") == authority.get("source_image_sha256")
+                assert "source_image_sha256" not in ref and "source_image_sha256" not in authority
 
 
 def test_editable_art_prompt_omits_placement_hints_and_copy_placeholders(tmp_path):
@@ -1930,9 +1984,41 @@ def test_editable_art_prompt_omits_placement_hints_and_copy_placeholders(tmp_pat
     assert "It was the same face." not in request.prompt
     assert "[story copy omitted]" in request.prompt
     assert "Draw continuous scene artwork throughout every panel" in request.prompt
-    assert "Do not reserve space for lettering" in request.prompt
-    assert "blank boxes, empty balloons" in request.prompt
+    assert "Never draw blank boxes, empty balloons" in request.prompt
     assert page.model_dump_json() == before
+
+
+def _wordy_close_up(words: int) -> ComicPage:
+    from novel_to_comic.models.page import PanelCamera
+
+    page = _page()
+    content = page.content[0]
+    item = content.lettering[0].model_copy(update={"text": " ".join(["word"] * words)})
+    content = content.model_copy(update={
+        "lettering": [item], "camera": PanelCamera(shot="close_up", angle="eye_level"),
+    })
+    return page.model_copy(update={"content": [content]})
+
+
+def test_editable_art_opens_wordy_close_ups_and_keeps_headroom(tmp_path):
+    def prompt(page, profile=None):
+        return compile_page_generation_request(
+            page, _edition(profile), _inventory(), _reference_files(tmp_path),
+            retry=RetryProvenance(attempt=1),
+        ).request.prompt
+
+    wordy = prompt(_wordy_close_up(40))
+    assert "FRAMING (continuous scene artwork, never empty areas)" in wordy
+    assert "Panel 1: frame as a MEDIUM shot or wider" in wordy
+    light = prompt(_wordy_close_up(8))
+    assert "Panel 1: keep faces, hands and key props out of the top quarter" in light
+    assert "MEDIUM shot" not in light
+    # Integrated editions paint their copy and keep Plan's framing untouched.
+    from novel_to_comic.page_drawing import _integrated_page_profile
+
+    integrated = prompt(_wordy_close_up(40), _integrated_page_profile(fal_sunburst_page_capability_profile()))
+    assert "FRAMING (" not in integrated
+    assert "MEDIUM shot or wider" not in integrated
 
 
 def _bare_request():

@@ -1,0 +1,148 @@
+{
+  "summary": {
+    "pages": 2,
+    "old_findings": 10,
+    "new_findings": 3,
+    "valid_kept": "3/3",
+    "noise_kept": "0/7",
+    "new_unmatched_for_human_review": 0
+  },
+  "results": [
+    {
+      "part": "part_0001",
+      "page": 1,
+      "render": 1,
+      "model": "gemini-4-argon",
+      "old": [
+        {
+          "issue_id": "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-1",
+          "panel": 1,
+          "category": "composition",
+          "observation": "Mrs. White (subject-D) is facing three-quarter right and gazing right toward Mr. White.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-2",
+          "panel": 2,
+          "category": "scene",
+          "observation": "The window on the left behind Mr. White has open blinds showing bright yellow-orange daylight and tree branches outside, while a second set of blue blinds appears on the right.",
+          "label": "valid",
+          "kept_by": [
+            1
+          ]
+        },
+        {
+          "issue_id": "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-3",
+          "panel": 2,
+          "category": "composition",
+          "observation": "Herbert White (subject-A) is completely absent from the panel.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-4",
+          "panel": 4,
+          "category": "composition",
+          "observation": "The page uses a four-tier layout where Panel 4 is a single full-width horizontal panel across the third row.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-5",
+          "panel": 5,
+          "category": "composition",
+          "observation": "Panel 5 is a full-width horizontal panel across the bottom fourth tier, and Mr. White gestures with his right hand toward the viewer/left rather than throwing a hand out toward the window.",
+          "label": "noise",
+          "kept_by": []
+        }
+      ],
+      "new": [
+        {
+          "category": "scene",
+          "panel_number": 2,
+          "observation": "Bright yellow daylight shines through the window blinds on the left behind Mr. White.",
+          "expected": "The scene takes place on a cold, dark night with the blinds drawn, as established in Panel 1.",
+          "correction": "Darken the window behind Mr. White to match the nighttime setting shown in Panel 1.",
+          "issue_id": null,
+          "impact": "noticeable_flaw",
+          "reader_impact": "An attentive reader will notice bright daylight shining through the window despite the narration establishing it is night."
+        }
+      ]
+    },
+    {
+      "part": "part_0001",
+      "page": 2,
+      "render": 1,
+      "model": "gemini-4-argon",
+      "old": [
+        {
+          "issue_id": "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-1",
+          "panel": 1,
+          "category": "appearance",
+          "observation": "Mrs. White is missing her yellow-gold fringed shawl over her purple dress.",
+          "label": "valid",
+          "kept_by": [
+            2
+          ]
+        },
+        {
+          "issue_id": "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-2",
+          "panel": 1,
+          "category": "composition",
+          "observation": "Mrs. White faces three-quarter right and Mr. White faces three-quarter left, with his left hand resting on his cheek rather than rubbing the back of his neck.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-3",
+          "panel": 3,
+          "category": "composition",
+          "observation": "The dialogue balloons are in the wrong reading order: Mr. White's 'Sergeant-Major Morris.' is placed on the top left, and Mrs. White's 'Tut, tut!' is on the right.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-4",
+          "panel": 4,
+          "category": "composition",
+          "observation": "Mr. White is positioned on the right facing three-quarter left, and Mrs. White is on the far right facing profile left.",
+          "label": "noise",
+          "kept_by": []
+        },
+        {
+          "issue_id": "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-5",
+          "panel": 5,
+          "category": "composition",
+          "observation": "The first dialogue balloon ('Twenty-one years of it. When he went away he was a slip of a youth in the warehouse.') has its tail pointing to Sergeant-Major Morris instead of Mr. White.",
+          "label": "valid",
+          "kept_by": [
+            1
+          ]
+        }
+      ],
+      "new": [
+        {
+          "category": "speaker",
+          "panel_number": 5,
+          "observation": "The balloon containing \"Twenty-one years of it. When he went away he was a slip of a youth in the warehouse.\" has a tail pointing to Sergeant-Major Morris instead of Mr. White.",
+          "expected": "The balloon tail for this line should point to Mr. White, who is the speaker.",
+          "correction": "Point the tail of the first speech balloon to Mr. White.",
+          "issue_id": null,
+          "impact": "misreads_story",
+          "reader_impact": "Readers will think Sergeant-Major Morris is speaking about himself in the third person rather than Mr. White introducing his guest's history."
+        },
+        {
+          "category": "appearance",
+          "panel_number": 1,
+          "observation": "Mrs. White is not wearing the yellow fringed shawl shown in her reference sheet and worn in panels 3, 4, and 5.",
+          "expected": "Mrs. White should consistently wear her yellow fringed shawl across all panels.",
+          "correction": "Add Mrs. White's yellow fringed shawl over her shoulders in panel 1.",
+          "issue_id": null,
+          "impact": "breaks_continuity",
+          "reader_impact": "Readers will notice Mrs. White's yellow shawl suddenly appearing in panel 3 when it was absent in panel 1."
+        }
+      ]
+    }
+  ]
+}

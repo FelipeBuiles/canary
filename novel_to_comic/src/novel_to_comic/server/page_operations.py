@@ -1,7 +1,6 @@
 """Application operations independent of HTTP routing."""
 
 from __future__ import annotations
-from novel_to_comic.style_reference import require_style_reference
 import asyncio
 from fastapi import Request
 from novel_to_comic.models.draw import RetryProvenance
@@ -236,9 +235,6 @@ def prepare_undrawn_pages(
             reference_files,
             retry=_generation_retry(target, page_number),
             style_template=config.style_template,
-            style_reference_path=require_style_reference(
-                project_dir, config.style_template
-            ),
         )
         adapter.prepare(compiled)
         prepared.append((page_number, page, compiled))

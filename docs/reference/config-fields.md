@@ -31,6 +31,7 @@ Production stage models are overlaid from operator settings when a job config is
 | `prompt_model` | `str` | `GATEWAY_LUNA` |  |
 | `page_ocr_model` | `str` | `GATEWAY_PAGE_OCR` |  |
 | `visual_review_model` | `str` | `GATEWAY_PAGE_OCR` |  |
+| `correction_model` | `str` | `CORRECTION_INTERPRETER_MODEL` |  |
 | `image_model` | `str` | `GATEWAY_IMAGE_SUNBURST` |  |
 | `draw_model` | `str` | `GATEWAY_IMAGE_SUNBURST` |  |
 | `target_language` | `Language` | `'en'` |  |

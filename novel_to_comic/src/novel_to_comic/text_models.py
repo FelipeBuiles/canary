@@ -75,8 +75,10 @@ TEXT_MODELS = (
     # Labs run 20261013-143611-7df22e: Low matched Medium on Extract through
     # Plan at lower cost, and Argon's reviews found real defects on a whole
     # 32-page book, so one window replaces three repetitions of the story.
+    # Gateway image input verified 2026-10-13 (one page render: panels and
+    # lettering read exactly), so Argon can run lettering checks and visual review.
     TextModel("gemini-4-argon", "Gemini 4 Argon", "Google Vertex AI", "vertex_ai",
-              temperature=False, vision=False, streaming=False, effort="low",
+              temperature=False, streaming=False, effort="low",
               native_vertex_thinking=True, schema_instructions=True,
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               review_window_pages=48, review_window_source_chars=120_000),
@@ -129,7 +131,7 @@ def is_gemini_model(model: str) -> bool:
     return wire.provider_key in {"vertex_ai", "gemini"} and wire.id.startswith("gemini-")
 
 
-TEXT_REASONING_STAGES = ("extract", "brief", "prompt", "adapt", "plan", "ocr", "visual_review")
+TEXT_REASONING_STAGES = ("extract", "brief", "prompt", "adapt", "plan", "ocr", "visual_review", "correction")
 # Stage defaults that differ from the operator's shared effort. Gemini 3.8
 # Flash at low matched medium on blinded Extract+Brief comparisons (2026-10-03)
 # at a third of the time; saved per-stage choices still win.
@@ -154,6 +156,8 @@ def reasoning_stage(feature: str) -> str | None:
         return "visual_review"
     if feature == "draw.page_ocr":
         return "ocr"
+    if feature == "draw.correction_interpret":
+        return "correction"
     owner = feature.split(".", 1)[0]
     if owner in {"style", "cast"}:
         return "prompt"

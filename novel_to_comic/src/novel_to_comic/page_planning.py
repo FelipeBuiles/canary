@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal
 
@@ -21,6 +22,7 @@ from novel_to_comic.generation_checkpoints import discard_checkpointed_response
 from novel_to_comic.ai.context import ai_source_context, execution_observer
 from novel_to_comic.ai.transport import text_transport_limits
 from novel_to_comic.book_adaptation import compound_appearance_change_failures
+from novel_to_comic.lettering.room import WIDE_FRAMING_WORDS
 from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
 from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
@@ -59,13 +61,12 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 _MAX_PLAN_ATTEMPTS = 3
 _TWO_PASS_PLAN_MIN_BEATS = 24
-_PLAN_DETAIL_BATCH_PAGES = 8
-# A transport with a hard per-request deadline and no parallelism (the local
-# Codex runtime: one call at a time, 15 minutes each) gains no throughput from
-# large batches, and observed 8-page batches ran 4-8.5 minutes, the largest
-# within 2x of the deadline. Half-size batches keep each call far from it,
-# checkpoint twice as often, and give progress twice the resolution.
-_DEADLINE_BOUND_DETAIL_BATCH_PAGES = 4
+# Detail latency is output-bound: on Gemini Argon an 8-page batch wrote ~25k
+# tokens in 4.5-5.5 minutes. Batches run in parallel, so 4-page batches halve
+# the wall clock for a little repeated input, and a serialized deadline-bound
+# transport (the local Codex runtime) keeps each call far from its 15-minute
+# limit, checkpoints twice as often, and gets finer progress.
+_PLAN_DETAIL_BATCH_PAGES = 4
 
 
 def _uses_two_pass_plan(adaptation: BookAdaptation, model: str) -> bool:
@@ -75,8 +76,6 @@ def _uses_two_pass_plan(adaptation: BookAdaptation, model: str) -> bool:
 def detail_batch_pages(model: str) -> int:
     """Pages per Plan detail request for the transport carrying ``model``."""
 
-    if text_transport_limits(model).call_deadline_seconds is not None:
-        return _DEADLINE_BOUND_DETAIL_BATCH_PAGES
     return _PLAN_DETAIL_BATCH_PAGES
 
 
@@ -543,6 +542,13 @@ _SEMANTIC_PAGE_CONTRACT = (
     "gesture) rather than substituting another. "
     "Do not put an exchange between two or more speakers into a panel that shows none "
     "of their faces (a hands or object insert); keep each speaker visible where they speak. "
+    "A panel is one drawn instant, and every figure in it is drawn as they are at that instant. "
+    "When a beat holds a cause and the reaction it provokes (a question and the answer that "
+    "makes someone faint, a wish and the paw dropped in horror), or any change of posture, "
+    "consciousness or appearance, give each instant its own panel: speakers say their lines "
+    "in the panel that shows them before the change, and the result appears in a later "
+    "panel. Never show a figure fallen, fainted, gone or already reacting in the panel where "
+    "they speak the line that comes before it. "
     "For ongoing physical attachments, describe what connects to what, the contact point, "
     "object orientation and what supports the body or object; carry that relationship "
     "into subsequent panels instead of merely naming the attached objects. "
@@ -916,6 +922,13 @@ def _detail_batch_prompt(
                 f"[{concern.code}] {concern.message} {' '.join(concern.evidence)}"
                 for concern in concerns
             )
+            # The map's rhythm_intent often names a panel count ("3 large
+            # panels"); read as fixed authority, it kept a repair from
+            # splitting the one panel a concern cited, so the defect recurred.
+            + " A repair may change the page's panel count: when a concern says one panel "
+            "holds two instants, split that beat into consecutive panels, one per instant, "
+            "even if rhythm_intent names fewer panels. The page's beats, lettering order, "
+            "page turn and emphasis stay fixed."
         )
     return (
         f"Expand only page-map entries {start + 1}-{stop} into semantic comic "
@@ -1623,6 +1636,7 @@ async def _generate_detail_batch(
     previous_draft: _BookPlanDraft | None = None,
     artifacts: TargetArtifacts | None = None,
     model: str = "",
+    editable_lettering: bool = False,
 ) -> _BookPlanDraft:
     gemini = gemini_tuning_enabled(model)
     base_prompt = _detail_batch_prompt(
@@ -1646,6 +1660,8 @@ async def _generate_detail_batch(
         "Speaker IDs must be that item's visible onscreen speaker, otherwise null. Bounds must fit "
         "the full page, not the local panel. Keep all existing exact-ID and locked-order constraints."
     )
+    if editable_lettering:
+        base_prompt += _EDITABLE_FRAMING
     if previous_draft is not None:
         previous_view = _detail_response_view(previous_draft)
         if gemini:
@@ -1726,6 +1742,7 @@ async def _generate_detail_batch(
             return await _repair_detail_pages(
                 draft, local, adaptation, references, page_map, generate=generate, ctx=ctx,
                 story_instruction=story_instruction, story_tone=story_tone, artifacts=artifacts, model=model,
+                editable_lettering=editable_lettering,
             )
         if artifacts is not None:
             discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
@@ -1809,6 +1826,7 @@ async def _repair_detail_pages(
     story_tone: str,
     artifacts: TargetArtifacts | None,
     model: str,
+    editable_lettering: bool = False,
 ) -> _BookPlanDraft:
     """Re-detail the cited pages of a compiled batch, each with its own bounded attempts."""
 
@@ -1821,7 +1839,7 @@ async def _repair_detail_pages(
             concerns=tuple(concerns),
             story_instruction=story_instruction, story_tone=story_tone,
             previous_draft=_BookPlanDraft(rhythm_summary=draft.rhythm_summary, pages=(by_number[number],)),
-            artifacts=artifacts, model=model,
+            artifacts=artifacts, model=model, editable_lettering=editable_lettering,
         )
         for number, concerns in sorted(concerns_by_page.items())
     ], limit=len(concerns_by_page))
@@ -1871,24 +1889,79 @@ def _merge_detail_drafts(
     return _BookPlanDraft.model_validate(normalized)
 
 
-def _concern_batch_indexes(
+def _concern_page_spans(
     concerns: tuple[InvariantFailure | EditorialIssue, ...],
     *,
     page_count: int,
-    batch_pages: int,
-) -> dict[int, list[InvariantFailure | EditorialIssue]]:
-    grouped: dict[int, list[InvariantFailure | EditorialIssue]] = {}
+    max_pages: int,
+) -> dict[tuple[int, int], list[InvariantFailure | EditorialIssue]]:
+    """Group cited pages into the ``[start, stop)`` spans a repair re-details.
+
+    A concern repairs only the pages it cites, not their whole detail batch:
+    a one-page defect used to rewrite eight pages for several minutes.
+    Contiguous cited pages stay together so a cross-page concern sees both
+    sides, and spans sharing a page merge. Spans wider than ``max_pages``
+    split so a book-wide concern cannot become one oversized call.
+    """
+
+    intervals: list[tuple[int, int, list[InvariantFailure | EditorialIssue]]] = []
     for concern in concerns:
-        page_numbers = {
-            int(match.group(1))
+        numbers = sorted({
+            number
             for artifact_id in concern.artifact_ids
             if (match := re.fullmatch(r"page_(\d{3})(?:_content_\d{3})?", artifact_id))
-        }
-        for page_number in page_numbers:
-            if 1 <= page_number <= page_count:
-                index = (page_number - 1) // batch_pages
-                grouped.setdefault(index, []).append(concern)
-    return grouped
+            and 1 <= (number := int(match.group(1))) <= page_count
+        })
+        runs: list[list[int]] = []
+        for number in numbers:
+            if runs and number == runs[-1][1] + 1:
+                runs[-1][1] = number
+            else:
+                runs.append([number - 1, number])
+        intervals.extend((start, stop, [concern]) for start, stop in runs)
+    merged: list[tuple[int, int, list[InvariantFailure | EditorialIssue]]] = []
+    for start, stop, cited in sorted(intervals, key=lambda item: item[:2]):
+        if merged and start < merged[-1][1]:
+            first, last, previous = merged[-1]
+            merged[-1] = (first, max(last, stop), [*previous, *(c for c in cited if c not in previous)])
+        else:
+            merged.append((start, stop, cited))
+    return {
+        (chunk, min(chunk + max_pages, stop)): cited
+        for start, stop, cited in merged
+        for chunk in range(start, stop, max_pages)
+    }
+
+
+def _replace_detail_pages(
+    batches: list[tuple[int, int, _BookPlanDraft]],
+    repairs: list[tuple[int, _BookPlanDraft]],
+) -> list[tuple[int, int, _BookPlanDraft]]:
+    """Swap re-detailed spans (keyed by their first 0-based page) into their batches.
+
+    Issues a batch authored about a repaired page give way to the repair's;
+    each repair's issues land once, on the batch holding its first page.
+    """
+
+    pages = {page.page_number: page for _, draft in repairs for page in draft.pages}
+    updated = []
+    for start, stop, batch in batches:
+        repaired = [number for number in range(start + 1, stop + 1) if number in pages]
+        if not repaired:
+            updated.append((start, stop, batch))
+            continue
+        kept = tuple(
+            issue for issue in batch.editorial_issues
+            if not any(_cites_page(issue, number) for number in repaired)
+        )
+        owned = tuple(
+            issue for first, draft in repairs if start <= first < stop for issue in draft.editorial_issues
+        )
+        updated.append((start, stop, batch.model_copy(update={
+            "pages": tuple(pages.get(page.page_number, page) for page in batch.pages),
+            "editorial_issues": (*kept, *owned),
+        })))
+    return updated
 
 
 async def _produce_book_plan_two_pass(
@@ -1971,7 +2044,7 @@ async def _produce_book_plan_two_pass(
                     generate=generate,
                     ctx=ctx,
                     story_instruction=story_instruction, story_tone=story_tone,
-                    artifacts=artifacts, model=model,
+                    artifacts=artifacts, model=model, editable_lettering=not integrated_lettering,
                 )
             ctx.record_item_done()
             progress.batch_done(index, draft)
@@ -2026,30 +2099,33 @@ async def _produce_book_plan_two_pass(
                 and (not narrative_repaired if f.code.startswith("narrative_review_")
                      else not structure_repaired)
             )
-            grouped = _concern_batch_indexes(
+            spans = _concern_page_spans(
                 tuple(repairable),
                 page_count=len(page_map.pages),
-                batch_pages=batch_pages,
+                max_pages=batch_pages,
             )
-            if not grouped:
+            if not spans:
                 break
             narrative_repaired |= any(f.code.startswith("narrative_review_") for f in repairable)
             structure_repaired |= any(not f.code.startswith("narrative_review_") for f in repairable)
             history.append(_attempt_record(attempt, validation))
             attempt += 1
-            total_steps += len(grouped)
+            total_steps += len(spans)
             ctx.set_progress_total(total_steps)
-            by_index = {
-                start // batch_pages: (start, stop, batch)
-                for start, stop, batch in batches
+            span_batches = {
+                span: sorted({number // batch_pages for number in range(*span)})
+                for span in spans
             }
-            for index in grouped:
-                progress.batch_state(index, "needs_repair")
+            for indexes in span_batches.values():
+                for index in indexes:
+                    progress.batch_state(index, "needs_repair")
             progress.publish("repairing")
+            current = {page.page_number: page for _, _, batch in batches for page in batch.pages}
 
-            async def repair_batch(index: int, concerns: list) -> None:
-                start, stop, previous_draft = by_index[index]
-                progress.batch_state(index, "repairing")
+            async def repair_span(span: tuple[int, int], concerns: list) -> tuple[int, _BookPlanDraft]:
+                start, stop = span
+                for index in span_batches[span]:
+                    progress.batch_state(index, "repairing")
                 repaired = await _generate_detail_batch(
                     adaptation,
                     references,
@@ -2060,22 +2136,27 @@ async def _produce_book_plan_two_pass(
                     ctx=ctx,
                     concerns=tuple(concerns),
                     story_instruction=story_instruction, story_tone=story_tone,
-                    previous_draft=previous_draft,
-                    artifacts=artifacts, model=model,
+                    previous_draft=_BookPlanDraft(
+                        rhythm_summary=page_map.rhythm_summary,
+                        pages=tuple(current[number] for number in range(start + 1, stop + 1)),
+                    ),
+                    artifacts=artifacts, model=model, editable_lettering=not integrated_lettering,
                 )
                 ctx.record_item_done()
                 ctx.progress(ctx.stage_state.items_done, total_steps)
-                progress.batch_done(index, repaired)
-                by_index[index] = (start, stop, repaired)
+                return start, repaired
 
-            # Batches repair independently; serial repairs added a full detail
-            # call's latency per cited batch.
-            await run_paid_shards(
-                [lambda index=index, concerns=concerns: repair_batch(index, concerns)
-                 for index, concerns in grouped.items()],
+            # Spans repair independently and in parallel; each re-details
+            # only its cited pages.
+            repairs = await run_paid_shards(
+                [lambda span=span, concerns=concerns: repair_span(span, concerns)
+                 for span, concerns in spans.items()],
                 limit=concurrency,
             )
-            batches = list(by_index.values())
+            batches = _replace_detail_pages(batches, list(repairs))
+            for start, _stop, batch in batches:
+                if any(start // batch_pages in indexes for indexes in span_batches.values()):
+                    progress.batch_done(start // batch_pages, batch)
             draft = _merge_detail_drafts(
                 adaptation,
                 references,
@@ -3371,6 +3452,7 @@ def validate_book_plan(
                 )
 
     issues.extend(_uncast_recurring_character_issues(references, pages))
+    issues.extend(_speaker_changed_in_panel_issues(adaptation, pages))
     issues.extend(_integrated_lettering_density_issues(pages) if integrated_lettering
                   else _crowded_lettering_issues(pages))
     issues.extend(_page_turn_side_issues(adaptation, pages))
@@ -3381,6 +3463,58 @@ def validate_book_plan(
         invariant_failures=failures,
         editorial_issues=issues,
     )
+
+
+def _speaker_changed_in_panel_issues(
+    adaptation: BookAdaptation,
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    """A beat drawn in one panel shows its changed speaker saying the line before the change.
+
+    Only a beat's last panel takes its new appearance state, so a beat kept in a
+    single panel draws a speaker already fainted or changed while asking the
+    question that causes it. Splitting the beat lets the earlier panel keep the
+    prior state. Advisory: a costume change mid-conversation is often harmless.
+    """
+    beat_by_id = {beat.id: beat for beat in adaptation.beats}
+    panels_by_beat = Counter(
+        beat_id for page in pages for content in page.content for beat_id in content.beat_ids
+    )
+    issues = []
+    for page in pages:
+        for content in page.content:
+            speakers = {
+                item.speaker_entity_id for item in content.lettering
+                if item.kind == "dialogue" and item.delivery == "onscreen" and item.speaker_entity_id
+            }
+            for beat_id in content.beat_ids:
+                beat = beat_by_id.get(beat_id)
+                if beat is None or panels_by_beat[beat_id] > 1:
+                    continue
+                for change in beat.appearance_changes:
+                    if (change.entity_id in speakers
+                            and content.appearance_states.get(change.entity_id) == change.to_state_id):
+                        issues.append(EditorialIssue(
+                            id=f"plan_issue_speaker_changed_in_panel_{content.id}_{change.entity_id}",
+                            owner_stage="plan",
+                            code="speaker_changed_in_panel",
+                            message=(
+                                "A speaker is drawn in the state their beat ends in while saying "
+                                "a line from that beat; split the beat so the line comes first."
+                            ),
+                            source_unit_ids=beat.source_unit_ids,
+                            artifact_ids=[beat.id, content.id, change.entity_id, change.to_state_id],
+                            evidence=[
+                                f"Page {page.page_number} panel {content.order} carries all of "
+                                f"{beat.id!r}, binds {change.entity_id!r} to {change.to_state_id!r} "
+                                "and gives them onscreen dialogue: " + "; ".join(
+                                    repr(item.text) for item in content.lettering
+                                    if item.speaker_entity_id == change.entity_id
+                                    and item.delivery == "onscreen"
+                                ) + "."
+                            ],
+                        ))
+    return issues
 
 
 _UNCAST_RECURRING_PAGES = 2
@@ -3465,9 +3599,22 @@ def _integrated_lettering_density_issues(
 
 # Editable pages letter in software, so the limit is reading load, not
 # reproduction: Weisinger's DC rule (via Moore) and Dark Horse's script guide
-# put a panel near 35-50 words and a page near 210.
-_HYBRID_PANEL_WORDS = 50
-_HYBRID_PAGE_WORDS = 210
+# put a panel near 35-50 words and a page near 210. Those assume art drawn
+# around planned balloons; editable art is drawn first and lettered after,
+# so it keeps to the low end.
+_HYBRID_PANEL_WORDS = 35
+_HYBRID_PAGE_WORDS = 150
+
+# Editable lettering is placed on finished art; Draw follows the same rules
+# (``lettering.room``) so a page framed too tight is still opened up.
+_EDITABLE_FRAMING = (
+    "\nEDITABLE LETTERING FRAMING: lettering is added later on top of the finished art, so "
+    f"a panel with more than {WIDE_FRAMING_WORDS} words of copy uses a medium shot or wider "
+    "(never extreme_close_up, close_up or medium_close_up), and a panel where three or more "
+    "characters speak uses medium_wide or wider. Give heavy dialogue more panels rather than "
+    "tighter ones. Stage figures so heads sit below the top quarter of their panel with the "
+    "scene continuing above them (wall, ceiling, sky); never describe blank or empty areas."
+)
 
 
 _CROWDED_PAGES_LISTED = 8
@@ -3507,7 +3654,8 @@ def _crowded_lettering_issues(
                 for page, words, heavy in worst
             ),
             *([f"…and {more} more pages."] if more else []),
-            "Comics editors aim for about 210 words a page and 50 a panel; more panels "
+            f"Lettered after drawing, a page holds about {_HYBRID_PAGE_WORDS} words and a panel "
+            f"{_HYBRID_PANEL_WORDS}; more panels "
             "or another page would let the art breathe.",
         ],
     )]
@@ -3891,7 +4039,17 @@ def _cites_page(finding: InvariantFailure, page_number: int) -> bool:
     return any(artifact_id == prefix or artifact_id.startswith(prefix + "_") for artifact_id in finding.artifact_ids)
 
 
-def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferenceInventory, page_number: int):
+def _author_concern(page_number: int, request: str) -> EditorialIssue:
+    """An author's layout request, carried to the planner like any concern."""
+    return EditorialIssue(
+        id=f"author-request-page-{page_number:03d}", owner_stage="plan", code="author_request",
+        message=f"The author asks for this change to page {page_number}; keep the page's beats and exact lettering wording.",
+        evidence=(request.strip(),),
+    )
+
+
+def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferenceInventory, page_number: int,
+                   author_request: str = ""):
     adaptation = artifacts.read_adaptation()
     plan = artifacts.read_plan()
     if (plan.adaptation_revision, plan.adaptation_sha256) != (adaptation.revision, adaptation.content_sha256):
@@ -3904,7 +4062,7 @@ def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferen
     concerns = tuple(
         failure for failure in validation.invariant_failures
         if failure.owner_stage == "plan" and _cites_page(failure, page_number)
-    )
+    ) + ((_author_concern(page_number, author_request),) if author_request.strip() else ())
     if not concerns:
         raise ValueError(f"Page {page_number}'s plan has no problem to repair.")
     page_map = _BookPageMap(
@@ -3920,10 +4078,12 @@ def estimate_page_replan_cost(
     page_number: int,
     *,
     model: str,
+    author_request: str = "",
 ) -> float:
     """One local detail call plus its bounded repair attempts."""
 
-    adaptation, _plan, _pages, _range, concerns, page_map = _replan_inputs(artifacts, references, page_number)
+    adaptation, _plan, _pages, _range, concerns, page_map = _replan_inputs(
+        artifacts, references, page_number, author_request)
     prompt = _detail_batch_prompt(
         adaptation, references, page_map, start=page_number - 1, stop=page_number, concerns=concerns,
         story_tone=artifacts.read_brief().tone,
@@ -3944,17 +4104,23 @@ async def replan_page(
     *,
     generate: StructuredGenerator,
     model: str,
+    author_request: str = "",
+    editable_lettering: bool = False,
 ) -> ComicPage:
-    """Re-detail one page whose accepted plan fails validation.
+    """Re-detail one page whose accepted plan fails validation, or that the
+    author asked to change.
 
     The page keeps its beats, lettering and page role (the global map is
-    fixed); only its panel detail is rewritten to clear the cited problems.
+    fixed); only its panel detail is rewritten to clear the cited problems,
+    which include the author's request when one is given: which panel holds a
+    line, what each panel shows, and how it is staged.
     The whole book is validated and its narrative review refreshed before the
     new page revision and plan revision are written; the page's artwork then
     becomes stale for a redraw.
     """
 
-    adaptation, plan, pages, target_range, concerns, page_map = _replan_inputs(artifacts, references, page_number)
+    adaptation, plan, pages, target_range, concerns, page_map = _replan_inputs(
+        artifacts, references, page_number, author_request)
     index = page_number - 1
     drafts = tuple(_page_draft(page) for page in pages)
     pin_by_beat = {
@@ -3971,7 +4137,7 @@ async def replan_page(
         # The replanned page keeps the tone the rest of the book was laid out with.
         story_tone=artifacts.read_brief().tone,
         previous_draft=_BookPlanDraft(rhythm_summary=page_map.rhythm_summary, pages=(drafts[index],)),
-        artifacts=artifacts, model=model,
+        artifacts=artifacts, model=model, editable_lettering=editable_lettering,
     )
     batches = [(index, page_number, repaired)]
     if index:

@@ -514,6 +514,18 @@ describe("placement check", () => {
     fireEvent.click(within(check()).getByLabelText("Show faces found"));
     expect(view.container.querySelector(".lettering-guide-face")?.textContent).toBe("Ana");
   });
+  it("shows faces as no-go areas only while a balloon is dragged", async () => {
+    api.get.mockResolvedValue(checked());
+    const view = mount();
+    await ready();
+    const hit = view.container.querySelector<HTMLButtonElement>(".lettering-hit")!;
+    hit.setPointerCapture = vi.fn();
+    expect(view.container.querySelector(".lettering-guide-face")).toBeNull();
+    fireEvent.pointerDown(hit, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+    expect(view.container.querySelector(".lettering-guide-face")?.textContent).toBe("Ana");
+    fireEvent.pointerUp(hit, { clientX: 100, clientY: 100, pointerId: 1 });
+    expect(view.container.querySelector(".lettering-guide-face")).toBeNull();
+  });
   it("reports lettering drawn into the art without offering a fake fix", async () => {
     api.get.mockResolvedValue(checked({ heads: [], stray_lettering: [{ text: "BOOM", x: .6, y: .7, width: .1, height: .05 }] }));
     mount();

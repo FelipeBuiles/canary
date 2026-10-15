@@ -89,10 +89,18 @@ describe("placement checks from a page read", () => {
 
   it("keeps parity with the seeding rules in placement.py", () => {
     // The same literals are asserted in test_lettering_placement.py.
-    expect(tailTowardHead({ x: .05, y: .03, width: .2, height: .08 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .25, y: .2864 });
+    // Aimed at the mouth, the tip stops just outside the head.
+    const tip = tailTowardHead({ x: .05, y: .03, width: .2, height: .08 }, { x: .2, y: .2, width: .1, height: .12 });
+    expect(tip.x).toBeCloseTo(.206377, 6);
+    expect(tip.y).toBeCloseTo(.192, 6);
     expect(tailTowardHead({ x: .15, y: .15, width: .3, height: .3 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .25, y: .2864 });
     const cleared = clearOfHeads({ x: .18, y: .2, width: .2, height: .1 }, [{ x: .2, y: .2, width: .1, height: .12 }], { x: .03, y: .024, width: .94, height: .452 })!;
     expect(cleared.x).toBeCloseTo(.18);
     expect(cleared.y).toBeCloseTo(.088);  // Above the face beats the longer step to its right.
+    // No clean spot: the one covering the least face wins.
+    const crowd = [{ x: .05, y: .05, width: .2, height: .2 }, { x: .3, y: .05, width: .2, height: .2 }];
+    const least = clearOfHeads({ x: .1, y: .1, width: .3, height: .1 }, crowd, { x: 0, y: 0, width: .6, height: .3 })!;
+    expect(least.x).toBeCloseTo(.262);
+    expect(least.y).toBeCloseTo(.1);
   });
 });

@@ -389,7 +389,7 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
       if [ "$CANARY_CODEX_DEV_TEXT_ROUTES" = '{}' ] && [ "$CANARY_CODEX_DEV_IMAGE_ROUTES" = '[]' ]; then
         echo "[dev] Choose Codex or API models in Account → Models (dev). No legacy route overrides are active." >&2
       fi
-      export CANARY_CODEX_DEV_IMAGE_REASONING_MODEL="${CANARY_CODEX_DEV_IMAGE_REASONING_MODEL-gpt-5.5}"
+      export CANARY_CODEX_DEV_IMAGE_REASONING_MODEL="${CANARY_CODEX_DEV_IMAGE_REASONING_MODEL-gpt-6.1-sol}"
       exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" uv run --no-sync pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     fi
     exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"

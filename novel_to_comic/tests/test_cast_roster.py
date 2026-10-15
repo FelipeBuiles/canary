@@ -2,7 +2,10 @@
 from copy import deepcopy
 
 from novel_to_comic import artifacts
-from novel_to_comic.cast_roster import cast_character_ids, cast_story_bible, character_scene_counts
+from novel_to_comic.cast_roster import (
+    DENSEST_PAGE_WORDS, cast_character_ids, cast_story_bible, character_scene_counts, promote_multi_page_cast,
+)
+from novel_to_comic.models.source import SourceDocument, SourceScene, SourceUnit
 from novel_to_comic.models.story_bible import Character, Scene, StoryBible, TransientObject
 from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition
 from novel_to_comic.series import cast_inventory_keys
@@ -122,3 +125,26 @@ def test_inventory_carries_character_identity_and_scene_objects_as_written_autho
     assert (sphinx.kind, sphinx.requires_image, sphinx.visual_anchor) == (
         'object', False, 'tiny dry wooden sphinx figurine')
     assert ('obj_sphinx', None) not in cast_inventory_keys(tmp_path)
+
+
+def _source(scene_words: list[int]) -> SourceDocument:
+    texts = [" ".join(["word"] * count) + ". " for count in scene_words]
+    offsets = [sum(map(len, texts[:index])) for index in range(len(texts) + 1)]
+    return SourceDocument(
+        text="".join(texts),
+        units=[SourceUnit(id=f"source_{index:06d}", ordinal=index, start_offset=offsets[index - 1],
+                          end_offset=offsets[index], text=texts[index - 1])
+               for index in range(1, len(texts) + 1)],
+        scenes=[SourceScene(id=f"scene_{index}", title="Crossing", first_unit_id=f"source_{index:06d}",
+                            last_unit_id=f"source_{index:06d}") for index in range(1, len(texts) + 1)],
+    )
+
+
+def test_a_one_scene_visitor_spanning_several_pages_gets_a_cast_reference():
+    story = bible()
+    # The guard's single scene holds more text than one dense page adapts;
+    # the visitor's two short scenes together still fit on one page.
+    source = _source([100, 100, DENSEST_PAGE_WORDS + 1, 50, 50])
+    assert promote_multi_page_cast(story, source, None) == ["Guard"]
+    assert cast_character_ids(story) == {"ari", "guard"}
+    assert promote_multi_page_cast(story, source, None) == []

@@ -78,6 +78,12 @@ GATEWAY_PAGE_OCR = GATEWAY_LUNA
 # provider call, so a page's credit hold has to cover it; the settled debit
 # always comes from the usage the provider actually reported.
 PAGE_OCR_ESTIMATED_COST_USD = "0.004"
+
+# Reading an author's change requests against the current render, before a
+# correction is previewed: one vision call that rewrites each request as a
+# precise edit or routes it to Plan or the script. Argon stays an operator
+# choice while its pricing is provisional.
+CORRECTION_INTERPRETER_MODEL = GATEWAY_GEMINI_FLASH
 # Optional page + approved-reference comparison allowance.
 PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD = "0.02"
 # Frozen into retained Draw edition profiles and requests, so they must stay
@@ -180,6 +186,7 @@ class Config(BaseModel):
     prompt_model: str = GATEWAY_LUNA
     page_ocr_model: str = GATEWAY_PAGE_OCR
     visual_review_model: str = GATEWAY_PAGE_OCR
+    correction_model: str = CORRECTION_INTERPRETER_MODEL
     image_model: str = GATEWAY_IMAGE_SUNBURST
     draw_model: str = GATEWAY_IMAGE_SUNBURST
 
@@ -248,6 +255,9 @@ class Config(BaseModel):
 
     def effective_visual_review_model(self) -> str:
         return self.visual_review_model
+
+    def effective_correction_model(self) -> str:
+        return self.correction_model
 
     def language_code(self) -> Language:
         return self.target_language

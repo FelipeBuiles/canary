@@ -509,7 +509,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `id` | `str` | `Field(default='', max_length=120)` |
 | `kind` | `Literal['pin', 'rectangle', 'highlight', 'freehand', 'arrow', 'ellipse', 'text']` |  |
 | `points` | `tuple[AnnotationPoint, ...]` | `Field(min_length=1, max_length=64)` |
-| `note` | `str` | `Field(min_length=1, max_length=500)` |
+| `note` | `str` | `Field(default='', max_length=500)` |
 | `label` | `str | None` | `Field(default=None, max_length=120)` |
 
 ## CorrectionChange _(draw.py)_

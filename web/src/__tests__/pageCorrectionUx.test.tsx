@@ -222,7 +222,7 @@ describe("page revision draft", () => {
     const change = mocks.preview.mock.calls[0]![0].body.changes[0];
     expect(change.instruction).toHaveLength(1000);
     expect(change.annotations).toHaveLength(2);
-    for (const mark of change.annotations) expect(mark.note).toBe("Apply the enclosing change request at this location.");
+    for (const mark of change.annotations) expect(mark.note).toBeUndefined();
   });
   it("requires another review after a mark's note changes", () => {
     saved([{ id: "pin", kind: "pin", points: [{ x: 0.5, y: 0.5 }] }]);

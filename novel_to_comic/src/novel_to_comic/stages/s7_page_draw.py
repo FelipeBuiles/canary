@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from novel_to_comic.style_reference import require_style_reference
 from novel_to_comic.config import Config
 from novel_to_comic.page_drawing import ensure_current_page_edition, initial_page_profile
 from novel_to_comic.stage_runtime import StageRuntime
@@ -70,7 +69,6 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         compiled = compile_page_generation_request(
             page, edition, inventory, reference_files,
             retry=RetryProvenance(attempt=1), style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         total += estimate_draw_api_cost(config, compiled)
     return total

@@ -75,6 +75,9 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/labs/stage-models/options` | `stage_model_options` | `labs.py` |
 | `POST` | `/api/labs/stage-models/estimate` | `stage_model_estimate` | `labs.py` |
 | `POST` | `/api/labs/image-compare/estimate` | `image_compare_estimate` | `labs.py` |
+| `GET` | `/api/labs/modernize/options` | `modernize_options` | `labs.py` |
+| `GET` | `/api/labs/modernize/projects/{project}/excerpt` | `modernize_excerpt` | `labs.py` |
+| `POST` | `/api/labs/modernize/estimate` | `modernize_estimate` | `labs.py` |
 | `POST` | `/api/labs/runs` | `create_run` | `labs.py` |
 | `POST` | `/api/labs/runs/{run_id}/retry` | `retry_cells` | `labs.py` |
 | `GET` | `/api/labs/runs` | `list_runs` | `labs.py` |
@@ -114,6 +117,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/issues/{issue_id}/dismiss` | `dismiss_recorded_page_issue` | `pages.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/corrections/preview` | `preview_page_correction` | `pages.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/corrections` | `submit_page_correction` | `pages.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/corrections/interpret/estimate` | `interpret_page_corrections_estimate` | `pages.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/corrections/interpret` | `interpret_page_corrections` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/visual-review/estimate` | `visual_review_estimate` | `pages.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/visual-review` | `visual_review_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/visual-review` | `read_saved_visual_review` | `pages.py` |

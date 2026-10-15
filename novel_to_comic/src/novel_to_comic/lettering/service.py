@@ -32,6 +32,7 @@ from . import placement
 from .direction import direction_for, joined_to, mark_emphasis, voice_style
 from .page_read import read_for_render
 from .panels import detect_panels
+from .quiet import BusyMap, busy_map
 from .renderer import (
     ENGINE_VERSION,
     render_lettered_page,
@@ -263,10 +264,12 @@ def seed_lettering(
     panels: Sequence[PinnedGeometry] | None = None,
     heads: Sequence = (),
     sources: Mapping[str, str] | None = None,
+    busy: BusyMap | None = None,
 ) -> PageLettering:
     """First-draft placement. ``panels`` (gutters of the base art) keep each item
     inside its drawn panel; ``heads`` (a stored page read) put speech over its
-    speaker and off faces. Without panels Plan's reservations are used as-is.
+    speaker and off faces; ``busy`` (the art's busyness) prefers dead space.
+    Without panels Plan's reservations are used as-is.
     Either way these are seeds for the author, never reviewed placement.
     ``sources`` (source unit text) lets each seed take the voice its prose
     tags give it; see ``direction``.
@@ -282,7 +285,7 @@ def seed_lettering(
     if panels is not None and placement.usable(page, panels):
         layout = placement.layout_page(
             page, panels, lambda item, reservation, panel: placement.frame_size(reservation, panel),
-            heads,
+            heads, busy,
         )
     elements = []
     for panel in sorted(page.content, key=lambda part: part.order):
@@ -342,6 +345,7 @@ def settle_seeds(
     style: LetteringStyle,
     panels: Sequence[PinnedGeometry] | None,
     heads: Sequence = (),
+    busy: BusyMap | None = None,
 ) -> PageLettering:
     """Resolve a fresh seed, then arrange it again with measured balloon sizes.
 
@@ -365,7 +369,7 @@ def settle_seeds(
             return element.resolved.width, element.resolved.height
         return element.placement.width, element.placement.height
 
-    layout = placement.layout_page(page, panels, size_of, heads)
+    layout = placement.layout_page(page, panels, size_of, heads, busy)
 
     def moved(element: LetteringElement, keep_frame: bool) -> LetteringElement:
         body, tail = layout[element.id]
@@ -408,6 +412,14 @@ def page_panels(artifacts: TargetArtifacts, page_number: int, render) -> tuple[P
         return detect_panels(image)
 
 
+def page_art(
+    artifacts: TargetArtifacts, page_number: int, render
+) -> tuple[tuple[PinnedGeometry, ...], BusyMap]:
+    """Panels and busyness of the current art, from one read of its bytes."""
+    with Image.open(io.BytesIO(artifacts.read_render(page_number, render.revision))) as image:
+        return detect_panels(image), busy_map(image)
+
+
 def source_texts(artifacts: TargetArtifacts, page: ComicPage) -> dict[str, str]:
     """Source prose cited by this page's lettering, for voice direction only."""
     cited = {
@@ -435,15 +447,15 @@ def seed_page(
 
     Uses a stored page read for this exact art when there is one; never requests one.
     """
-    panels = page_panels(artifacts, page.page_number, render)
+    panels, busy = page_art(artifacts, page.page_number, render)
     read = read_for_render(artifacts, page.page_number, render)
     heads = (read.heads or ()) if read is not None else ()
     return settle_seeds(
         seed_lettering(
             page, render, style, revision=revision, locale=locale, panels=panels, heads=heads,
-            sources=source_texts(artifacts, page),
+            sources=source_texts(artifacts, page), busy=busy,
         ),
-        page, style, panels, heads,
+        page, style, panels, heads, busy,
     )
 
 
