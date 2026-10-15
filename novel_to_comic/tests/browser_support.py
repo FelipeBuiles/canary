@@ -7,10 +7,27 @@ process lifetime differs from production. No page or context is shared.
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from threading import Barrier, local
+import logging
+from threading import Barrier, current_thread, local
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _browser_step(name):
+    # Captured logs identify the last unfinished operation on each owning thread.
+    name = f"{current_thread().name}: {name}"
+    logger.debug("%s: starting", name)
+    try:
+        yield
+    except BaseException:
+        logger.exception("%s: failed", name)
+        raise
+    else:
+        logger.debug("%s: finished", name)
 
 
 class _ContextBrowser:
@@ -19,12 +36,15 @@ class _ContextBrowser:
         self.context = None
 
     def new_page(self, **options):
-        self.context = self.browser.new_context(**options)
-        return self.context.new_page()
+        with _browser_step("context creation"):
+            self.context = self.browser.new_context(**options)
+        with _browser_step("page creation"):
+            return self.context.new_page()
 
     def close(self):
         if self.context is not None:
-            self.context.close()
+            with _browser_step("context cleanup"):
+                self.context.close()
             self.context = None
 
 
@@ -37,11 +57,14 @@ class LetteringBrowsers:
     @contextmanager
     def playwright(self):
         if not hasattr(self._local, "browser"):
-            playwright = sync_playwright().start()
+            with _browser_step("Playwright startup"):
+                playwright = sync_playwright().start()
             try:
-                browser = playwright.chromium.launch()
+                with _browser_step("Chromium launch"):
+                    browser = playwright.chromium.launch()
             except BaseException:
-                playwright.stop()
+                with _browser_step("Playwright startup cleanup"):
+                    playwright.stop()
                 raise
             self._local.playwright = playwright
             self._local.browser = browser
@@ -54,12 +77,15 @@ class LetteringBrowsers:
 
     def _close_worker(self, barrier):
         # Occupy both executor threads so each closes its own Playwright objects.
-        barrier.wait(timeout=10)
+        with _browser_step("worker shutdown rendezvous"):
+            barrier.wait(timeout=10)
         if hasattr(self._local, "browser"):
             try:
-                self._local.browser.close()
+                with _browser_step("Chromium shutdown"):
+                    self._local.browser.close()
             finally:
-                self._local.playwright.stop()
+                with _browser_step("Playwright shutdown"):
+                    self._local.playwright.stop()
 
     def close(self):
         barrier = Barrier(self.workers)
