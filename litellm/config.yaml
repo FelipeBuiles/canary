@@ -117,7 +117,7 @@ model_list:
     # schema returns 400. Stages keep schema instructions and local validation.
     supports_reasoning: true
     supports_response_schema: true
-    supports_vision: false
+    supports_vision: true
     supports_native_streaming: false
     supports_prompt_caching: false
     # Provisional launch rates, operator-approved 2026-10-13. Vertex tariff,

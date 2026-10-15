@@ -23,6 +23,7 @@ const FINDING_LABELS: Record<string, string> = {
   visual_appearance: msg("Appearance"),
   visual_prop: msg("Object"),
   visual_scene: msg("Setting"),
+  visual_speaker: msg("Speaker"),
   visual_composition: msg("Composition"),
   manual_change: msg("Your request"),
   unexpected_generated_lettering: msg("Stray lettering"),

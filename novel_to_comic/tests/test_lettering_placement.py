@@ -226,18 +226,29 @@ def test_fresh_and_reset_seeds_from_the_art_stay_unreviewed(book):  # noqa: F811
 def test_tail_and_clearing_rules_keep_parity_with_the_engine():
     # The same literals are asserted in web letteringPlacementChecks.test.ts.
     head = (0.2, 0.2, 0.1, 0.12)
+    # Aimed at the mouth, the tip stops just outside the head.
     tail = placement.toward_head(PinnedGeometry(x=0.05, y=0.03, width=0.2, height=0.08), head)
-    assert (tail.x, tail.y) == pytest.approx((0.25, 0.2864))
+    assert (tail.x, tail.y) == pytest.approx((0.206377, 0.192), abs=1e-6)
     tail = placement.toward_head(PinnedGeometry(x=0.15, y=0.15, width=0.3, height=0.3), head)
     assert (tail.x, tail.y) == pytest.approx((0.25, 0.2864))
     assert placement.clear_of(0.18, 0.2, 0.2, 0.1, [head], (0.03, 0.024, 0.97, 0.476)) == pytest.approx((0.18, 0.088))
+    # No clean spot: the one covering the least face wins.
+    crowd = [(0.05, 0.05, 0.2, 0.2), (0.3, 0.05, 0.2, 0.2)]
+    assert placement.clear_of(0.1, 0.1, 0.3, 0.1, crowd, (0.0, 0.0, 0.6, 0.3)) == pytest.approx((0.262, 0.1))
+
+
+def _aims_at(tail, x, y, w=0.1, h=0.12) -> bool:
+    """Within the editor's reach of the head, but not on the face."""
+    reach = PinnedGeometry(x=x - w * 0.35, y=y - h * 0.35, width=w * 1.7, height=h * 1.7)
+    face = PinnedGeometry(x=x + 0.001, y=y + 0.001, width=w - 0.002, height=h - 0.002)
+    return _point_in(tail, reach) and not _point_in(tail, face)
 
 
 def _head(entity, x, y, w=0.1, h=0.12):
     return SimpleNamespace(entity_id=entity, x=x, y=y, width=w, height=h)
 
 
-def test_page_read_heads_put_speech_over_its_speaker_off_faces_with_tails_on_them():
+def test_page_read_heads_put_speech_over_its_speaker_off_faces_with_tails_at_them():
     page = _page(
         [[_line("a", speaker="char_a"), _line("b", speaker="char_b"),
           _line("n", kind="caption", delivery="narration")]],
@@ -254,8 +265,8 @@ def test_page_read_heads_put_speech_over_its_speaker_off_faces_with_tails_on_the
     a, a_tail = layout["a"]
     b, b_tail = layout["b"]
     assert a.x + a.width / 2 < 0.5 < b.x + b.width / 2  # Each over its own speaker.
-    assert _point_in(a_tail, PinnedGeometry(x=0.2, y=0.2, width=0.1, height=0.12))
-    assert _point_in(b_tail, PinnedGeometry(x=0.7, y=0.25, width=0.1, height=0.12))
+    assert _aims_at(a_tail, 0.2, 0.2)
+    assert _aims_at(b_tail, 0.7, 0.25)
     assert layout["n"][1] is None
 
 
@@ -263,12 +274,13 @@ def test_a_lone_unlabelled_head_is_used_only_for_a_panel_with_one_speaker():
     solo = _page([[_line("a", speaker="char_a")]])
     stranger = [_head(None, 0.6, 0.25)]
     _, tail = placement.layout_page(solo, (TOP, BOTTOM_LEFT), lambda i, r, p: (0.2, 0.06), stranger)["a"]
-    assert _point_in(tail, PinnedGeometry(x=0.6, y=0.25, width=0.1, height=0.12))
+    assert _aims_at(tail, 0.6, 0.25)
     duet = _page([[_line("a", speaker="char_a"), _line("b", speaker="char_b")]])
     layout = placement.layout_page(duet, (TOP, BOTTOM_LEFT), lambda i, r, p: (0.2, 0.06), stranger)
+    # Without a speaker to anchor, tails fall back to the speaker-side lean.
+    anchored = placement.toward_head
     assert not any(
-        _point_in(tail, PinnedGeometry(x=0.6, y=0.25, width=0.1, height=0.12))
-        for _, tail in layout.values()
+        tail == anchored(body, (0.6, 0.25, 0.1, 0.12)) for body, tail in layout.values()
     )
 
 
@@ -399,3 +411,36 @@ def test_a_failed_re_placement_never_fails_the_page_read(book, monkeypatch):  # 
     ))
     assert result.analysis.render_revision == 1
     assert artifacts.read_raw_ocr(1, 1).figures_read
+
+
+def test_busy_map_reads_detail_and_steers_balloons_to_quiet_art():
+    from novel_to_comic.lettering.quiet import busy_map
+
+    # A flat wall on the left half, dense hatching on the right half.
+    image = Image.new("RGB", (400, 600), (90, 100, 110))
+    draw = ImageDraw.Draw(image)
+    for x in range(200, 400, 4):
+        draw.line([(x, 0), (x, 600)], fill=(10, 10, 10), width=2)
+    busy = busy_map(image)
+    assert busy.mean(0.05, 0.1, 0.3, 0.3) < 0.1 < 0.6 < busy.mean(0.6, 0.1, 0.3, 0.3)
+    page = _page([[_line("n", kind="caption", delivery="narration")]],
+                 bounds={"n": PinnedGeometry(x=0.6, y=0.1, width=0.3, height=0.08)})
+    panel = PinnedGeometry(x=0, y=0, width=1, height=1)
+    plain = placement.layout_page(page, (panel,), lambda i, r, p: (0.3, 0.08))["n"][0]
+    quiet = placement.layout_page(page, (panel,), lambda i, r, p: (0.3, 0.08), busy=busy)["n"][0]
+    assert plain.x >= 0.5  # Plan's spot, over the hatching.
+    assert quiet.x + quiet.width <= 0.5  # Moved onto the plain wall.
+
+
+def test_a_full_panel_may_bleed_past_its_border_but_never_onto_another_panel():
+    # The only face-free room is the strip just past the top panel's lower border.
+    page = _page([[_line("a", speaker="char_a")], [_line("b")]])
+    face = _head("char_a", 0.03, 0.03, w=0.94, h=0.42)
+    layout = placement.layout_page(page, (TOP, BOTTOM_LEFT, BOTTOM_RIGHT),
+                                    lambda i, r, p: (0.3, 0.06), [face])
+    rect, _tail = layout["a"]
+    for other in (BOTTOM_LEFT, BOTTOM_RIGHT):
+        assert placement._overlap(
+            (rect.x, rect.y, rect.width, rect.height),
+            (other.x, other.y, other.width, other.height),
+        ) == 0

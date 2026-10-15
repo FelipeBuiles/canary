@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import sys
 import tomllib
 from pathlib import Path
@@ -57,7 +58,10 @@ def sdk(monkeypatch, tmp_path):
                         service_tiers=[_Record(id="priority")])],
         thread_model=None, thread_provider=None, thread_service_tier=None, notification_reads=0,
         plan="plus", capabilities={"image_generation": True, "namespace_tools": True},
-        feature_pages={None: _Record(data=[_Record(name="image_generation", enabled=True)], next_cursor=None)},
+        feature_pages={None: _Record(data=[
+            _Record(name="image_generation", enabled=True),
+            *[_Record(name=key, enabled=True) for key in runtime._IMAGE_CODE_MODE_FEATURES],
+        ], next_cursor=None)},
         parent_run=runtime._run,
     )
 
@@ -295,6 +299,7 @@ def test_unified_exec_flag_is_safe_only_with_effective_shell_tool_off(sdk, shell
     sdk.feature_pages[None].data = [
         _Record(name="image_generation", enabled=True),
         _Record(name="unified_exec", enabled=True),
+        *[_Record(name=key, enabled=True) for key in runtime._IMAGE_CODE_MODE_FEATURES],
     ]
     if shell_enabled is not None:
         sdk.feature_pages[None].data.append(_Record(name="shell_tool", enabled=shell_enabled))
@@ -725,11 +730,13 @@ def test_gpt6_text_selection_uses_exact_catalog_model(sdk, model):
 
 
 @pytest.fixture
-def supported_host(monkeypatch):
+def supported_host(monkeypatch, tmp_path):
     # Simulated host/child in this process; no actual sandbox enforcement.
     monkeypatch.setattr(runtime.os, "getppid", lambda: runtime.os.getpid())
     monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="darwin", executable=sys.executable))
     monkeypatch.setattr(runtime, "_parent_environment", lambda: {})
+    monkeypatch.setattr(runtime, "_LOCK_DIRECTORY", tmp_path)
+    monkeypatch.setattr(runtime.tempfile, "gettempdir", lambda: str(tmp_path))
     original_is_file = Path.is_file
     monkeypatch.setattr(
         Path, "is_file",
@@ -1117,17 +1124,19 @@ def test_queued_codex_calls_report_execution_only_after_the_runtime_lock(support
         pass
 
     async def spawn(*args, **kwargs):
+        request = json.loads((Path(kwargs["cwd"]) / "request.json").read_text())
+        assert request["runtime_queue_seconds"] >= 0.01
+        assert kwargs["pass_fds"]
         raise Spawned
 
     monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", spawn)
 
     async def exercise():
-        await runtime._LOCK.acquire()
         with execution_observer(lambda: started.append("queued call")):
-            waiting = asyncio.create_task(runtime._run({"kind": "text", "model": "gpt-6-luna"}))
-            await asyncio.sleep(0.01)
-            assert started == []
-            runtime._LOCK.release()
+            async with runtime._process_slot("image"):
+                waiting = asyncio.create_task(runtime._run({"kind": "text", "model": "gpt-6-luna"}))
+                await asyncio.sleep(0.01)
+                assert started == []
             with pytest.raises(Spawned):
                 await waiting
         assert started == ["queued call"]
@@ -1135,7 +1144,9 @@ def test_queued_codex_calls_report_execution_only_after_the_runtime_lock(support
     asyncio.run(exercise())
 
 
-def test_repeated_cancellation_drains_runtime_before_releasing_lock(monkeypatch, supported_host):
+def test_repeated_cancellation_drains_runtime_before_releasing_lock(monkeypatch, supported_host, tmp_path):
+    import fcntl
+
     async def scenario():
         waiting, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
@@ -1153,7 +1164,6 @@ def test_repeated_cancellation_drains_runtime_before_releasing_lock(monkeypatch,
 
         monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", spawn)
         monkeypatch.setattr(runtime, "_terminate", terminate)
-        monkeypatch.setattr(runtime, "_LOCK", asyncio.Lock())
         task = asyncio.create_task(runtime._run({"kind": "text", "model": "test"}))
         await waiting.wait()
         task.cancel()
@@ -1161,11 +1171,14 @@ def test_repeated_cancellation_drains_runtime_before_releasing_lock(monkeypatch,
         task.cancel()
         await asyncio.sleep(0)
         assert not task.done()
-        assert runtime._LOCK.locked()
+        with (tmp_path / f"canary-codex-{runtime.os.getuid()}.lock").open("r") as guard:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert not runtime._LOCK.locked()
+        async with runtime._process_slot("text"):
+            pass
 
     asyncio.run(scenario())
 
@@ -1313,3 +1326,168 @@ def test_failure_diagnostics_keep_runtime_timing_without_request_content(tmp_pat
     assert evidence['last_notification_elapsed_seconds'] == 12.5 and evidence['output_tokens'] == 300
     assert len(evidence['events']) == 20
     assert 'private prompt text' not in json.dumps(record) and '/private/path.png' not in json.dumps(record)
+
+
+def test_image_phase_timings_survive_draw_provenance_and_database(sdk, monkeypatch, tmp_path):
+    from novel_to_comic.codex_complete_page import _runtime_metadata
+    from novel_to_comic.ai.usage_payloads import compact_metadata
+
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(runtime, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(runtime.importlib.metadata, "version", lambda _: runtime.SDK_VERSION)
+    client = sys.modules["openai_codex.async_client"].AsyncCodexClient
+
+    def delayed(method, seconds):
+        async def call(*args, **kwargs):
+            clock.now += seconds
+            return await method(*args, **kwargs)
+        return call
+
+    for name, seconds in (("initialize", 2), ("__aexit__", 3), ("turn_start", 3), ("turn_interrupt", 2)):
+        monkeypatch.setattr(client, name, delayed(getattr(client, name), seconds))
+    next_event = client.next_turn_notification
+
+    async def notification(*args):
+        clock.now += 5 if len(sdk.events) == 2 else 7
+        return await next_event(*args)
+
+    monkeypatch.setattr(client, "next_turn_notification", notification)
+    sdk.events = [sdk.types.ItemStartedNotification(item=_Record(root=sdk.types.ImageGenerationThreadItem(
+        id="image-1", type="imageGeneration"))), _image_event(sdk)]
+    (tmp_path / "request.json").write_text(json.dumps({
+        "kind": "image", "model": "exact-model", "prompt": "A red square", "references": [],
+        "reference_authorities": [], "operation": "create", "request_id": "timed",
+        "execution_started": 100.0, "runtime_queue_seconds": 4.25,
+    }))
+    asyncio.run(runtime._child(tmp_path))
+    result = json.loads((tmp_path / "result.json").read_text())
+    expected = {
+        "runtime_queue_seconds": 4.25, "startup_seconds": 7.0, "reasoning_seconds": 8.0,
+        "image_generation_seconds": 7.0, "image_completed_elapsed_seconds": 22.0,
+        "cleanup_seconds": 5.0, "execution_elapsed_seconds": 27.0,
+    }
+    provenance = _runtime_metadata(result["metadata"])
+    stored = compact_metadata({"codex_runtime": provenance})["codex_runtime"]
+    for projection in (result["metadata"], provenance, stored):
+        assert {key: projection[key] for key in expected} == expected
+    assert len(sdk.turns) == 1
+
+
+def test_missing_image_start_does_not_invent_generation_duration(sdk):
+    sdk.events = [_image_event(sdk)]
+    metadata = _generate().metadata
+    assert "image_completed_elapsed_seconds" in metadata
+    assert "reasoning_seconds" not in metadata
+    assert "image_generation_seconds" not in metadata
+
+
+def test_image_slots_bound_real_processes_and_wait_without_submission(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_LOCK_DIRECTORY", tmp_path)
+    script = """
+import asyncio, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from novel_to_comic.ai import codex_runtime as runtime
+runtime._LOCK_DIRECTORY = Path(sys.argv[2])
+async def hold():
+    async with runtime._process_slot("image"):
+        print("admitted", flush=True)
+        await asyncio.to_thread(sys.stdin.readline)
+asyncio.run(hold())
+"""
+
+    async def exercise():
+        children = []
+        try:
+            for _ in range(3):
+                children.append(await asyncio.create_subprocess_exec(
+                    sys.executable, "-c", script, str(Path(runtime.__file__).parents[2]), str(tmp_path),
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                ))
+                if len(children) < 3:
+                    assert await asyncio.wait_for(children[-1].stdout.readline(), 5) == b"admitted\n"
+            third = asyncio.create_task(children[2].stdout.readline())
+            await asyncio.sleep(0.15)
+            assert not third.done()
+            children[0].stdin.write(b"release\n")
+            await asyncio.wait_for(children[0].wait(), 5)
+            assert await asyncio.wait_for(third, 5) == b"admitted\n"
+            # Text remains exclusive even while one of the image slots is free.
+            async def text_call():
+                async with runtime._process_slot("text"):
+                    return "admitted"
+            text_waiter = asyncio.create_task(text_call())
+            await asyncio.sleep(0.15)
+            assert not text_waiter.done()
+            text_waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await text_waiter
+        finally:
+            for child in children:
+                if child.returncode is None:
+                    child.stdin.close()
+            for child in children:
+                await asyncio.wait_for(child.wait(), 5)
+                assert child.returncode == 0, (await child.stderr.read()).decode()
+        async with runtime._process_slot("text"):
+            pass
+
+    asyncio.run(exercise())
+
+
+def test_inherited_slots_remain_owned_until_child_exits(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_LOCK_DIRECTORY", tmp_path)
+
+    async def exercise():
+        async with runtime._process_slot("image") as descriptors:
+            child = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", "import sys; print('ready', flush=True); sys.stdin.readline()",
+                pass_fds=descriptors, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            )
+            assert await asyncio.wait_for(child.stdout.readline(), 5) == b"ready\n"
+        # Parent descriptors closed, but the child still owns the first slot.
+        try:
+            async with runtime._process_slot("image"):
+                async def third():
+                    async with runtime._process_slot("image"):
+                        return "admitted"
+                waiting = asyncio.create_task(third())
+                await asyncio.sleep(0.15)
+                assert not waiting.done()
+                child.stdin.close()
+                await asyncio.wait_for(child.wait(), 5)
+                assert await asyncio.wait_for(waiting, 5) == "admitted"
+        finally:
+            if child.returncode is None:
+                child.kill()
+                await child.wait()
+        for descriptor in descriptors:
+            with pytest.raises(OSError):
+                os.fstat(descriptor)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("feature", runtime._IMAGE_CODE_MODE_FEATURES)
+@pytest.mark.parametrize("enabled", [False, None])
+def test_image_code_mode_must_be_available_before_submission(sdk, feature, enabled):
+    sdk.feature_pages[None].data = [
+        item for item in sdk.feature_pages[None].data if item.name != feature
+    ]
+    if enabled is not None:
+        sdk.feature_pages[None].data.append(_Record(name=feature, enabled=enabled))
+    with pytest.raises(runtime.CodexRuntimeError, match="effective_image_code_mode_unavailable") as failure:
+        _generate()
+    assert failure.value.metadata["submitted"] is False
+    assert sdk.turns == []
+
+
+def test_code_mode_is_enabled_only_for_images_without_enabling_other_tools(tmp_path):
+    for kind in ("image", "text"):
+        config = runtime._config(tmp_path, {"kind": kind}, "restricted")
+        for key in runtime._IMAGE_CODE_MODE_FEATURES:
+            assert config["features"][key] is (kind == "image")
+        for key in set(runtime._DISABLED_FEATURES) - set(runtime._IMAGE_CODE_MODE_FEATURES):
+            assert config["features"][key] is False
+        assert config["permissions"]["restricted"]["network"]["enabled"] is False

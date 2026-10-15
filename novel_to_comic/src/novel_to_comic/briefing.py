@@ -14,7 +14,7 @@ from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.protected_language import anchor_protected_language
 from novel_to_comic.models.story_bible import StoryBible, story_bible_context
-from novel_to_comic.cast_roster import cast_character_ids
+from novel_to_comic.cast_roster import DENSEST_PAGE_WORDS, cast_character_ids
 from novel_to_comic.book_context import book_context_instructions
 from novel_to_comic.target_artifacts import TargetArtifacts
 
@@ -40,7 +40,7 @@ def recommended_page_envelope(
     # pages. A scene still needs at least one page.
     words = max(1, word_count)
     scenes = max(1, scene_count)
-    minimum = max(scenes, (words + 399) // 400)
+    minimum = max(scenes, (words + DENSEST_PAGE_WORDS - 1) // DENSEST_PAGE_WORDS)
     maximum = max(minimum + scenes // 2, (words + 249) // 250)
     return minimum, maximum
 

@@ -470,7 +470,8 @@ def _medium_tokens(value: str) -> frozenset[str]:
 
 
 _CAPITALIZED = re.compile(r"[A-Z][\w'’-]+")
-_SENTENCE_START = re.compile(r"(?:^|[.!?:;]\s+)$")
+# A word opening a line, bullet, sentence, clause dash, or bracket/quote.
+_SENTENCE_START = re.compile(r"(?:^\s*(?:[-*•]\s+)?|[.!?:;]\s+|\s*[—–]\s*)[(\[\"'“‘]*\Z", re.MULTILINE)
 
 
 def _story_name_in_template(template: str, story_bible: StoryBible) -> str | None:
@@ -478,18 +479,21 @@ def _story_name_in_template(template: str, story_bible: StoryBible) -> str | Non
 
     Templates are applied to every character and place, so naming one (the
     city in a snowbank, a character's state of dress) carries that scene into
-    unrelated assets. Full names and aliases match anywhere; a capitalized word
-    from a name matches where the template capitalizes it mid-sentence.
+    unrelated assets. Only proper-noun usage counts: ordinary words such as an
+    alias "White" or "the room" must not drop "black and white ink" or "the
+    room's shadows". A multi-word name with a capitalized word matches where
+    the template writes it as written; a capitalized word from a name matches
+    where the template capitalizes it mid-sentence.
     """
     phrases, words = set(), set()
     for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props):
         for name in (entity.name, *getattr(entity, "aliases", ())):
-            if len(name.strip()) >= 4:
-                phrases.add(name.strip().casefold())
+            name = name.strip()
+            if len(name.split()) > 1 and _CAPITALIZED.search(name):
+                phrases.add(name)
             words.update(w.removesuffix("'s").removesuffix("’s") for w in _CAPITALIZED.findall(name) if len(w) >= 4)
-    folded = template.casefold()
     for phrase in phrases:
-        if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", folded):
+        if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", template):
             return phrase
     for match in _CAPITALIZED.finditer(template):
         word = match.group().removesuffix("'s").removesuffix("’s")

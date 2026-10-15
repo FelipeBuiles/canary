@@ -5,7 +5,6 @@ from __future__ import annotations
 from ..page_operations import (_generation_retry, _sync_draw_progress, enqueue_all_undrawn_pages, prepare_undrawn_pages)
 
 
-from novel_to_comic.style_reference import require_style_reference
 from novel_to_comic.server.codex_admission import visual_review_operations
 
 import asyncio
@@ -34,6 +33,7 @@ from novel_to_comic.narrative_review import draw_review_recheck_phases, require_
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_source import PageSourceStale, page_source_view
 from novel_to_comic.lettering.page_read import page_read_adapter
+from novel_to_comic.lettering.service import project_lettering_mode
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter  # noqa: F401  (tests patch it here)
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -51,7 +51,7 @@ from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, Ta
 
 from ..auth import get_current_user
 from novel_to_comic.codex_dev import classify_operations
-from ..codex_admission import draw_operations, page_check_operations
+from ..codex_admission import correction_interpret_operations, draw_operations, page_check_operations
 from ..deps import event_key, get_project, project_key
 from ..generation_jobs import generation_job_payload, generation_jobs_snapshot
 from ..page_outcomes import record_page_outcome
@@ -604,7 +604,6 @@ def _prepare_initial_generation(
             retry=_generation_retry(target, page_number),
             depiction=depiction,
             style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         complete_page_adapter(config, request=compiled.request).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
@@ -1163,7 +1162,6 @@ def _prepare_explicit_correction(
             context_source_unit_ids=tuple(body.context_source_unit_ids),
             artifacts=target,
             style_template=config.style_template,
-            style_reference_path=require_style_reference(target.project_dir, config.style_template),
         )
         complete_page_adapter(config, request=prepared.compiled.request).prepare(prepared.compiled)
         return prepared
@@ -1378,6 +1376,80 @@ async def submit_page_correction(
     }
 
 
+def _interpretation_inputs(target: TargetArtifacts, project_dir, page_number: int, body: PageCorrectionCreate):
+    """The current render and canonical page the author's draft was written against."""
+    from novel_to_comic.lettering.service import is_hybrid
+
+    if not body.changes:
+        raise HTTPException(422, "Add a change before checking it.")
+    try:
+        page = target.read_page(page_number)
+        provenance = _latest_provenance(target, page_number)
+        if provenance is None:
+            raise HTTPException(409, "Page has no render to change")
+        if (body.parent_render_revision, body.comic_page_revision) != (provenance.render.revision, page.revision):
+            raise HTTPException(409, "The page changed since this draft was written; reload it and try again.")
+        image = target.read_render(page_number, provenance.render.revision)
+        inventory = approved_visual_inventory(project_dir)
+        return page, inventory, image, not is_hybrid(target)
+    except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def _interpretation_cost(config, page, inventory, body: PageCorrectionCreate, lettering_in_art: bool) -> float:
+    from novel_to_comic.correction_interpreter import estimate_interpretation_cost, interpretation_prompt
+
+    prompt = interpretation_prompt(page=page, inventory=inventory, changes=body.changes,
+                                   lettering_in_art=lettering_in_art)
+    return estimate_interpretation_cost(config, prompt, len(body.changes))
+
+
+@router.post("/pages/{page_number}/corrections/interpret/estimate", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
+def interpret_page_corrections_estimate(page_number: int, body: PageCorrectionCreate, project=Depends(get_project)):
+    """Price checking the draft's change requests, without spending."""
+    from ..credits import credit_estimate_for_provider_cost
+
+    project_dir, config, _state = project
+    page, inventory, _image, lettering_in_art = _interpretation_inputs(
+        TargetArtifacts(project_dir), project_dir, page_number, body)
+    return credit_estimate_for_provider_cost(
+        _interpretation_cost(config, page, inventory, body, lettering_in_art), "draw", reserve=True,
+        funding=classify_operations(correction_interpret_operations(config)),
+    )
+
+
+@router.post("/pages/{page_number}/corrections/interpret", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
+async def interpret_page_corrections(page_number: int, body: PageCorrectionCreate, project_id: str,
+                                     request: Request, project=Depends(get_project),
+                                     user_id: str = Depends(get_current_user)):
+    """Read each change request against the current render: a precise edit
+    for Draw, or a route to the page plan or the script. Advice only; the
+    draft, issues and plan are unchanged."""
+    from ..credited_job import run_credited_page_check
+    from novel_to_comic.correction_interpreter import interpret_changes
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    page, inventory, image, lettering_in_art = _interpretation_inputs(target, project_dir, page_number, body)
+    record_page_outcome(request.app, "change_check_requested", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number, render_revision=body.parent_render_revision)
+    try:
+        result = await run_credited_page_check(
+            user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
+            estimated_cost_usd=_interpretation_cost(config, page, inventory, body, lettering_in_art),
+            operations=correction_interpret_operations(config),
+            work=lambda: interpret_changes(config=config, page=page, inventory=inventory, image=image,
+                                           changes=body.changes, lettering_in_art=lettering_in_art),
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "page_number": page_number,
+        "parent_render_revision": body.parent_render_revision,
+        "changes": [reading.model_dump() for reading in result.value.changes],
+    }
+
+
 @router.get("/pages/{page_number}/visual-review/estimate")
 def visual_review_estimate(page_number: int, project=Depends(get_project)):
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
@@ -1501,22 +1573,35 @@ def _replan_operations(config):
     return (("text", config.effective_plan_model()),)
 
 
-def _replan_cost(target: TargetArtifacts, project_dir, config, page_number: int) -> float:
+def _replan_cost(target: TargetArtifacts, project_dir, config, page_number: int, author_request: str = "") -> float:
     from novel_to_comic.page_planning import estimate_page_replan_cost
 
     return estimate_page_replan_cost(
         target, approved_visual_inventory(project_dir), page_number, model=config.effective_plan_model(),
+        author_request=author_request,
     )
 
 
+class PageReplanCreate(BaseModel):
+    """An optional author request the replanned page must carry out."""
+
+    request: str = Field(default="", max_length=1000)
+
+
+# The request's own length barely moves the estimate; its presence decides
+# whether a page without plan problems can be replanned at all.
+_ESTIMATE_AUTHOR_REQUEST = "Move the requested line or staging as the author asks."
+
+
 @router.get("/pages/{page_number}/replan/estimate")
-def replan_page_estimate(page_number: int, project=Depends(get_project)):
-    """Price one page's plan repair; 409 when its plan has nothing to repair."""
+def replan_page_estimate(page_number: int, with_request: bool = False, project=Depends(get_project)):
+    """Price one page's plan repair; 409 when it has nothing to repair and no request."""
     from ..credits import credit_estimate_for_provider_cost
 
     project_dir, config, _state = project
     try:
-        cost = _replan_cost(TargetArtifacts(project_dir), project_dir, config, page_number)
+        cost = _replan_cost(TargetArtifacts(project_dir), project_dir, config, page_number,
+                            _ESTIMATE_AUTHOR_REQUEST if with_request else "")
     except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return credit_estimate_for_provider_cost(
@@ -1526,12 +1611,15 @@ def replan_page_estimate(page_number: int, project=Depends(get_project)):
 
 @router.post("/pages/{page_number}/replan", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
 async def replan_one_page(page_number: int, project_id: str, request: Request,
+                          body: PageReplanCreate | None = None,
                           project=Depends(get_project), user_id: str = Depends(get_current_user)):
-    """Rewrite one page's plan to clear its validation failures.
+    """Rewrite one page's plan to clear its validation failures, or to carry
+    out the author's request (which panel holds a line, what each shows).
 
-    The page keeps its beats and lettering; its current artwork becomes stale
-    and is redrawn separately from Pages.
+    The page keeps its beats and lettering wording; its current artwork
+    becomes stale and is redrawn separately from Pages.
     """
+    author_request = body.request.strip() if body else ""
     from ..credited_job import run_credited_page_check
     from novel_to_comic.clients.text import generate_json
     from novel_to_comic.generation_checkpoints import checkpointed_generator
@@ -1541,20 +1629,22 @@ async def replan_one_page(page_number: int, project_id: str, request: Request,
     target = TargetArtifacts(project_dir)
     model = config.effective_plan_model()
     record_page_outcome(request.app, "replan_requested", user_id=user_id, project_id=project_id,
-                        target=target, page_number=page_number)
+                        target=target, page_number=page_number,
+                        category="author_request" if author_request else "validation")
 
     async def generate(**kwargs):
         return await generate_json(config=config, model=model, temperature=0.25, **kwargs)
 
     try:
-        cost = _replan_cost(target, project_dir, config, page_number)
+        cost = _replan_cost(target, project_dir, config, page_number, author_request)
         revised = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=cost, operations=_replan_operations(config),
             work=lambda: replan_page(
                 target, approved_visual_inventory(project_dir), page_number,
                 generate=checkpointed_generator(generate, artifacts=target, stage="plan", model=model),
-                model=model,
+                model=model, author_request=author_request,
+                editable_lettering=project_lettering_mode(target, config) == "editable",
             ),
         )
     except PlanInvariantError as exc:

@@ -80,6 +80,32 @@ still requests `gpt-image-2`, not a 2.5 selector. The SDK result schema does not
 expose the resolved backend image-model identity, so neither a generated 2.0
 image nor a generated 2.5 image was established by this probe.
 
+### October 14 model retirement and image tool access
+
+GPT-5.5 retired from Codex with ChatGPT sign-in on October 14, 2026 at
+19:00 UTC; API access is unaffected. See the
+[official retirement announcement](https://learn.chatgpt.com/docs/changelog).
+The current subscription image choice is `codex-dev/image/gpt-6.1-sol`.
+Existing saved image/Draw selections must be explicitly changed; the adapter
+does not silently substitute a model. Existing editions advance through the
+normal profile revision for new work, retaining rendered pages and provenance.
+
+The authenticated catalog specifies `code_mode_only` for available reasoning
+models. Disabling the Code Mode host hides the image tool even though image
+capability and feature gates pass. A 0.162.1 isolated comparison also returned
+no image with Code Mode disabled; a CLI upgrade alone is insufficient.
+Enabling Code Mode on the existing 0.159.0 runtime produced a visually checked
+1254×1254 red-mug PNG using `gpt-6.1-sol`. The fixed adapter then completed
+a one-reference blue-mug edit (probe `2865394a07da4c8bb57bb2affb827496`),
+with zero retries and the restricted boundary intact. These establish basic
+generation/edit execution, not full comic-page quality.
+
+GPT Image 2.5 is available through the API Sunburst route, but the subscription
+native image tool exposes no model argument. The pinned 0.159.0, released
+0.162.1 and inspected upstream main still hardcode `gpt-image-2`.
+Changing the Python selector or the reasoner cannot select 2.5. The resolved
+backend model remains unknown; do not relabel subscription results as 2.5.
+
 From the repository root, start the local stack with:
 
 ```sh
@@ -113,7 +139,7 @@ freely mixed transports, and image-tool distinction.
 
 The launcher does not create legacy route maps. Explicit Codex diagnostic routing uses
 `CANARY_CODEX_DEV_TEXT_ROUTES` and/or `CANARY_CODEX_DEV_IMAGE_ROUTES`; their defaults
-are empty. Image reasoning defaults to `gpt-5.5`, which does not identify the
+are empty. Image reasoning defaults to `gpt-6.1-sol`, which does not identify the
 image backend. The model settings panel rejects API selections shadowed by an
 explicit Codex route: restart the launcher with `--api` to use those API choices.
 Experimental Codex Draw can use API OCR, and API Draw can use Codex OCR.
@@ -162,10 +188,11 @@ and no existing Draw edition, then use the normal Draw estimate and **Queue all*
 action. There is no public provider selector. The first edition binds the requested
 `gpt-image-2` source selector, image reasoning selector and restricted runtime
 execution fingerprint; changing those controls cannot mix models into that edition.
-An existing edition requires its original execution profile, including its runtime
-fingerprint: runtime v7 binds Fast mode and does not silently upgrade an edition
-frozen under an older runtime. An existing production edition rejects Codex selection without rewriting
-it. This change provides no edition reset or migration action.
+The current runtime fingerprint includes v9's image Code Mode controls, two-image
+admission policy and Fast mode. When a retained profile is no longer spendable, new work follows the
+explicit edition-revision advance to the configured profile, preserving existing
+pages, frozen provenance and the project's lettering mode. See the
+[stage contract](stage-contracts.md) for profile transitions.
 
 All required approved authorities remain verbatim and ordered; none are dropped
 to fit. The limit is **five total image inputs**, including the preceding render
@@ -235,10 +262,42 @@ internal `image_specification`. Only the native tool arguments are instructions
 for the built-in image call; internal specification fields must not be copied
 into that call as unsupported parameters. This is a clean runtime/provider-wire
 v3 cutover, not an old-wire compatibility shim.
-Runtime v7 retains those tool arguments and adds the priority service tier to
-the execution fingerprint and frozen image controls. Existing editions remain
-readable and exportable, but new pages/corrections require their original
-execution profile; use a new project for an incompatible edition.
+Runtime v7 added the priority service tier to the execution fingerprint and frozen
+image controls. Runtime v8 retains those controls and adds two-image admission. Runtime v9 enables
+Code Mode and its host for images only. The image preflight requires all three
+Code Mode flags; shell, network, MCP, apps, plugins and other blocked tools remain
+disabled. Text keeps its existing tool controls.
+
+Initial Codex page jobs use two durable dispatch lanes and a two-page account
+pool; corrections remain exclusive. The transport also limits image calls to two
+per OS user across backend processes and event loops. A shared guard and two
+file-locked slots under the system `/tmp` directory provide admission before
+spawning. Text takes the guard exclusively, so text calls remain serialized and
+do not overlap images. Busy calls wait without submitting a turn; cancellation
+while waiting does not consume allowance. The slot descriptors are inherited by
+the child, keeping ownership through parent loss and child cleanup. No image
+retry or fallback is added. Runtime and account limits are independent of provider
+capacity; provider-free tests do not establish a live throughput improvement.
+
+Completed Draw provenance and compact usage records retain these timings, in
+seconds, under `codex_runtime`:
+
+| Field | Measured interval |
+| --- | --- |
+| `runtime_queue_seconds` | Waiting for the transport's cross-process admission |
+| `startup_seconds` | Admission through subprocess startup and preflight, before turn submission |
+| `reasoning_seconds` | Turn submission through the first image-start event, including submission latency |
+| `image_generation_seconds` | First image-start event through the terminal image event |
+| `image_completed_elapsed_seconds` | Admission through the terminal image event |
+| `cleanup_seconds` | Terminal image event through validation, interruption and SDK teardown |
+| `execution_elapsed_seconds` | Admission through child execution/SDK teardown |
+
+Missing image-start events leave reasoning/generation durations absent, rather
+than reporting zero. Failed image events can also carry phase durations; status
+still determines success. Checkpoint recovery only reports timings available at
+checkpoint time. Durable job `queued_at`/`started_at` timestamps separately expose
+the job queue wait; runtime timing does not include that interval or final page
+publication. Fast mode and low image reasoning effort remain enabled.
 
 Canonical references use `reference_mode=fresh-thread-user-images`: only the
 supplied ordered image attachments enter a fresh thread. With references,
@@ -358,12 +417,12 @@ pipeline projects. These are opt-in instructions, not startup/test behavior:
 ```sh
 novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe image --preflight-only --output-dir "$HOME/canary-codex-probes"
 novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe structured-text --reasoning-model gpt-6-luna --output-dir "$HOME/canary-codex-probes"
-novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe image --reasoning-model gpt-5.5 --output-dir "$HOME/canary-codex-probes"
-novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe edit --reasoning-model gpt-5.5 --source-image "$HOME/canary-codex-probes/previous-result.png" --output-dir "$HOME/canary-codex-probes"
+novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe image --reasoning-model gpt-6.1-sol --output-dir "$HOME/canary-codex-probes"
+novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe edit --reasoning-model gpt-6.1-sol --source-image "$HOME/canary-codex-probes/previous-result.png" --output-dir "$HOME/canary-codex-probes"
 ```
 
 Replace `previous-result.png` with the real preceding successful result. Defaults
-are `gpt-6-luna` for text and `gpt-5.5` for image/edit. No `--probe` prints help
+are `gpt-6-luna` for text and `gpt-6.1-sol` for image/edit. No `--probe` prints help
 and submits nothing. Reports distinguish completed validation, failure and ambiguous
 submission; images require visual review.
 

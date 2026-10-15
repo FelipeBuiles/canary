@@ -17,6 +17,7 @@ from rich.console import Console
 
 from novel_to_comic import artifacts
 from novel_to_comic.book_map import ensure_book_map, estimate_book_map, promote_recurring_cast
+from novel_to_comic.cast_roster import promote_multi_page_cast
 from novel_to_comic.clients.structured_call import (
     StructuredCallError,
     generate_validated_json,
@@ -966,13 +967,16 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         if registry is not None:
             story_bible.revision = registry.revision + 1
         artifacts.write_story_bible(project_dir, story_bible)
-        produce_source_document(
+        source = produce_source_document(
             TargetArtifacts(project_dir),
             novel_text,
             story_bible,
             part_id=part_key if part else None,
             first_ordinal=first_ordinal,
         )
+        if promoted := promote_multi_page_cast(story_bible, source, part_key if part else None):
+            ctx.log("On several pages, so Cast will design: " + ", ".join(promoted), level="dim")
+            artifacts.write_story_bible(project_dir, story_bible)
         if part is not None:
             write_extraction_delta(project_dir, compute_delta(
                 registry, story_bible, part_key, suppressed_names=suppressed,

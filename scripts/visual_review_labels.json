@@ -1,0 +1,13 @@
+{
+  "_comment": "Hand labels for saved visual-review findings, by issue_id: 'valid' or 'noise'. Overrides author statuses in scripts/replay_visual_review.py. Seeded 2026-10-13 from the-monkey-s-paw-argon-text part_0001 (gemini-4-argon, pre-calibration prompt).",
+  "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-1": "noise",
+  "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-2": "valid",
+  "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-3": "noise",
+  "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-4": "noise",
+  "visual-review-641bce47f2b57f5a0d260c532aa38654dc0d26621af43017f053353102e2bdae-5": "noise",
+  "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-1": "valid",
+  "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-2": "noise",
+  "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-3": "noise",
+  "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-4": "noise",
+  "visual-review-3c751b0729916dcac362a842e1c63940697a53c208616cfcdadb292441ec39cc-5": "valid"
+}

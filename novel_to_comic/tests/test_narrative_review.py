@@ -552,7 +552,7 @@ def test_map_review_padding_does_not_repeat_map_or_detail_generation(tmp_path):
             generate=generate,
         )
     )
-    assert len(plan.pages) == 38 and maps == 1 and details == 5
+    assert len(plan.pages) == 38 and maps == 1 and details == 10
 
 
 def test_adapt_editorial_failure_gets_one_repair_and_blocks_publication(tmp_path):
@@ -943,7 +943,7 @@ def test_author_instruction_is_reviewed_and_part_of_cache_identity(tmp_path):
 
 
 @pytest.mark.parametrize("resolved", [True, False])
-def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
+def test_plan_staging_review_repairs_only_its_cited_page(tmp_path, resolved):
     adaptation = _long_adaptation(24)
     maps, detail_starts = 0, []
 
@@ -964,7 +964,7 @@ def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
             detail_starts.append(numbers[0])
             repair = "PREVIOUS DETAIL:" in request["user_content"]
             if repair:
-                assert numbers == list(range(17, 25))
+                assert numbers == [24]
                 assert "seal the idol with the papers" in request["user_content"]
             for page in raw["pages"]:
                 page["content"].append({**page["content"][0], "lettering_ids": [],
@@ -1000,7 +1000,7 @@ def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
         assert target.read_plan_review_draft().pages[-1].content[0].visual_intent == "seal the idol with the papers"
         assert target.read_validation("plan").blocked
     assert maps == 1
-    assert sorted(detail_starts) == [1, 9, 17, 17]
+    assert sorted(detail_starts) == [1, 5, 9, 13, 17, 21, 24]
     assert any("narrative_review_unsupported_event" in a.invariant_codes for a in target.read_validation("plan").attempt_history)
 
 
@@ -1031,7 +1031,7 @@ def test_narrative_finding_after_structural_repair_still_gets_its_own_repair(tmp
             last = raw["pages"][-1]["content"][0]
             last["visual_intent"] = ("seal only the papers; the idol is absent" if len(repairs) == 2
                                      else "seal the idol with the papers")
-            if 17 in numbers and not repairs:
+            if 24 in numbers and not repairs:
                 last["camera"] = None
             return ApiResult(value=detail_response({**raw, "pages": [p for p in raw["pages"] if p["page_number"] in numbers]}))
         finding = None

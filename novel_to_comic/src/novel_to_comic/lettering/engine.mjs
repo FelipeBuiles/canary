@@ -209,23 +209,42 @@ function innerBounds(panel) {
   const b={x:panel.x+PANEL_MARGIN_X,y:panel.y+PANEL_MARGIN_Y,width:panel.width-2*PANEL_MARGIN_X,height:panel.height-2*PANEL_MARGIN_Y};
   return b.width<.02 || b.height<.02 ? panel : b;
 }
-/** Provisional mouth target in the lower centre of a detected head.
+const TAIL_GAP=.008;
+/** Aimed at the mouth (lower centre of a detected head), stopping just
+ * outside the head so the tip never covers the face.
  * Keep in parity with placement.py toward_head. */
 export function tailTowardHead(body, head) {
-  const x=head.x+head.width/2, y=head.y+head.height*.72;
+  const mx=head.x+head.width/2, my=head.y+head.height*.72;
+  const cx=body.x+body.width/2, cy=body.y+body.height/2, dx=mx-cx, dy=my-cy;
+  const left=head.x-TAIL_GAP, top=head.y-TAIL_GAP, right=head.x+head.width+TAIL_GAP, bottom=head.y+head.height+TAIL_GAP;
+  let x=mx, y=my;
+  if (!(left<=cx && cx<=right && top<=cy && cy<=bottom)) {
+    // Where the segment from the body's centre first enters the padded head.
+    let enter=0;
+    for (const [delta,start,low,high] of [[dx,cx,left,right],[dy,cy,top,bottom]])
+      if (delta) enter=Math.max(enter,Math.min((low-start)/delta,(high-start)/delta));
+    enter=Math.max(0,Math.min(1,enter));
+    x=cx+dx*enter; y=cy+dy*enter;
+  }
   return {x:Math.min(1,Math.max(0,x)),y:Math.min(1,Math.max(0,y))};
 }
 /** Nearest top-left for ``rect`` that covers none of ``obstacles`` inside
- * ``bounds``, or null. Keep in parity with placement.py clear_of. */
+ * ``bounds``. When none is clean, the spot covering the least obstacle area
+ * if it beats ``rect``'s own; else null. Keep in parity with placement.py clear_of. */
 export function clearOfHeads(rect, obstacles, bounds, vertical=true) {
   if (!obstacles.some(o=>intersects(rect,o))) return {x:rect.x,y:rect.y};
   const candidates=obstacles.flatMap(o=>[
     {x:o.x-rect.width-PLACEMENT_GAP,y:rect.y},{x:o.x+o.width+PLACEMENT_GAP,y:rect.y},
     ...(vertical?[{x:rect.x,y:o.y-rect.height-PLACEMENT_GAP},{x:rect.x,y:o.y+o.height+PLACEMENT_GAP}]:[])]);
-  const fits=candidates.filter(c=>c.x>=bounds.x-1e-9 && c.y>=bounds.y-1e-9 && c.x+rect.width<=bounds.x+bounds.width+1e-9 &&
-    c.y+rect.height<=bounds.y+bounds.height+1e-9 && !obstacles.some(o=>intersects({...rect,...c},o)));
-  if (!fits.length) return null;
-  return fits.reduce((best,c)=>(c.x-rect.x)**2+(c.y-rect.y)**2<(best.x-rect.x)**2+(best.y-rect.y)**2?c:best);
+  const inBounds=candidates.filter(c=>c.x>=bounds.x-1e-9 && c.y>=bounds.y-1e-9 && c.x+rect.width<=bounds.x+bounds.width+1e-9 &&
+    c.y+rect.height<=bounds.y+bounds.height+1e-9);
+  const covered=c=>obstacles.reduce((sum,o)=>sum+overlapArea({...rect,...c},o),0);
+  const distance=c=>(c.x-rect.x)**2+(c.y-rect.y)**2;
+  const fits=inBounds.filter(c=>!obstacles.some(o=>intersects({...rect,...c},o)));
+  if (fits.length) return fits.reduce((best,c)=>distance(c)<distance(best)?c:best);
+  const own=covered(rect), better=inBounds.filter(c=>covered(c)<own-1e-12);
+  if (!better.length) return null;
+  return better.reduce((best,c)=>covered(c)<covered(best) || (covered(c)===covered(best) && distance(c)<distance(best))?c:best);
 }
 const moved=(element,from,to)=>({placement:{...element.placement,
   x:Math.min(1-element.placement.width,Math.max(0,element.placement.x+to.x-from.x)),

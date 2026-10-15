@@ -476,10 +476,12 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     elif wire.claude_native_json:
         assert body["output_config"]["effort"] == wire.effort == "medium"
     if "reasoning_effort" in route["litellm_params"]:
+        # The app's selected effort overrides the gateway's fallback default.
+        expected_effort = payload.get("reasoning_effort", route["litellm_params"]["reasoning_effort"])
         if wire.provider_key == "vertex_ai":
-            assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "medium"
+            assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == expected_effort
         else:
-            assert body["reasoning_effort"] == route["litellm_params"]["reasoning_effort"]
+            assert body["reasoning_effort"] == expected_effort
     for key, value in route["litellm_params"].get("extra_body", {}).items():
         assert body[key] == value
     price = _app_price(model)

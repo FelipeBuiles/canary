@@ -309,6 +309,44 @@ export function submitPageCorrections(
   });
 }
 
+/** Where one draft change belongs, and the precise wording suggested for it. */
+export interface ChangeReading {
+  change_id: string;
+  route: "draw" | "plan" | "script";
+  instruction: string;
+  reason: string;
+}
+
+export interface ChangeReadings {
+  page_number: number;
+  parent_render_revision: number;
+  changes: ChangeReading[];
+}
+
+/** Price checking the draft's changes against the page; no spend. */
+export function getChangeCheckEstimate(
+  project: string,
+  pageNumber: number,
+  body: PageCorrectionBody,
+): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/corrections/interpret/estimate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Read each change against the current render. Advice only; the draft is unchanged. */
+export function checkPageChanges(
+  project: string,
+  pageNumber: number,
+  body: PageCorrectionBody,
+): Promise<ChangeReadings> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/corrections/interpret`, {
+    paidAction: true, method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function getFinishPreflight(project: string): Promise<FinishPreflight> {
   return apiFetch(`${projectPath(project)}/export/preflight`);
 }
@@ -348,6 +386,9 @@ export interface VisualReviewFinding {
   observation: string;
   expected: string;
   correction: string;
+  /** Absent on reviews made before reader-impact rating. */
+  impact?: "misreads_story" | "breaks_continuity" | "noticeable_flaw" | null;
+  reader_impact?: string | null;
   /** Present once the finding has persisted as a page issue. */
   issue_id?: string | null;
 }
@@ -416,14 +457,20 @@ export function getVisualReviewEstimate(project: string, pageNumber: number): Pr
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
 }
 
-/** Price one page's plan repair; rejects when the page's plan has nothing to repair. */
-export function getPageReplanEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
-  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan/estimate`);
+/**
+ * Price one page's plan repair. Without an author request it rejects when the
+ * page's plan has nothing to repair.
+ */
+export function getPageReplanEstimate(project: string, pageNumber: number, withRequest = false): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan/estimate${withRequest ? "?with_request=true" : ""}`);
 }
 
-/** Rewrite one page's plan; its artwork then needs a redraw from Pages. */
-export function replanPage(project: string, pageNumber: number): Promise<{ page_number: number; revision: number }> {
-  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { paidAction: true, method: "POST" });
+/** Rewrite one page's plan, optionally to carry out an author request; its artwork then needs a redraw. */
+export function replanPage(project: string, pageNumber: number, request?: string): Promise<{ page_number: number; revision: number }> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, {
+    paidAction: true, method: "POST",
+    ...(request ? { body: JSON.stringify({ request }) } : {}),
+  });
 }
 
 /** Price reviewing the saved script and plan again; rejects when both reviews are current. */

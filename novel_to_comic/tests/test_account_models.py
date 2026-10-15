@@ -298,7 +298,7 @@ def test_catalog_matches_exact_gateway_and_pricing_routes(client):
     catalog = client.get("/api/account/model-settings").json()
     assert {model["id"] for model in catalog["models"] if model["funding"] == "api"} <= aliases.keys()
     assert [stage["id"] for stage in catalog["stages"]] == [
-        "extract", "brief", "prompt", "image", "adapt", "plan", "draw", "ocr", "visual_review",
+        "extract", "brief", "prompt", "image", "adapt", "plan", "draw", "ocr", "visual_review", "correction",
     ]
     for stage in catalog["stages"]:
         assert stage["description"]
@@ -374,7 +374,7 @@ def test_disabled_codex_choices_remain_visible_but_cannot_execute(client, tmp_pa
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": "gpt-6-sol"}}).status_code == 200
 
 
-@pytest.mark.parametrize("reasoner", ("gpt-5.5",))
+@pytest.mark.parametrize("reasoner", ("gpt-6.1-sol",))
 def test_codex_image_reasoner_and_text_only_constraints(client, monkeypatch, reasoner):
     enable_codex(monkeypatch)
     image = f"codex-dev/image/{reasoner}"
@@ -659,9 +659,9 @@ def test_existing_edition_allows_text_and_draw_model_changes(client, project_set
     assert response.status_code == 200
     before = TargetArtifacts(project_settings).read_book_edition()
     enable_codex(monkeypatch)
-    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "codex-dev/image/gpt-5.5", "adapt": "claude-opus-5-5"}})
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "codex-dev/image/gpt-6.1-sol", "adapt": "claude-opus-5-5"}})
     assert response.status_code == 200
-    assert load_config(project_settings)[0].dev_model_selections["draw"] == "codex-dev/image/gpt-5.5"
+    assert load_config(project_settings)[0].dev_model_selections["draw"] == "codex-dev/image/gpt-6.1-sol"
     assert TargetArtifacts(project_settings).read_book_edition() == before
 
 
@@ -691,7 +691,7 @@ def test_curated_model_choices(client, monkeypatch):
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(values))
     models = client.get("/api/account/model-settings").json()["models"]
     assert {m["id"] for m in models if m["funding"] == "codex_subscription"} == {
-        "codex-dev/text/gpt-6-luna", "codex-dev/text/gpt-6-sol", "codex-dev/image/gpt-5.5",
+        "codex-dev/text/gpt-6-luna", "codex-dev/text/gpt-6-sol", "codex-dev/image/gpt-6.1-sol",
         "codex-dev/text/gpt-6.1-sol",
     }
     assert "claude-fable-5-1" not in {m["id"] for m in models}
@@ -754,3 +754,18 @@ def test_operator_reasoning_patch_validates_against_new_model(client, tmp_path, 
     assert result.json()["reasoning_options"]["deepseek-v4.1-flash"] == ["none", "enabled"]
     assert client.patch(path, headers=headers, json={"reasoning_efforts": {"adapt": "medium"}}).status_code == 400
     assert client.get(path, headers=headers).json()["reasoning_efforts"]["adapt"] == "enabled"
+
+
+def test_account_can_explicitly_replace_retired_subscription_preferences(client, tmp_path, monkeypatch):
+    enable_codex(monkeypatch)
+    path = tmp_path / "alice" / ".model-settings.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"version": 1, "selections": {
+        "image": "codex-dev/image/gpt-5.5", "draw": "codex-dev/image/gpt-5.5",
+        "plan": "gemini-3.8-flash",
+    }}))
+    changes = {"image": "codex-dev/image/gpt-6.1-sol", "draw": "codex-dev/image/gpt-6.1-sol"}
+    response = client.patch("/api/account/model-settings", json={"selections": changes})
+    assert response.status_code == 200
+    saved = json.loads(path.read_text())["selections"]
+    assert saved == {**changes, "plan": "gemini-3.8-flash"}

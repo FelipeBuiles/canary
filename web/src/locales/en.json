@@ -2337,6 +2337,7 @@
   "Sources": "Sources",
   "Spacing": "Spacing",
   "Sparse": "Sparse",
+  "Speaker": "Speaker",
   "Speech balloon": "Speech balloon",
   "Speech balloon. Drag to move it, or press Enter to edit its words.": "Speech balloon. Drag to move it, or press Enter to edit its words.",
   "Speech": "Speech",
@@ -3514,5 +3515,18 @@
   "{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}": "{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}",
   "{count, plural, one {# changed reference still to redraw. Its current image stays until the new one lands.} other {# changed references still to redraw. Their current images stay until the new ones land.}}": "{count, plural, one {# changed reference still to redraw. Its current image stays until the new one lands.} other {# changed references still to redraw. Their current images stay until the new ones land.}}",
   "{count, plural, one {# mark} other {# marks}}": "{count, plural, one {# mark} other {# marks}}",
-  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# other check stays open.} other {# other checks stay open.}}"
+  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# other check stays open.} other {# other checks stay open.}}",
+  "BELONGS TO THE PAGE PLAN": "BELONGS TO THE PAGE PLAN",
+  "BELONGS TO THE SCRIPT": "BELONGS TO THE SCRIPT",
+  "CHECK CHANGES": "CHECK CHANGES",
+  "Change this line in Story, then re-plan the page. A redraw can’t change the script.": "Change this line in Story, then re-plan the page. A redraw can’t change the script.",
+  "Checking…": "Checking…",
+  "Page {page} was re-planned. Redraw it so the art matches.": "Page {page} was re-planned. Redraw it so the art matches.",
+  "RE-PLAN THIS PAGE": "RE-PLAN THIS PAGE",
+  "Reads each change against the current page. Nothing is redrawn and your draft stays as it is until you apply a suggestion.": "Reads each change against the current page. Nothing is redrawn and your draft stays as it is until you apply a suggestion.",
+  "Reads your changes against this page: suggests precise wording, and flags changes the artwork can’t make.": "Reads your changes against this page: suggests precise wording, and flags changes the artwork can’t make.",
+  "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.",
+  "SUGGESTED WORDING": "SUGGESTED WORDING",
+  "The draft is not ready to check.": "The draft is not ready to check.",
+  "USE THIS WORDING": "USE THIS WORDING"
 }

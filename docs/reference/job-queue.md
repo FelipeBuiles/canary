@@ -28,7 +28,13 @@ One account executes ordinary queued operations exclusively. Complete-page Draw
 jobs whose frozen provider is FAL, OpenAI or Vertex (`PARALLEL_PAGE_PROVIDERS`) use twelve
 durable dispatch lanes and an account gate that admits up to twelve together;
 ordinary operations wait for those pages to finish, and vice versa. Other
-accounts can proceed concurrently. Shared AI transport admission bounds images
+accounts can proceed concurrently. Initial Codex subscription pages use two
+`codex-page` dispatch lanes and a separate two-page pool within the same account
+gate. Codex corrections remain exclusive. The Codex runtime independently admits
+at most two image calls per OS user across processes; text calls remain exclusive.
+Waiting for a runtime slot does not submit or retry a turn. See
+[Codex timing and admission](codex-dev-capabilities.md#restricted-runtime).
+Shared AI transport admission bounds images
 to twelve and Vertex text to sixteen across accounts, stages, Labs and worker
 event loops. `ai_request_limits.yaml` owns operator pacing budgets: OpenAI image
 routes share 18 starts/minute and 225,000 estimated tokens/minute, with a burst

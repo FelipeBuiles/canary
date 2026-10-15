@@ -280,7 +280,6 @@ class PageItem:
             select_book_edition,
         )
         from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
-        from novel_to_comic.style_reference import require_style_reference
         from novel_to_comic.target_artifacts import TargetArtifacts
 
         if config.draw_model == GATEWAY_IMAGE_NANO_BANANA_21:
@@ -302,7 +301,6 @@ class PageItem:
             select_book_edition(edition_id="labs", profile=profile),
             approved_visual_inventory(self._project_dir), approved_reference_files(self._project_dir),
             retry=RetryProvenance(attempt=1), style_template=config.style_template,
-            style_reference_path=require_style_reference(self._project_dir, config.style_template),
         )
         return profile, compiled
 

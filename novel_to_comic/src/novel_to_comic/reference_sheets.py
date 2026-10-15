@@ -91,10 +91,11 @@ def pack_page_references(references, images, slots, *, first_order=1):
             draw.text((x + 4, 8), label, fill="black", font=font)
             sheet.paste(image, (x, _LABEL_HEIGHT))
             bounds = {"x": x, "y": _LABEL_HEIGHT, "width": image.width, "height": image.height}
+            # Prompt-facing: where the member sits on the sheet. Its source
+            # digest stays in the sheet manifest, where provenance reads it.
             bindings[member.id] = {
                 "input_order": order, "region_pixels": bounds,
                 "sheet_width": width, "sheet_height": height,
-                "source_image_sha256": member.content_sha256,
             }
             manifest.append({"authority": member.model_dump(mode="json"), "region_pixels": bounds})
             x += image.width + _GUTTER

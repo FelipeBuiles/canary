@@ -166,7 +166,7 @@ def test_adapt_admission_uses_only_explicit_adapt_and_plan_models(select_routes)
 
 
 def test_dev_draw_allows_either_or_both_codex_selections(select_routes):
-    config = Config(draw_model="codex-dev/image/gpt-5.5")
+    config = Config(draw_model="codex-dev/image/gpt-6.1-sol")
     select_routes(text=(config.effective_page_ocr_model(), config.effective_visual_review_model()))
     assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
     select_routes()
@@ -208,7 +208,7 @@ def test_cached_page_recovery_needs_neither_selected_route_nor_hold(tmp_path, mo
 def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, codex_image, codex_checks, expected):
     from novel_to_comic import page_drawing
 
-    config = Config(draw_model="codex-dev/image/gpt-5.5") if codex_image else Config()
+    config = Config(draw_model="codex-dev/image/gpt-6.1-sol") if codex_image else Config()
     select_routes(text=(config.effective_page_ocr_model(), config.effective_visual_review_model())
                   if codex_checks else ())
     monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
@@ -258,7 +258,7 @@ def test_mixed_route_still_rejects_disabled_codex_before_queue(tmp_path, monkeyp
 def test_codex_draw_credit_estimate_charges_only_separately_selected_api_checks(select_routes, monkeypatch):
     from novel_to_comic import page_drawing
 
-    config = Config(draw_model="codex-dev/image/gpt-5.5")
+    config = Config(draw_model="codex-dev/image/gpt-6.1-sol")
     select_routes()
     monkeypatch.setenv("PULP_CREDITS_PER_PROVIDER_USD", "100")
     monkeypatch.setenv("PULP_MODEL_COST_MARKUP", "1.0")

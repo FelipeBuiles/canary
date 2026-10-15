@@ -19,9 +19,11 @@ import {
 import {
   pageRenderPreviewUrl,
   referenceFileUrl,
+  type ChangeReading,
   type PageCorrectionBody,
   type PageCorrectionChange,
 } from "../../api/pages";
+import { ChangeCheckAction, ChangeReadingNote } from "./ChangeCheck";
 import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
@@ -196,6 +198,9 @@ export function RevisionDraft({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [previewHash, setPreviewHash] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<Error | string | null>(null);
+  // The latest change check, keyed by change, with the wording it read.
+  const [readings, setReadings] = useState<Map<string, { reading: ChangeReading; asked: string }>>(() => new Map());
+  const [replanned, setReplanned] = useState(false);
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(() => loadRevisionDraft(project, pageNumber, target)?.submittedJobId ?? null);
   const submittedJob = useSubmittedCorrectionJob(project, submittedJobId);
   const job = submittedJob.data?.jobs.find((item) => item.id === submittedJobId);
@@ -395,6 +400,27 @@ export function RevisionDraft({
     );
   }
 
+  function prepareCheck(): { body: PageCorrectionBody; problem: string | null } {
+    const pendingRequest: DraftChange | null = manualInput.trim()
+      ? { id: newChangeId(), instruction: manualInput.trim(), annotations: [] }
+      : null;
+    const { body, problems } = buildBody(pendingRequest ? [...changes, pendingRequest] : changes);
+    if (problems.length > 0) return { body, problem: problems[0] ?? t("The draft is not ready to check.") };
+    if (pendingRequest) {
+      setChanges((current) => [...current, pendingRequest]);
+      setManualInput("");
+    }
+    return { body, problem: null };
+  }
+
+  function readingFor(change: DraftChange) {
+    const entry = readings.get(change.id);
+    if (!entry) return null;
+    // A note describes the wording it read, or its own suggestion once used.
+    const wording = change.instruction.trim();
+    return wording === entry.asked.trim() || wording === entry.reading.instruction.trim() ? entry.reading : null;
+  }
+
   function addChange(change: DraftChange) {
     setChanges((current) => [...current, change]);
     setActiveId(change.id);
@@ -490,6 +516,7 @@ export function RevisionDraft({
     const number = numbers.get(change.id) ?? 0;
     const active = change.id === activeId && !locked;
     const marks = change.annotations.length;
+    const reading = readingFor(change);
     return (
       <div className={`space-y-2 border-l-[3px] pl-3 ${active ? "border-hero-red" : "border-ink-black/20"}`}
         onFocusCapture={() => !locked && setActiveId(change.id)} onClick={() => !locked && setActiveId(change.id)}>
@@ -519,6 +546,12 @@ export function RevisionDraft({
             </Button>
           )}
         </div>
+        {reading && (
+          <ChangeReadingNote project={project} pageNumber={pageNumber} reading={reading}
+            current={change.instruction} locked={locked}
+            onUse={(instruction) => updateChange(change.id, { instruction })}
+            onReplanned={() => { removeChange(change.id); setReplanned(true); }} />
+        )}
       </div>
     );
   }
@@ -728,6 +761,21 @@ export function RevisionDraft({
                 </div>
               )}
             </section>
+          )}
+
+          {replanned && (
+            <p role="status" className="font-body text-sm leading-6">
+              {t("Page {page} was re-planned. Redraw it so the art matches.", { page: String(pageNumber) })}
+            </p>
+          )}
+
+          {!previewFresh && !redraw && reviewCount > 0 && (
+            <ChangeCheckAction project={project} pageNumber={pageNumber} prepare={prepareCheck}
+              disabled={locked || preview.isPending}
+              onReadings={(body, result) => setReadings(new Map(result.changes.map((reading) => [
+                reading.change_id,
+                { reading, asked: body.changes.find((change) => change.id === reading.change_id)?.instruction ?? "" },
+              ])))} />
           )}
 
           {!previewFresh && !redraw && (

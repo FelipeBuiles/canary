@@ -150,7 +150,7 @@ async def test_model_choices_can_change_during_frozen_page_jobs_only(tmp_path, s
     from novel_to_comic.server.job_commands import command
 
     app = app_at(tmp_path)
-    frozen = command("cover", tmp_path, Config(draw_model="codex-dev/image/gpt-5.5"))
+    frozen = command("cover", tmp_path, Config(draw_model="codex-dev/image/gpt-6.1-sol"))
     app.state.generation_jobs["existing"] = SimpleNamespace(
         project_name="account:book", kind=kind, status=status,
         payload={"page_number": 3}, command=frozen,
@@ -167,7 +167,7 @@ async def test_model_choices_can_change_during_frozen_page_jobs_only(tmp_path, s
         result = await client.patch(path, json=body)
     assert result.status_code == expected, result.text
     assert saved == ([body] if expected == 200 else [])
-    assert frozen.config["draw_model"] == "codex-dev/image/gpt-5.5"
+    assert frozen.config["draw_model"] == "codex-dev/image/gpt-6.1-sol"
 
 
 @run_async

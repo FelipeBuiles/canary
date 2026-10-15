@@ -55,7 +55,8 @@ def test_argon_is_optional_json_text_in_labs_and_all_text_stages():
     assert provider_for_model("gemini-4-argon") == "vertex_ai"
     wire = text_wire("gemini-4-argon")
     assert wire.schema_instructions and wire.json_mode
-    assert not any((wire.vision, wire.temperature, wire.streaming))
+    assert wire.vision
+    assert not any((wire.temperature, wire.streaming))
     assert wire.max_output_tokens is None
     assert reasoning_options(wire.id) == ("low", "medium", "high")
     # Labs 20261013-143611-7df22e: Low matched Medium through Plan.
@@ -64,12 +65,14 @@ def test_argon_is_optional_json_text_in_labs_and_all_text_stages():
     assert wire.native_vertex_thinking and wire.effort == "low"
     assert resolve_stage_reasoning({"extract": wire.id, "brief": wire.id}) == {"extract": "low", "brief": "low"}
     assert wire.id in {model["id"] for model in selectable_models()}
-    for stage in ("extract", "brief", "adapt", "plan", "prompt"):
+    for stage in ("extract", "brief", "adapt", "plan", "prompt", "ocr", "visual_review", "correction"):
         assert wire.id in allowed_models(stage)
-    for stage in ("image", "draw", "ocr", "visual_review"):
+    for stage in ("image", "draw"):
         assert wire.id not in allowed_models(stage)
     assert wire.id not in default_selections().values()
-    for capability in ("vision", "native_streaming", "prompt_caching"):
+    # Image input verified through the gateway on 2026-10-13.
+    assert route["model_info"]["supports_vision"] is True
+    for capability in ("native_streaming", "prompt_caching"):
         assert route["model_info"][f"supports_{capability}"] is False
     assert route["model_info"]["supports_reasoning"] is True
     assert route["model_info"]["supports_response_schema"] is True

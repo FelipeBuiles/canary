@@ -53,7 +53,7 @@ def _request(config, refs=()):
     )
 
 
-@pytest.mark.parametrize("reasoner", ["gpt-5.5"])
+@pytest.mark.parametrize("reasoner", ["gpt-6.1-sol"])
 def test_account_image_selection_reaches_exact_codex_reasoner(monkeypatch, reasoner):
     from types import MappingProxyType
 

@@ -6,7 +6,9 @@ never receives Plan's reservation bounds, so they are a hint for which drawn
 panel an item belongs to, not a position.
 
 Reading order is kept: balloons in a panel run top to bottom, and a balloon
-may sit beside its predecessor only when it is to its right and lower.
+may sit beside its predecessor only when it is to its right and lower. Each
+balloon takes the best-scoring spot in its panel: off faces first, then off
+other balloons and in reading order, then over quiet art (``quiet.py``).
 """
 
 from __future__ import annotations
@@ -219,13 +221,15 @@ def speaker_heads(
 
 
 def layout_page(
-    page: ComicPage, panels: Sequence[PinnedGeometry], size_of, heads: Sequence = ()
+    page: ComicPage, panels: Sequence[PinnedGeometry], size_of, heads: Sequence = (),
+    busy=None,
 ) -> dict:
     """Arrange every item in its drawn panel; ``size_of(item, reservation, panel)``.
 
     ``heads`` (the page read's ObservedFigures) centre a speaker's balloon over
     their head and keep every balloon off faces; without them Plan's position
-    and the speaker-order lean are used.
+    and the speaker-order lean are used. ``busy`` (a ``quiet.BusyMap`` of the
+    art) steers balloons toward dead space.
     """
     reservations = {r.lettering_item_id: r for r in page.lettering_reservations or ()}
     assigned = assign_panels(page, panels)
@@ -248,7 +252,7 @@ def layout_page(
             ))
     layout = {}
     for index, entries in by_panel.items():
-        layout.update(arrange(panels[index], entries))
+        layout.update(arrange(panels[index], entries, busy, panels))
     return layout
 
 
@@ -263,61 +267,149 @@ def _overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float
     return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
 
 
-def arrange(
-    panel: PinnedGeometry, entries: Sequence[Entry]
-) -> dict[str, tuple[PinnedGeometry, NormalizedPoint | None]]:
-    """Fit entries (in reading order) inside one panel with the least movement.
+# Scored search: every cost is a share of something, weighted by how much a
+# reader minds it. A face under a balloon is the worst; reading order and a
+# balloon on a balloon come next; busy art, a border crossing, a long tail and
+# drifting from Plan's spot are tie-breakers.
+STEP = 0.0125
+BLEED = 0.03  # How far a balloon may cross its panel border when the panel is full.
+COST_FACE = 60.0
+COST_STACK = 200.0
+COST_ORDER = 90.0  # About a face and a half: a misread order is as wrong as a hidden face.
+COST_CROSS = 40.0
+COST_OUTSIDE = 20.0
+COST_BLEED = 30.0  # Any border crossing; worth it only to uncover a face.
+COST_BODY = 4.0
+COST_BUSY = 2.0
+COST_MOVE = 2.0
+COST_NEAR = 20.0
+COST_EDGE = 2.0
 
-    Each keeps its preferred spot when it fits. Otherwise it slides inside the
-    panel, below an earlier balloon it would cover, and never above its
-    predecessor unless it sits entirely to that balloon's right.
+
+def _area(r: Rect) -> float:
+    return max(0.0, r[2]) * max(0.0, r[3])
+
+
+def _overlap(a: Rect, b: Rect) -> float:
+    w = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    h = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return max(0.0, w) * max(0.0, h)
+
+
+def body_of(head: Rect) -> Rect:
+    """Shoulders, hands and torso under a detected head, roughly.
+
+    Faces are observed; bodies are inferred, so covering one costs far less.
     """
+    hx, hy, hw, hh = head
+    return hx - hw * 0.6, hy + hh, hw * 2.2, hh * 2.4
+
+
+def _steps(low: float, high: float, preferred: float) -> list[float]:
+    if high <= low:
+        return [low]
+    count = max(1, round((high - low) / STEP))
+    values = {low + (high - low) * i / count for i in range(count + 1)}
+    values.add(max(low, min(high, preferred)))
+    return sorted(values)
+
+
+def arrange(
+    panel: PinnedGeometry, entries: Sequence[Entry], busy=None,
+    neighbours: Sequence[PinnedGeometry] = (),
+) -> dict[str, tuple[PinnedGeometry, NormalizedPoint | None]]:
+    """Fit entries (in reading order) in one panel, scoring every candidate spot.
+
+    Each keeps its preferred spot when nothing better is free. Faces, earlier
+    balloons, reading order and crossed tails dominate the score; busy art
+    (``busy``, a ``quiet.BusyMap``), inferred bodies and drift break ties. A
+    full panel lets a balloon cross its border a little, into the gutter or
+    page margin but never onto ``neighbours`` (the page's other panels),
+    rather than sit on a face; when no spot is clean the least-bad one wins.
+    """
+    others = [(n.x, n.y, n.width, n.height) for n in neighbours if n != panel]
     left, top, right, bottom = _inner(panel)
-    placed: list[tuple[float, float, float, float]] = []
+    panel_rect = (panel.x, panel.y, panel.width, panel.height)
+    diagonal = (panel.width ** 2 + panel.height ** 2) ** 0.5 or 1.0
+    placed: list[Rect] = []
     stems: list[tuple[tuple[float, float], tuple[float, float]]] = []
     result = {}
     for entry in entries:
         width = min(entry.width, right - left)
         height = min(entry.height, bottom - top)
-        x = max(left, min(entry.x, right - width))
-        y = max(top, min(entry.y, bottom - height))
-        bounds = (left, top, right, bottom)
-        x, y = clear_of(x, y, width, height, entry.avoid, bounds)
-        if placed:
-            prev = placed[-1]
-            y = max(y, prev[1] if x >= prev[0] + prev[2] else prev[1] + prev[3] * 0.5)
-            for _ in placed:  # Settle below anything it would cover.
-                blocking = [o for o in placed if _overlaps((x, y, width, height), o)]
-                if not blocking:
-                    break
-                y = max(o[1] + o[3] for o in blocking) + GAP
-            # Reading order may push it back onto a face: step sideways only.
-            x, y = clear_of(x, y, width, height, entry.avoid, bounds, vertical=False)
-        y = max(top, min(y, bottom - height))
-        placed.append((x, y, width, height))
-        rect = PinnedGeometry(
-            x=max(0.0, min(1 - width, x)), y=max(0.0, min(1 - height, y)),
-            width=width, height=height,
-        )
-        tail = None
-        if entry.wants_tail and entry.anchor is not None:
-            tail = toward_head(rect, entry.anchor)
-            stems.append(_stem(rect, tail))
-        elif entry.wants_tail:
+        faces = entry.avoid
+        bodies = tuple(body_of(head) for head in faces)
+        # Candidates may bleed past the border, never off the page.
+        low_x, high_x = max(0.0, left - BLEED), min(1.0, right + BLEED) - width
+        low_y, high_y = max(0.0, top - BLEED), min(1.0, bottom + BLEED) - height
+        prefer_x = max(left, min(entry.x, right - width))
+        prefer_y = max(top, min(entry.y, bottom - height))
+        prev = placed[-1] if placed else None
+
+        def tail_for(rect: PinnedGeometry) -> NormalizedPoint | None:
+            if not entry.wants_tail:
+                return None
+            if entry.anchor is not None:
+                return toward_head(rect, entry.anchor)
             hint = entry.tail_hint
             # Plan's pointer was written blind to the art; keep it only when it
             # stays in this drawn panel and outside the balloon.
-            keep = (
-                hint is not None and _contains(panel, hint.x, hint.y)
-                and not _contains(rect, hint.x, hint.y)
-            )
-            tail = hint if keep else _tail(panel, rect, entry.side)
-            if tail is not None and not keep and any(
-                _crosses(_stem(rect, tail), other) for other in stems
-            ):
+            if hint is not None and _contains(panel, hint.x, hint.y) and not _contains(rect, hint.x, hint.y):
+                return hint
+            tail = _tail(panel, rect, entry.side)
+            if tail is not None and any(_crosses(_stem(rect, tail), other) for other in stems):
                 tail = _tail(panel, rect, None)  # Crossed tails read as wrong speakers.
-            if tail is not None:
-                stems.append(_stem(rect, tail))
+            return tail
+
+        def cost(x: float, y: float) -> float:
+            box = (x, y, width, height)
+            area = width * height or 1e-9
+            score = 0.0
+            for face in faces:
+                score += COST_FACE * _overlap(box, face) / (_area(face) or 1e-9)
+            for body in bodies:
+                score += COST_BODY * _overlap(box, body) / (_area(body) or 1e-9)
+            for other in placed:
+                score += COST_STACK * _overlap(box, other) / area
+            if prev is not None:
+                floor = prev[1] if x >= prev[0] + prev[2] else prev[1] + prev[3] * 0.5
+                if y < floor - 1e-9:
+                    score += COST_ORDER + COST_ORDER * (floor - y) / panel.height
+            outside = 1 - _overlap(box, panel_rect) / area
+            if outside > 1e-9:
+                score += COST_BLEED + COST_OUTSIDE * outside
+            if busy is not None:
+                score += COST_BUSY * busy.mean(x, y, width, height)
+            score += COST_MOVE * ((x - prefer_x) ** 2 + (y - prefer_y) ** 2) ** 0.5 / diagonal
+            if entry.anchor is not None:
+                hx, hy, hw, _ = entry.anchor
+                gap = ((x + width / 2 - hx - hw / 2) ** 2 + (y + height - hy) ** 2) ** 0.5
+                score += COST_NEAR * gap / diagonal
+            if entry.role == "caption":  # Captions sit flush to a panel edge.
+                score += COST_EDGE * min(abs(y - top), abs(bottom - y - height)) / panel.height
+            return score
+
+        best = None
+        for y in _steps(low_y, high_y, prefer_y):
+            for x in _steps(low_x, high_x, prefer_x):
+                if any(_overlap((x, y, width, height), other) > 0 for other in others):
+                    continue
+                score = cost(x, y)
+                if best is not None and score >= best[0] + 1e-9:
+                    continue
+                rect = PinnedGeometry(x=x, y=y, width=width, height=height)
+                tail = tail_for(rect)
+                if tail is not None:
+                    if any(_crosses(_stem(rect, tail), other) for other in stems):
+                        score += COST_CROSS
+                    if best is not None and score >= best[0] + 1e-9:
+                        continue
+                best = (score, rect, tail)
+        assert best is not None
+        _, rect, tail = best
+        placed.append((rect.x, rect.y, rect.width, rect.height))
+        if tail is not None:
+            stems.append(_stem(rect, tail))
         result[entry.id] = (rect, tail)
     return result
 
@@ -326,7 +418,8 @@ def clear_of(
     x: float, y: float, width: float, height: float, heads: Sequence[Rect],
     bounds: tuple[float, float, float, float], *, vertical: bool = True,
 ) -> tuple[float, float]:
-    """The nearest spot that covers no face, inside ``bounds``; else unchanged.
+    """The nearest spot that covers no face, inside ``bounds``. When none is
+    clean, the spot covering the least face area, if it beats this one.
 
     Keep in parity with engine.mjs clearOfHeads.
     """
@@ -338,24 +431,52 @@ def clear_of(
         candidates += [(hx - width - GAP, y), (hx + hw + GAP, y)]
         if vertical:
             candidates += [(x, hy - height - GAP), (x, hy + hh + GAP)]
-    fitting = [
+    inside = [
         (cx, cy) for cx, cy in candidates
         if left - 1e-9 <= cx and cx + width <= right + 1e-9
         and top - 1e-9 <= cy and cy + height <= bottom + 1e-9
-        and not any(_overlaps((cx, cy, width, height), head) for head in heads)
     ]
-    if not fitting:
+
+    def covered(cx: float, cy: float) -> float:
+        return sum(_overlap((cx, cy, width, height), head) for head in heads)
+
+    def distance(c: tuple[float, float]) -> float:
+        return (c[0] - x) ** 2 + (c[1] - y) ** 2
+
+    fitting = [c for c in inside if covered(*c) == 0]
+    if fitting:
+        return min(fitting, key=distance)
+    better = [c for c in inside if covered(*c) < covered(x, y) - 1e-12]
+    if not better:
         return x, y
-    return min(fitting, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2)
+    return min(better, key=lambda c: (covered(*c), distance(c)))
+
+
+TAIL_GAP = 0.008
 
 
 def toward_head(body: PinnedGeometry, head: Rect) -> NormalizedPoint:
-    """Provisional mouth target in the lower centre of a detected head.
+    """Aimed at the mouth (lower centre of a detected head), stopping just
+    outside the head so the tip never covers the face.
 
     Keep in parity with engine.mjs tailTowardHead.
     """
     hx, hy, hw, hh = head
-    px, py = hx + hw / 2, hy + hh * .72
+    mx, my = hx + hw / 2, hy + hh * .72
+    cx, cy = body.x + body.width / 2, body.y + body.height / 2
+    dx, dy = mx - cx, my - cy
+    left, top = hx - TAIL_GAP, hy - TAIL_GAP
+    right, bottom = hx + hw + TAIL_GAP, hy + hh + TAIL_GAP
+    if left <= cx <= right and top <= cy <= bottom:
+        px, py = mx, my  # The body's centre is on the head: aim straight at the mouth.
+    else:
+        # Where the segment from the body's centre first enters the padded head.
+        enter = 0.0
+        for delta, start, low, high in ((dx, cx, left, right), (dy, cy, top, bottom)):
+            if delta:
+                enter = max(enter, min((low - start) / delta, (high - start) / delta))
+        enter = max(0.0, min(1.0, enter))
+        px, py = cx + dx * enter, cy + dy * enter
     return NormalizedPoint(x=max(0.0, min(1.0, px)), y=max(0.0, min(1.0, py)))
 
 

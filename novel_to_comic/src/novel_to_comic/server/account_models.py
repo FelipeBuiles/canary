@@ -171,7 +171,7 @@ def update_selections(root: Path, user_id: str, changes: dict) -> dict[str, str]
     with (account / ".model-settings.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         saved = _read_raw(path)
-        selections = {**read_global_selections(root), **_supported_saved_selections(saved), **changes}
+        selections = {**read_global_selections(root), **_supported_saved_selections({**saved, **changes})}
         _require_available_routes(selections)
         fd, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=account)
         try:

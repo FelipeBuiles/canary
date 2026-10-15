@@ -2337,6 +2337,7 @@
   "Sources": "Fuentes",
   "Spacing": "Espaciado",
   "Sparse": "Ligera",
+  "Speaker": "Hablante",
   "Speech balloon": "Bocadillo de diálogo",
   "Speech balloon. Drag to move it, or press Enter to edit its words.": "Globo de diálogo. Arrástralo para moverlo o pulsa Intro para editar su texto.",
   "Speech": "Diálogo",
@@ -3514,5 +3515,18 @@
   "{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}": "{count, plural, =0 {REVISAR CAMBIOS} one {REVISAR # CAMBIO} other {REVISAR # CAMBIOS}}",
   "{count, plural, one {# changed reference still to redraw. Its current image stays until the new one lands.} other {# changed references still to redraw. Their current images stay until the new ones land.}}": "{count, plural, one {# referencia modificada pendiente de redibujar. Su imagen actual se mantiene hasta que llegue la nueva.} other {# referencias modificadas pendientes de redibujar. Sus imágenes actuales se mantienen hasta que lleguen las nuevas.}}",
   "{count, plural, one {# mark} other {# marks}}": "{count, plural, one {# marca} other {# marcas}}",
-  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# otra comprobación sigue abierta.} other {# otras comprobaciones siguen abiertas.}}"
+  "{count, plural, one {# other check stays open.} other {# other checks stay open.}}": "{count, plural, one {# otra comprobación sigue abierta.} other {# otras comprobaciones siguen abiertas.}}",
+  "BELONGS TO THE PAGE PLAN": "PERTENECE AL PLAN DE PÁGINA",
+  "BELONGS TO THE SCRIPT": "PERTENECE AL GUION",
+  "CHECK CHANGES": "REVISAR CAMBIOS",
+  "Change this line in Story, then re-plan the page. A redraw can’t change the script.": "Cambia esta línea en Historia y vuelve a planificar la página. Redibujar no puede cambiar el guion.",
+  "Checking…": "Revisando…",
+  "Page {page} was re-planned. Redraw it so the art matches.": "La página {page} se volvió a planificar. Redibújala para que el arte coincida.",
+  "RE-PLAN THIS PAGE": "VOLVER A PLANIFICAR ESTA PÁGINA",
+  "Reads each change against the current page. Nothing is redrawn and your draft stays as it is until you apply a suggestion.": "Lee cada cambio frente a la página actual. No se redibuja nada y tu borrador queda igual hasta que apliques una sugerencia.",
+  "Reads your changes against this page: suggests precise wording, and flags changes the artwork can’t make.": "Lee tus cambios frente a esta página: sugiere una redacción precisa y señala los cambios que el arte no puede hacer.",
+  "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Reescribe las viñetas de esta página para hacer este cambio. Sus momentos y el texto de cada línea no cambian. El arte actual se conserva hasta que redibujes la página.",
+  "SUGGESTED WORDING": "REDACCIÓN SUGERIDA",
+  "The draft is not ready to check.": "El borrador no está listo para revisar.",
+  "USE THIS WORDING": "USAR ESTA REDACCIÓN"
 }

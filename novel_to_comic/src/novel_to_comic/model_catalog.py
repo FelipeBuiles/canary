@@ -4,7 +4,7 @@ from novel_to_comic.codex_dev import claude_selectable_models, claude_selector_a
 from novel_to_comic.image_models import GATEWAY_IMAGE_NANO_BANANA_21, GATEWAY_IMAGE_SUNBURST, IMAGE_MODEL_ALIASES, describe_image_model
 from novel_to_comic.text_models import TEXT_MODELS
 
-CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("text", "gpt-6.1-sol"), ("image", "gpt-5.5")}
+CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("text", "gpt-6.1-sol"), ("image", "gpt-6.1-sol")}
 
 # Keep controls in pipeline order. Style/Cast share settings; Draw has three
 # distinct model jobs rather than three additional pipeline stages.
@@ -13,6 +13,7 @@ STAGE_FIELDS = {
     "prompt": "prompt_model", "image": "image_model",
     "adapt": "adapt_model", "plan": "plan_model",
     "draw": "draw_model", "ocr": "page_ocr_model", "visual_review": "visual_review_model",
+    "correction": "correction_model",
 }
 STAGE_LABELS = {
     "extract": "1. Extract — story analysis",
@@ -24,6 +25,7 @@ STAGE_LABELS = {
     "draw": "7. Draw — page artwork",
     "ocr": "7. Draw — lettering checks",
     "visual_review": "7. Draw — visual review",
+    "correction": "7. Draw — change requests",
 }
 STAGE_DESCRIPTIONS = {
     "extract": "Reads the manuscript and identifies scenes, characters, places, and appearance changes.",
@@ -35,8 +37,11 @@ STAGE_DESCRIPTIONS = {
     "draw": "Generates each complete comic page with artwork and the lettering written by Adapt.",
     "ocr": "After a page is drawn, reads its lettering to check for missing or incorrect text.",
     "visual_review": "Reviews drawn pages against approved references for visual issues such as character or costume changes.",
+    "correction": "Reads your change requests against the current page, rewrites them as precise edits, and flags changes that belong to the page plan or script.",
 }
 DRAW_MODELS = (GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21)
+# Text jobs that look at a page image.
+VISION_STAGES = frozenset({"ocr", "visual_review", "correction"})
 
 
 def codex_models() -> list[dict]:
@@ -108,12 +113,12 @@ def models(*, include_codex: bool = True) -> list[dict]:
 
 
 def allowed_models(stage: str, *, include_codex: bool = True) -> tuple[str, ...]:
-    codex = tuple(model["id"] for model in subscription_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in {"ocr", "visual_review"} or model["vision"])) if include_codex else ()
+    codex = tuple(model["id"] for model in subscription_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in VISION_STAGES or model["vision"])) if include_codex else ()
     if stage == "draw":
         return (*DRAW_MODELS, *codex)
     if stage == "image":
         return (*IMAGE_MODEL_ALIASES, *codex)
-    if stage in {"ocr", "visual_review"}:
+    if stage in VISION_STAGES:
         return (*(model.id for model in TEXT_MODELS if model.vision), *codex)
     if stage in STAGE_FIELDS:
         return (*(model.id for model in TEXT_MODELS), *codex)

@@ -93,6 +93,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
   const canonical = current?.source_lettering_item_id ? base.canonical[current.source_lettering_item_id] : null;
   const checks = useChecks(layout.state, base.evidence);
   const heads = base.evidence.page_read?.heads ?? null;
+  const faceGuides = heads?.map(head => ({ ...head, label: (head.entity_id && base.evidence.speaker_names[head.entity_id]) || t("Face") })) ?? null;
   // A focused finding stays on the canvas only while it is still reported.
   const focus = focusedCheck && checks.some(check => check.code === focusedCheck.check.code && check.element_id === focusedCheck.check.element_id) ? focusedCheck.check : null;
   const issues = layout.state?.elements.filter(e => !e.hidden && (e.resolved?.overflow || e.resolved?.warnings.length)) ?? [];
@@ -364,7 +365,8 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     }} />}
     {!fontsReady ? <p role="status">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace" hidden={bookStyleOpen}>
       <LetteringCanvas guides={{
-        faces: showFaces && heads ? heads.map(head => ({ ...head, label: (head.entity_id && base.evidence.speaker_names[head.entity_id]) || t("Face") })) : [],
+        faces: showFaces && faceGuides ? faceGuides : [],
+        dragFaces: faceGuides ?? [],
         focus: focus ? { ...focus.mark, severity: focus.severity } : null,
       }} state={layout.state} style={base.style} artUrl={artUrl} onArtReady={setLoadedArtUrl} selected={selected} disabled={pageLocked} select={setSelected} focusText={() => textarea.current?.focus()} begin={() => dispatch({ type: "begin" })} preview={(id, value) => patch(id, value, true)} commit={() => dispatch({ type: "commit" })} cancel={() => dispatch({ type: "cancel" })} change={patch} />
       <aside className="lettering-inspector" aria-label={t("Lettering controls")}>

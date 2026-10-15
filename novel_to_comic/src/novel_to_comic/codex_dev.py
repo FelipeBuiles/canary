@@ -73,7 +73,7 @@ def _model(value: object) -> str:
 # Explicit local selectors are separate from API aliases. This allowlist is
 # captured at import with the operator gate; project dotenv cannot extend it.
 _DEFAULT_MODELS = (
-    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.5",
+    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
 )
 
 
@@ -160,7 +160,7 @@ def _read_routes() -> tuple[dict[str, str], frozenset[str], str]:
     if not isinstance(images, list) or not all(isinstance(k, str) and k.strip() == k and k for k in images):
         raise CodexRoutingError("Codex image routes must be a JSON list of aliases")
     return {k: _model(v) for k, v in text.items()}, frozenset(images), _model(
-        _PROCESS["CANARY_CODEX_DEV_IMAGE_REASONING_MODEL"] or "gpt-5.5"
+        _PROCESS["CANARY_CODEX_DEV_IMAGE_REASONING_MODEL"] or "gpt-6.1-sol"
     )
 
 
@@ -171,7 +171,7 @@ try:
 except CodexRoutingError as exc:
     _TEXT = MappingProxyType({})
     _IMAGES = frozenset()
-    _IMAGE_REASONING = "gpt-5.5"
+    _IMAGE_REASONING = "gpt-6.1-sol"
     _SETTINGS_ERROR = str(exc)
 
 

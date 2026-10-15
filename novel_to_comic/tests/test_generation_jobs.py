@@ -258,12 +258,59 @@ def test_parallel_routing_uses_frozen_page_provider():
     assert is_parallel_page_draw(job)
     job.command.arguments["request"]["provider"] = "vertex-multimodal"
     assert is_parallel_page_draw(job)
-    for provider in ("openrouter", "codex-dev"):
-        job.command.arguments["request"]["provider"] = provider
-        assert not is_parallel_page_draw(job)
+    job.command.arguments["request"]["provider"] = "codex-dev"
+    assert is_parallel_page_draw(job)
+    job.command.arguments["request"]["correction"] = {"instruction": "Fix the face"}
+    assert not is_parallel_page_draw(job)
+    del job.command.arguments["request"]["correction"]
+    job.command.arguments["request"]["provider"] = "openrouter"
+    assert not is_parallel_page_draw(job)
     job.command.arguments["request"]["provider"] = "openai"
     job.kind = "cast_reference"
     assert not is_parallel_page_draw(job)
+
+
+def test_codex_queue_starts_two_pages_and_keeps_third_queued(tmp_path, monkeypatch):
+    from novel_to_comic.server import generation_jobs, job_execution
+
+    async def exercise():
+        app = SimpleNamespace(state=SimpleNamespace(generation_jobs={}, generation_job_timeout_seconds=5))
+        entered = []
+        releases = [asyncio.Event() for _ in range(3)]
+        both_started, third_started = asyncio.Event(), asyncio.Event()
+
+        async def execute(app, job):
+            entered.append(job.sequence)
+            if job.sequence == 2:
+                third_started.set()
+            elif len(entered) == 2:
+                both_started.set()
+            await releases[job.sequence].wait()
+
+        monkeypatch.setattr(job_execution, "execute_command", execute)
+        monkeypatch.setattr(generation_jobs, "persist_generation_job", lambda *args: None)
+        jobs = [GenerationJob(
+            id=str(number), project_name="account:book", kind="complete_page_draw", label=str(number),
+            payload={"page_number": number + 1}, sequence=number, runner=None, user_id="account",
+            command=SimpleNamespace(operation="page_draw", project_dir=str(tmp_path), stage="draw",
+                                    arguments={"request": {"provider": "codex-dev"}}),
+        ) for number in range(3)]
+        app.state.generation_jobs = {job.id: job for job in jobs}
+        tasks = [asyncio.create_task(generation_jobs._run_generation_job(app, job)) for job in jobs]
+        try:
+            await asyncio.wait_for(both_started.wait(), 1)
+            assert entered == [0, 1]
+            assert jobs[2].status == "queued" and jobs[2].started_at is None
+            releases[0].set()
+            await asyncio.wait_for(third_started.wait(), 1)
+            assert entered == [0, 1, 2]
+        finally:
+            for release in releases:
+                release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        assert all(job.status == "complete" for job in jobs)
+
+    asyncio.run(exercise())
 
 
 def test_queued_fal_page_cancelled_while_waiting_never_enters_provider(tmp_path, monkeypatch):

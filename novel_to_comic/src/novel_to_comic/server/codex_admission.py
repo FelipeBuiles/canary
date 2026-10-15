@@ -35,6 +35,10 @@ def visual_review_operations(config: Config) -> Operations:
     return (("text", config.effective_visual_review_model()),)
 
 
+def correction_interpret_operations(config: Config) -> Operations:
+    return (("text", config.effective_correction_model()),)
+
+
 def is_canonical_sheet_regen(kind: str, asset_id: str) -> bool:
     """A character's main sheet or a canonical location plate: redrawing it
     re-runs the Cast check, which compares both with the selected proof."""

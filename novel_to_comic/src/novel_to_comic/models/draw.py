@@ -482,9 +482,10 @@ class CorrectionAnnotation(BaseModel):
     """One normalized author mark on the page image plus its instruction.
 
     Points are normalized page fractions (origin top-left, 0..1), independent
-    of render pixel size so marks survive across revisions. The note is always
-    rendered into the provider prompt as a "Mark N" line; annotations are
-    never stored without reaching the generation request.
+    of render pixel size so marks survive across revisions. A mark always
+    reaches the provider prompt as a location line; its optional note narrows
+    the enclosing change there. Without one, the change's own instruction is
+    the direction, so no placeholder wording is sent.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -492,7 +493,7 @@ class CorrectionAnnotation(BaseModel):
     id: str = Field(default="", max_length=120)
     kind: Literal["pin", "rectangle", "highlight", "freehand", "arrow", "ellipse", "text"]
     points: tuple[AnnotationPoint, ...] = Field(min_length=1, max_length=64)
-    note: str = Field(min_length=1, max_length=500)
+    note: str = Field(default="", max_length=500)
     label: str | None = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
@@ -506,8 +507,6 @@ class CorrectionAnnotation(BaseModel):
             ys = [point.y for point in self.points]
             if max(xs) - min(xs) <= 1e-6 and max(ys) - min(ys) <= 1e-6:
                 raise ValueError(f"{self.kind} annotation covers no page area")
-        if not self.note.strip():
-            raise ValueError("annotation note must not be blank")
         return self
 
     @property
@@ -530,7 +529,8 @@ class CorrectionAnnotation(BaseModel):
                 f"x={x:.4f} y={y:.4f} w={width:.4f} h={height:.4f} "
                 "of the page, origin top-left"
             )
-        return f"Mark {index} [{self.kind}{tag} {location}]: {self.note.strip()}"
+        note = self.note.strip()
+        return f"Mark {index} [{self.kind}{tag} {location}]" + (f": {note}" if note else "")
 
 
 class CorrectionChange(BaseModel):

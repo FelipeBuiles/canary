@@ -44,6 +44,12 @@ import {
   estimateImageCompare,
   getStageModelOptions,
   estimateStageModels,
+  estimateModernize,
+  getModernizeExcerpt,
+  getModernizeOptions,
+  getModernizeSource,
+  type ModernizeRequest,
+  type ModernizeSource,
   type ImageArm,
   type StageModelArm,
   createLabsRun,
@@ -945,6 +951,38 @@ export function useStageModelEstimate(body: { project: string; part_id?: string 
     queryFn: () => estimateStageModels(body!),
     enabled: !!body,
     retry: false,
+  });
+}
+
+export function useModernizeOptions() {
+  return useQuery({ queryKey: ["labs", "modernize", "options"], queryFn: getModernizeOptions });
+}
+
+export function useModernizeExcerpt(project: string, query: { part_id?: string | null; start: number; max_words: number } | null) {
+  return useQuery({
+    queryKey: ["labs", "modernize", "excerpt", project, query],
+    queryFn: () => getModernizeExcerpt(project, query!),
+    enabled: !!project && !!query,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useModernizeEstimate(body: (ModernizeRequest & ModernizeSource) | null) {
+  return useQuery({
+    queryKey: ["labs", "modernize", "estimate", body],
+    queryFn: () => estimateModernize(body!),
+    enabled: !!body,
+    retry: false,
+  });
+}
+
+export function useModernizeSource(runId: string | undefined) {
+  return useQuery({
+    queryKey: ["labs", "runs", runId, "source"],
+    queryFn: () => getModernizeSource(runId!),
+    enabled: !!runId,
+    staleTime: Infinity,
   });
 }
 

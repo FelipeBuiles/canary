@@ -47,11 +47,14 @@ def compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             result["source_units"] = {"count": len(units), **fingerprint(units)}
     runtime = metadata.get("codex_runtime")
     if isinstance(runtime, dict):
+        from novel_to_comic.ai.codex_runtime import TIMING_FIELDS
+
         result["codex_runtime"] = _scalars(runtime, "thread_id turn_id tool_id request_id "
             "turn_status funding usage_scope boundary execution_fingerprint prompt_sha256 "
             "requested_service_tier service_tier "
             "adapter_version profile_id transport_profile submitted indeterminate image_status "
             "completed_result_available execution_elapsed_seconds exception_type")
+        result["codex_runtime"].update(_scalars(runtime, " ".join(TIMING_FIELDS)))
         error = runtime.get("provider_error")
         if isinstance(error, dict):
             result["codex_runtime"]["provider_error"] = _scalars(error, "code rpc_code http_status_code message")

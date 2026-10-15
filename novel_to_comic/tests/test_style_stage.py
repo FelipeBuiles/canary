@@ -207,6 +207,26 @@ def test_templates_naming_story_places_or_people_are_dropped():
     assert _drop_story_specific([plain], bible) == [plain]
 
 
+def test_common_word_names_and_aliases_only_match_as_proper_nouns():
+    """Regression for The Monkey's Paw: Mr. White's alias "White" dropped every
+    template mentioning white paper or highlights."""
+    bible = _bible("Mr. White")
+    bible.characters[0].aliases = ["White", "Father", "the old man"]
+    bible.locations[0].aliases = ["the room"]
+    plain = [
+        {**_sugg("Scratch", "scratchboard"), "template": "Scratchboard with white lines carved from black ink."},
+        {**_sugg("Charcoal", "charcoal"), "template": "Charcoal on white laid paper; the old man's study of the room's shadows."},
+        {**_sugg("Opening", "ink"), "template": "White ink on black paper."},
+        {**_sugg("Lines", "ink"), "template": "Black ground\n- White ink lines — White spot color."},
+    ]
+    assert _drop_story_specific(plain, bible) == plain
+    named = [
+        {**_sugg("Portrait", "oil"), "template": "Oil glazes that paint Mr. White in candlelight."},
+        {**_sugg("Figure", "ink"), "template": "Ink every figure like White by the hearth."},
+    ]
+    assert _drop_story_specific(named, bible) == []
+
+
 def test_role_aware_selector_does_not_relabel_diverse_candidates_by_position():
     candidates = [
         {**_sugg("Wild", "collage"), "portfolio_role": "wildcard", "palette": "neon"},
