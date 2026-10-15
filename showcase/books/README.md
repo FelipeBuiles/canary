@@ -19,6 +19,14 @@ blocked by the local account storage limit; no quota settings were changed.
 Community recommendations and ready-to-post copy are in
 [the Astronomical sharing kit](../../docs/ops/astronomical-community-posts.md).
 
+The seventh shelf entry is **The Monkey's Paw by W. W. Jacobs** (public domain,
+1902), added October 15, 2026. Its reader ID is
+`b32d070d85f942278577140e7f55778b`; the edition contains 20 story pages. Like
+Astronomical, it copies the existing public snapshot because packaging was
+blocked by the local account storage limit; all 20 pages are byte-identical to
+the Finish pages. Ready-to-post copy is in
+[the Monkey's Paw sharing kit](../../docs/ops/monkeys-paw-community-posts.md).
+
 ## Add or update a book
 
 From the repository root, run the provider-free packaging command:
