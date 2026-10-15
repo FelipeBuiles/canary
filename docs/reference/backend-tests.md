@@ -65,6 +65,9 @@ browser context and page, closed even on failure. The production renderer still
 executes its actual engine, fonts, validation and screenshots; results are not
 mocked or cached by this fixture. Production browser lifetime is unchanged.
 Fixture tests check cleanup, thread ownership, and real DOM/cookie isolation.
+The real isolation test waits for cold startup separately from its 15-second
+operation checks. On failure, captured lifecycle logs identify the worker and
+browser phase; a timed-out operation also dumps thread stacks.
 
 Use `--fresh-lettering-browser` on the same pytest command to reproduce production's
 browser startup per operation or to compare the cost of reuse. A missing or blocked

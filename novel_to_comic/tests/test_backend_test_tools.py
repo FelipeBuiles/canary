@@ -1,5 +1,7 @@
 """Evidence that the suite's speed tools retain isolation and useful identities."""
 
+import faulthandler
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -159,8 +161,21 @@ def test_browser_reuse_closes_contexts_on_failure_and_resources_on_owning_thread
     assert closed.count("playwright") == workers
 
 
-def test_real_browser_reuse_does_not_keep_dom_or_cookies_between_calls():
+def test_real_browser_reuse_does_not_keep_dom_or_cookies_between_calls(caplog):
+    caplog.set_level(logging.DEBUG, logger=browser_support.__name__)
     browsers = browser_support.LetteringBrowsers(workers=1)
+
+    def wait(future, timeout):
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            # Include the owning worker's stack, even if it later finishes in teardown.
+            faulthandler.dump_traceback()
+            raise
+
+    def start():
+        with browsers.playwright():
+            pass
 
     def call(seed=False):
         with browsers.playwright() as playwright:
@@ -177,8 +192,11 @@ def test_real_browser_reuse_does_not_keep_dom_or_cookies_between_calls():
             browser.close()
 
     try:
+        # Cold Playwright/Chromium startup has its own budget: Chromium's
+        # launch timeout is 30s, longer than the isolation/cleanup checks below.
+        wait(browsers.pool.submit(start), timeout=45)
         with pytest.raises(ValueError, match="failed render"):
-            browsers.pool.submit(call, True).result(timeout=15)
-        browsers.pool.submit(call).result(timeout=15)
+            wait(browsers.pool.submit(call, True), timeout=15)
+        wait(browsers.pool.submit(call), timeout=15)
     finally:
         browsers.close()
