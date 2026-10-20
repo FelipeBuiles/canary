@@ -8,6 +8,8 @@ whole stage again.
 """
 
 from __future__ import annotations
+from novel_to_comic import look_assets
+from novel_to_comic.asset_generation import NonPanelSubmission
 from novel_to_comic.server.cast_admission import apply_asset_instruction
 
 import asyncio
@@ -741,9 +743,9 @@ def test_status_requires_current_individual_refs_and_visual_review(
             project_dir=project_dir, request_id="test", result=result,
         )
         submissions.append(output)
-        return SimpleNamespace(result=result)
+        return NonPanelSubmission("test", kwargs["request"].execution_fingerprint, result=result)
 
-    monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
+    monkeypatch.setattr(look_assets, "submit_non_panel_request", submit)
     asyncio.run(s3_cast.regenerate_character_ref(config, project_dir, "char_001"))
     asyncio.run(s3_cast.regenerate_character_state_ref(config, project_dir, "char_001", "burned"))
     from .style_reference_support import write_location_style_board
@@ -879,8 +881,8 @@ def test_comparison_pixels_reach_compiled_request_without_becoming_identity_or_e
         captured.append(kwargs["request"])
         output = kwargs["output_path"]
         Image.new("RGB", (32, 32), "red").save(output)
-        return SimpleNamespace(result=ApiResult(value=output))
-    monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
+        return NonPanelSubmission("test", kwargs["request"].execution_fingerprint, result=ApiResult(value=output))
+    monkeypatch.setattr(look_assets, "submit_non_panel_request", submit)
     config = Config(style_template="Clean ink")
     _prepare_character_inputs(project_dir, config)
     if kind == "location":
@@ -1069,8 +1071,8 @@ def test_uploaded_pixels_reach_compiled_request_and_round_trip_through_sidecar(t
     async def submit(**kwargs):
         captured.append(kwargs["request"])
         Image.new("RGB", (32, 32), "red").save(kwargs["output_path"])
-        return SimpleNamespace(result=ApiResult(value=kwargs["output_path"]))
-    monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
+        return NonPanelSubmission("test", kwargs["request"].execution_fingerprint, result=ApiResult(value=kwargs["output_path"]))
+    monkeypatch.setattr(look_assets, "submit_non_panel_request", submit)
     config = Config(style_template="Clean ink")
     _prepare_character_inputs(project_dir, config)
     asyncio.run(s3_cast.regenerate_character_ref(config, project_dir, "char_001"))

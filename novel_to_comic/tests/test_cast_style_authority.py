@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from PIL import Image
 
+from novel_to_comic import look_assets
+from novel_to_comic.asset_generation import NonPanelSubmission
 from novel_to_comic.asset_generation import compile_non_panel_request, style_reference_plan
 from novel_to_comic.config import Config
 from novel_to_comic.models.appearance import AppearanceState
@@ -129,7 +131,7 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
     async def submit(**kwargs):
         requests.append(kwargs["request"])
         Image.new("RGB", (32, 32), "blue").save(kwargs["output_path"])
-        return SimpleNamespace(result=ApiResult(value=kwargs["output_path"]))
+        return NonPanelSubmission("test", kwargs["request"].execution_fingerprint, result=ApiResult(value=kwargs["output_path"]))
 
     async def generate():
         for char in bible.characters:
@@ -137,7 +139,7 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
         await s3_cast.regenerate_character_state_ref(config, tmp_path, "sailor", "white_hair")
 
     with patch.object(s3_cast, "asset_matches_request", return_value=True), \
-         patch.object(s3_cast, "submit_non_panel_request", side_effect=submit):
+         patch.object(look_assets, "submit_non_panel_request", side_effect=submit):
         asyncio.run(generate())
     style_hashes = set()
     for request in requests:
@@ -156,7 +158,7 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
 def test_sunburst_cannot_silently_fall_back_to_text_only_cast(tmp_path):
     config, bible, proof = _project(tmp_path, "image-sunburst")
     proof.unlink()
-    with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as submit:
+    with patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock) as submit:
         with pytest.raises(ValueError, match="selected Style proof is missing"):
             asyncio.run(s3_cast.regenerate_character_ref(config, tmp_path, "sailor"))
         with pytest.raises(ValueError, match="selected Style proof is missing"):
@@ -301,7 +303,7 @@ def test_plate_redraw_requires_a_current_board_before_spending(tmp_path):
     from novel_to_comic.models.story_bible import Location
     bible.locations.append(Location(id="snug", name="Snug", visual_anchor="tiny booth room", mood="quiet"))
     (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
-    with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as submit:
+    with patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock) as submit:
         with pytest.raises(ValueError, match="Resume Cast to prepare it"):
             asyncio.run(s3_cast.regenerate_location_plate(config, tmp_path, "snug"))
     submit.assert_not_awaited()
@@ -321,17 +323,17 @@ def test_cast_prepares_the_board_before_plates_and_plates_wait_for_it(tmp_path, 
     plate_wires = []
 
     async def submit(**kwargs):
-        if kwargs["kind"] == "location_style_board" and board_fails:
+        if kwargs["feature"] == "cast.location_style_board" and board_fails:
             raise RuntimeError("provider down")
         output = kwargs["output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (48, 27), "gray").save(output)
-        if kwargs["kind"] == "location_plate":
+        if kwargs["feature"] == "cast.location_plate":
             plate_wires.append(kwargs["request"])
-        return SimpleNamespace(result=ApiResult(value=output))
+        return NonPanelSubmission("test", kwargs["request"].execution_fingerprint, result=ApiResult(value=output))
 
     with ExitStack() as stack:
-        stack.enter_context(patch.object(s3_cast, "submit_non_panel_request", side_effect=submit))
+        stack.enter_context(patch.object(look_assets, "submit_non_panel_request", side_effect=submit))
         stack.enter_context(patch.object(s3_cast, "asset_matches_request",
                                          side_effect=lambda path, _request: False))
         stack.enter_context(patch.object(s3_cast, "_location_style_board",

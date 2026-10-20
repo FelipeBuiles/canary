@@ -1,5 +1,6 @@
+import { isGenerationActive, isCurrentReferenceJob } from "../lib/generationTracking";
 import { useMutationState, useQuery } from "@tanstack/react-query";
-import { useGenerationJobs } from "./queries";
+import { useGenerationTracking } from "../hooks/useGenerationTracking";
 import { apiFetch } from "./client";
 import { seriesPath } from "./projectScope";
 
@@ -38,7 +39,7 @@ export function useCastReview(projectId: string, active = false) {
  * Their Character Check notes are out of date until the redraw's re-check.
  */
 export function useRedrawingCharacters(projectId: string): Set<string> {
-  const { data } = useGenerationJobs(projectId, [], true);
+  const { data } = useGenerationTracking(projectId);
   const submitting = useMutationState({
     filters: { status: "pending", predicate: (mutation) =>
       ["character-regen", "reference-instruction"].includes(String(mutation.options.mutationKey?.[0])) },
@@ -50,7 +51,7 @@ export function useRedrawingCharacters(projectId: string): Set<string> {
   }
   for (const job of data?.jobs ?? []) {
     const charId = job.payload.char_id;
-    if ((job.status === "queued" || job.status === "running") && typeof charId === "string" && !charId.includes(":")) ids.add(charId);
+    if (isGenerationActive(job) && isCurrentReferenceJob(job, data?.current_reference_style_hash) && typeof charId === "string" && !charId.includes(":")) ids.add(charId);
   }
   return ids;
 }

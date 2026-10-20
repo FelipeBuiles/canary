@@ -8,6 +8,7 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
+from novel_to_comic.ai import text_finalisation
 from novel_to_comic import codex_dev
 from novel_to_comic.ai import client
 from novel_to_comic.ai.context import ai_request_context
@@ -83,8 +84,8 @@ def selected_client(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("selected Codex call reached API transport or pricing")
     monkeypatch.setattr(client, "_base_url", forbidden)
-    monkeypatch.setattr(client, "estimate_text_cost", forbidden)
-    monkeypatch.setattr(client, "estimate_text_usage", forbidden)
+    monkeypatch.setattr(text_finalisation, "estimate_text_cost", forbidden)
+    monkeypatch.setattr(text_finalisation, "estimate_text_usage", forbidden)
     return events
 
 

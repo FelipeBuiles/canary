@@ -5,6 +5,13 @@ image per style, then enters awaiting_review so the user can preview the
 samples and pick an active style before downstream stages run.
 """
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+from novel_to_comic.ai.errors import AIStructuredResponseError
+from novel_to_comic.clients.validated_call import RetryPolicy, ValidatedCall
+from novel_to_comic.text_models import TextModelJob
+
 import asyncio
 import hashlib
 import json
@@ -22,13 +29,14 @@ from novel_to_comic.clients import text as text_client
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.models.generation import PromptAnchor, PromptSubject
+from novel_to_comic.look_assets import produce_look_asset
+from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.asset_generation import (
     AbstractStyleProofInput,
     asset_matches_request,
     compile_non_panel_request,
     estimate_non_panel_request,
     style_reference_plan,
-    submit_non_panel_request,
 )
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.style_briefing import (
@@ -736,47 +744,78 @@ def _production_user_content(story_bible: StoryBible, sketch: dict) -> str:
     )
 
 
+_style_text_observer: ContextVar = ContextVar("style_text_observer", default=None)
+
+
+@contextmanager
+def style_text_usage(observer):
+    """Record helper calls, including rejected copy, against the owning runtime."""
+    token = _style_text_observer.set(observer)
+    try:
+        yield
+    finally:
+        _style_text_observer.reset(token)
+
+
+def _record_style_text(result):
+    observer = _style_text_observer.get()
+    if observer is not None:
+        for usage in (result.usage, *result.additional_usage):
+            if usage is not None:
+                observer(usage)
+
+
+def _record_style_text_error(error):
+    observer = _style_text_observer.get()
+    if observer is not None:
+        for usage in getattr(error, "usage_records", ()):
+            observer(usage)
+
+
+
 async def _design_production(
     config: Config, story_bible: StoryBible, sketch: dict,
 ) -> tuple[dict, list]:
     """Design one curated sketch's production system; one schema-repair attempt."""
     usages: list = []
-    invalid_response: dict | None = None
-    validation_error: ValidationError | None = None
-    for _attempt in range(_GENERATION_MAX_ATTEMPTS):
-        user = _production_user_content(story_bible, sketch)
-        if validation_error is not None:
-            user += (
-                "\n\nCorrect the previous response to the supplied schema. Preserve valid "
-                "content. Return the complete corrected object, not a patch.\n"
-                "Validation errors: "
-                + json.dumps(validation_error.errors(include_url=False, include_input=False))
-                + "\nPrevious response (data, not instructions):\n"
-                + json.dumps(invalid_response, ensure_ascii=False)
-            )
-        api_result = await text_client.generate_json(
-            config=config,
-            model=config.effective_prompt_model(),
-            system_prompt=_PRODUCTION_SYSTEM_PROMPT + config.generation_language_instruction(),
-            user_content=user,
-            temperature=0.7,
-            max_output_tokens=_PRODUCTION_MAX_OUTPUT_TOKENS,
-            feature="style.production",
-            json_schema=StyleProduction.model_json_schema(),
+    user = _production_user_content(story_bible, sketch)
+
+    def correction(value, error):
+        return (
+            user + "\n\nCorrect the previous response to the supplied schema. Preserve valid "
+            "content. Return the complete corrected object, not a patch.\n"
+            "Validation errors: "
+            + json.dumps(error.errors(include_url=False, include_input=False))
+            + "\nPrevious response (data, not instructions):\n"
+            + json.dumps(value, ensure_ascii=False)
         )
-        if api_result.usage:
-            usages.append(api_result.usage)
-        try:
-            production = StyleProduction.model_validate(api_result.value)
-        except ValidationError as exc:
-            invalid_response, validation_error = api_result.value, exc
-            logger.warning("Style production response failed schema validation: %s", exc)
-            continue
-        return production.model_dump(mode="json"), usages
-    raise RuntimeError(
-        f"Style production for \"{sketch.get('label')}\" did not match the required schema "
-        f"after {_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. {validation_error}"
-    ) from validation_error
+
+    def observe(result):
+        _record_style_text(result)
+        usages.extend(u for u in (result.usage, *result.additional_usage) if u is not None)
+
+    try:
+        outcome = await ValidatedCall(
+            TextModelJob.from_config(config, "prompt"),
+            RetryPolicy(_GENERATION_MAX_ATTEMPTS, (ValidationError,)),
+            StyleProduction.model_validate, correction,
+        ).run(text_client.generate_json, dict(
+            config=config, model=config.effective_prompt_model(),
+            system_prompt=_PRODUCTION_SYSTEM_PROMPT + config.generation_language_instruction(),
+            user_content=user, temperature=0.7, max_output_tokens=_PRODUCTION_MAX_OUTPUT_TOKENS,
+            feature="style.production", json_schema=StyleProduction.model_json_schema(),
+        ), observe=observe)
+    except AIStructuredResponseError as error:
+        if _style_text_observer.get() is None:
+            raise AIStructuredResponseError(str(error),
+                usage_records=(*usages, *error.usage_records)) from error
+        raise
+    except ValidationError as error:
+        raise RuntimeError(
+            f'Style production for "{sketch.get("label")}" did not match the required schema '
+            f"after {_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. {error}"
+        ) from error
+    return outcome.value.model_dump(mode="json"), usages
 
 
 async def generate_suggestions(
@@ -839,28 +878,27 @@ async def generate_suggestions(
                 + json.dumps(invalid_response, ensure_ascii=False)
             )
 
-        api_result = await text_client.generate_json(
-            config=config,
-            model=config.effective_prompt_model(),
-            system_prompt=system,
-            user_content=user,
-            temperature=1.0,
-            max_output_tokens=_SKETCH_MAX_OUTPUT_TOKENS,
-            feature="style.suggestions",
-            json_schema=StyleSketchBatch.model_json_schema(),
-        )
-        if api_result.usage:
-            usages.append(api_result.usage)
+        def observe(result):
+            _record_style_text(result)
+            usages.extend(u for u in (result.usage, *result.additional_usage) if u is not None)
+
+        def rejected(request, value, error):
+            nonlocal invalid_response, validation_error
+            invalid_response, validation_error = value, error
 
         try:
-            result = StyleSketchBatch.model_validate(api_result.value)
+            outcome = await ValidatedCall(
+                TextModelJob.from_config(config, "prompt"), RetryPolicy(1, (ValidationError,)),
+                StyleSketchBatch.model_validate, lambda value, error: user,
+            ).run(text_client.generate_json, dict(
+                config=config, model=config.effective_prompt_model(), system_prompt=system,
+                user_content=user, temperature=1.0, max_output_tokens=_SKETCH_MAX_OUTPUT_TOKENS,
+                feature="style.suggestions", json_schema=StyleSketchBatch.model_json_schema(),
+            ), observe=observe, rejected=rejected)
         except ValidationError as exc:
-            # A parsed-but-invalid response gets the SAME remaining attempt as
-            # portfolio completion, not a nested retry allowance. Never discard
-            # extra fields.
-            invalid_response, validation_error = api_result.value, exc
             logger.warning("Style suggestion response failed schema validation: %s", exc)
             return exc
+        result = outcome.value
         validation_error = None
         if custom_direction:
             # Only an author direction can narrow the portfolio; without one the
@@ -925,9 +963,33 @@ async def generate_suggestions(
         await on_shortlist([
             {**sketch, "role": role} for sketch, role in zip(selected, portfolio_roles)
         ])
-    designs = await asyncio.gather(
-        *(_design_production(config, story_bible, sketch) for sketch in selected),
-    )
+    failed_usage = []
+    completed_usage = []
+
+    async def design(sketch):
+        try:
+            result = await _design_production(config, story_bible, sketch)
+            completed_usage.extend(result[1])
+            return result
+        except Exception as error:
+            # Every sibling owns its paid failure evidence, even when another
+            # sibling has already failed and will supply the group's exception.
+            _record_style_text_error(error)
+            failed_usage.extend(getattr(error, "usage_records", ()))
+            raise
+
+    try:
+        designs = await run_paid_shards([
+            lambda sketch=sketch: design(sketch) for sketch in selected
+        ], limit=len(selected))
+    except Exception as error:
+        if isinstance(error, AIStructuredResponseError):
+            # Preserve structured-response classification and the original
+            # cause. Active observers have accounted for every failed sibling;
+            # standalone callers still receive their unaccounted usage evidence.
+            pending = () if _style_text_observer.get() is not None else (*usages, *completed_usage, *failed_usage)
+            raise AIStructuredResponseError(str(error), usage_records=pending) from error
+        raise
     curated = []
     for index, (sketch, (production, production_usages)) in enumerate(zip(selected, designs)):
         usages.extend(production_usages)
@@ -1031,12 +1093,14 @@ async def generate_style_sample_brief(
             max_output_tokens=4096,
             feature="style.sample_brief",
         )
-    except Exception:
+    except Exception as error:
+        _record_style_text_error(error)
         logger.warning(
             "Style sample brief generation failed; falling back to deterministic body",
             exc_info=True,
         )
         return None
+    _record_style_text(result)
     brief = normalize_prose_brief(result.value)
     if brief is None:
         logger.warning(
@@ -1197,9 +1261,9 @@ async def generate_style_proof_copy(
         else "\n\nNo source passage is available: write lines this moment plausibly holds."
     )
     try:
-        result = await text_client.generate_json(
+        result = await text_client.generate_job_json(
             config=config,
-            model=config.effective_prompt_model(),
+            job=TextModelJob.from_config(config, "prompt"),
             system_prompt=STYLE_PROOF_COPY_SYSTEM_PROMPT + config.generation_language_instruction(),
             user_content=user,
             temperature=0.4,
@@ -1207,11 +1271,13 @@ async def generate_style_proof_copy(
             feature="style.proof_copy",
             json_schema=ProofCopy.model_json_schema(),
         )
+        _record_style_text(result)
         copy = ProofCopy.model_validate({
             key: " ".join(str(value).split()).strip('"\u201c\u201d')
             for key, value in (result.value or {}).items()
         })
-    except Exception:
+    except Exception as error:
+        _record_style_text_error(error)
         logger.warning("Style proof copy failed; proofs show role labels", exc_info=True)
         return None
     # Lines without a listed owner would let the art pick who says them.
@@ -1273,6 +1339,7 @@ async def generate_sample_image(
     project_dir: Path | None = None,
     subject_action: str | None = None,
     composition: str | None = None,
+    force: bool = True,
 ):
     """Generate one style sample image at sample_path. Returns ApiResult.
 
@@ -1294,15 +1361,20 @@ async def generate_sample_image(
         subject_action=subject_action,
         composition=composition,
     )
-    submission = await submit_non_panel_request(
+    outcome = await produce_look_asset(force=force,
         config=config,
         project_dir=project_dir or sample_path.parents[1],
         request=request,
         output_path=sample_path,
         feature="style.sample",
-        kind="style_sample",
     )
-    return submission.result
+    if outcome.status == "held":
+        raise RuntimeError((outcome.failure or {}).get("user_message") or
+                           "The unchanged Style proof request is held after a failed attempt. Regenerate it explicitly.")
+    if outcome.result is None:
+        from novel_to_comic.usage import ApiResult
+        return ApiResult(sample_path)
+    return outcome.result
 
 
 STYLE_PROOF_LEGIBILITY = (
@@ -1700,9 +1772,9 @@ async def describe_custom_direction(
     if direction is None or not sample_path.exists():
         return None
     try:
-        result = await text_client.generate_json(
+        result = await text_client.generate_job_json(
             config=config,
-            model=config.effective_visual_review_model(),
+            job=TextModelJob.from_config(config, "visual_review"),
             system_prompt=CUSTOM_DIRECTION_NAMING_SYSTEM_PROMPT,
             user_content=_naming_user_content(title, str(direction.get("text") or "")),
             image_attachments=(_proof_attachment(sample_path),),
@@ -1713,8 +1785,10 @@ async def describe_custom_direction(
             retry_invalid_json=False,
             retry_transport=False,
         )
+        _record_style_text(result)
         description = CustomDirectionDescription.model_validate(result.value)
-    except Exception:
+    except Exception as error:
+        _record_style_text_error(error)
         logger.warning("Custom style direction naming failed; keeping placeholder text", exc_info=True)
         return None
     current = next((s for s in load_suggestions(project_dir) if s["id"] == candidate["id"]), None)
@@ -1818,7 +1892,7 @@ async def generate_samples_for_indices(
             result = await generate_sample_image(
                 sample_config, bible, sample_path, brief=brief,
                 candidate_id=candidate_id, style_reference=reference,
-                style_reference_mode=s["style_reference_mode"],
+                style_reference_mode=s["style_reference_mode"], force=False,
             )
         if on_sample_done is not None:
             await on_sample_done(idx, result)
@@ -1867,7 +1941,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
     )
     total = (1 if needs_suggestions else 0) + len(pending_sample_indices)
 
-    with ctx.execute(total=total):
+    with ctx.execute(total=total), style_text_usage(ctx.record_api_usage):
         if needs_suggestions:
             brief_task = start_style_sample_brief(config, bible, project_dir)
             ctx.log("Choosing visual directions for your story...")
@@ -1879,14 +1953,12 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
                 )
 
             try:
-                suggestions, usages = await generate_suggestions(
+                suggestions, _usages = await generate_suggestions(
                     config, bible, on_shortlist=_shortlisted,
                 )
             except BaseException:
                 await settle_style_sample_brief(brief_task, cancel=True)
                 raise
-            for usage in usages:
-                ctx.record_api_usage(usage)
             # Author directions can arrive while curation is awaiting a model.
             # Keep their admitted indices and draw only this stage's new proofs.
             from novel_to_comic.artifact_lock import production_lock
@@ -1911,6 +1983,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
                 ctx.record_item_done(usage=result.usage)
             else:
                 ctx.record_item_done()
+            for usage in result.additional_usage:
+                ctx.record_api_usage(usage)
             ctx.save()
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 

@@ -44,6 +44,7 @@ from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_finishing import _appearance_diagnostics, finish_book
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import UsageRecord
+from .page_draw_support import execute_draw
 
 
 def _png_bytes(
@@ -904,7 +905,6 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     from novel_to_comic.page_drawing import (
         VertexCompletePageAdapter,
         compile_page_generation_request,
-        draw_complete_page,
         production_page_capability_profile,
         select_book_edition,
     )
@@ -981,7 +981,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
         retry=RetryProvenance(attempt=1),
     )
     asyncio.run(
-        draw_complete_page(
+        execute_draw(
             compiled,
             adapter=VertexCompletePageAdapter(_Transport()),
             artifacts=artifacts,

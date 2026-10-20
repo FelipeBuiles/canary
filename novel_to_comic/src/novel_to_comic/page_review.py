@@ -448,6 +448,10 @@ def analysis_is_current(validator_version: str) -> bool:
     return validator_version in {current, current + INCOMPLETE_CROP_SUFFIX}
 
 
+class OCRRequired(ArtifactMissing):
+    """No reusable primary observations exist; a paid read needs authorization."""
+
+
 async def analyze_page_render(
     *,
     page: ComicPage,
@@ -471,7 +475,7 @@ async def analyze_page_render(
             artifacts=artifacts, config=config, retry=retry_crop_ocr)
         return PageAnalysisResult(analysis=analysis, usage=None)
     except ArtifactMissing as exc:
-        if exc.name != "raw_ocr":
+        if not isinstance(exc, OCRRequired):
             # A missing downstream issue/artifact is not evidence that the paid
             # observations are absent, and must never trigger another OCR call.
             raise
@@ -546,7 +550,7 @@ def revalidate_cached_page_render(
                 response = artifacts.read_ocr_response(page.page_number, render.revision)
             except ArtifactMissing:
                 # Retain the raw_ocr absence signal; only this authorizes OCR.
-                raise ArtifactMissing("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
+                raise OCRRequired("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
             if (response.page_number != page.page_number
                     or response.render_revision != render.revision
                     or response.render_image_sha256 != render.image_sha256
@@ -556,7 +560,7 @@ def revalidate_cached_page_render(
             if draft is None:
                 # An unreadable saved answer is no evidence: only a fresh read helps.
                 artifacts.retire_unreadable_ocr_response(page.page_number, render.revision)
-                raise ArtifactMissing("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
+                raise OCRRequired("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
             from novel_to_comic.page_ocr import build_extraction
             raw = RawOCRObservation(
                 page_number=page.page_number, render_revision=render.revision,

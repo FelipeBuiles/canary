@@ -7,7 +7,6 @@ import { clearAccountRequests } from "../lib/accountEpoch";
 import { replaceAccountQueryClient } from "../api/queryClient";
 import { setSessionHint } from "../lib/sessionHint";
 import { usePipelineStore } from "../store/pipeline";
-import { useStyleGenStore } from "../store/styleGen";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 
 let snapshot = { session: null as Session | null, user: null as Session["user"] | null, loading: true };
@@ -37,7 +36,6 @@ function receiveSession(session: Session | null) {
     clearAccountRequests(session?.user.id ?? null);
     usePipelineStore.getState().disconnect();
     usePipelineStore.getState().clearEvents();
-    useStyleGenStore.setState({ pending: {}, jobIds: {}, statuses: {}, queuePositions: {} });
     useInsufficientCreditsStore.getState().close();
     replaceAccountQueryClient(session?.user.id ?? null);
     // OAuth completes first-touch metadata before recording the account milestone.

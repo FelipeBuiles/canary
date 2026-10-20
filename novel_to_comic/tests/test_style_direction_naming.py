@@ -45,7 +45,7 @@ async def _write_proof(_config, _bible, sample_path, **_kwargs):
 
 
 def _run_direction(tmp_path, *, label=None, naming=None):
-    naming = naming or AsyncMock(return_value=SimpleNamespace(value=DESCRIPTION, usage=None))
+    naming = naming or AsyncMock(return_value=SimpleNamespace(value=DESCRIPTION, usage=None, additional_usage=()))
 
     async def scenario():
         request = _request(tmp_path)
@@ -191,13 +191,15 @@ def test_durable_direction_job_names_the_proof(tmp_path, monkeypatch):
     monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", AsyncMock(return_value=None))
     monkeypatch.setattr(style_jobs.style, "generate_sample_image", _write_proof)
     monkeypatch.setattr(style_jobs.style.text_client, "generate_json",
-                        AsyncMock(return_value=SimpleNamespace(value=DESCRIPTION, usage=None)))
+                        AsyncMock(return_value=SimpleNamespace(value=DESCRIPTION, usage=None, additional_usage=())))
     job = GenerationJob(
         id="direction", project_name="account:book", kind="style_sample", label="Direction",
         payload={}, sequence=1, runner=None,
         command=command("style_direction", tmp_path, Config(), bible=_bible().model_dump(mode="json"),
                         candidate=candidate, index=1, direction=direction, with_neighbors=False),
     )
+    from novel_to_comic.state import create_initial_state, save_state
+    save_state(create_initial_state("book", "novel.txt"), tmp_path)
     app = make_app(tmp_path)
     app.state.generation_jobs[job.id] = job
 

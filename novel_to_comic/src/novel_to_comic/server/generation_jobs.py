@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from novel_to_comic.config import Config
 from novel_to_comic.state import hash_style_template
 from .job_commands import JobCommand
+from .page_draw_job import PageDrawJob, PARALLEL_PAGES_PER_ACCOUNT
 from novel_to_comic.image_failure import (
     ImageFailureClassification,
     classify_image_failure,
@@ -69,25 +70,10 @@ def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout
     return elapsed >= max(0, timeout_seconds - 2) and "cancel" in lowered
 
 
-# Complete-page providers whose pages may render in parallel for one account.
-# API pages use twelve slots; subscription pages have a separate smaller pool.
-PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal", "vertex-multimodal"})
-PARALLEL_PAGES_PER_ACCOUNT = 12
-
-
 def parallel_page_limit(job: GenerationJob) -> int:
-    """Use the frozen request, not mutable project settings, as routing authority."""
-    if job.kind != "complete_page_draw" or job.command is None or job.command.operation != "page_draw":
-        return 0
-    request = job.command.arguments.get("request", {})
-    if request.get("provider") == "codex-dev":
-        # Corrections depend on an existing render and keep the exclusive lane.
-        if request.get("correction") is not None or job.command.arguments.get("edit_source"):
-            return 0
-        from novel_to_comic.ai.codex_runtime import IMAGE_PARALLEL_CALLS
-
-        return IMAGE_PARALLEL_CALLS
-    return PARALLEL_PAGES_PER_ACCOUNT if request.get("provider") in PARALLEL_PAGE_PROVIDERS else 0
+    """Use the frozen page job's routing authority."""
+    page_job = PageDrawJob.from_job(job)
+    return page_job.parallel_limit if page_job is not None else 0
 
 
 def is_parallel_page_draw(job: GenerationJob) -> bool:
@@ -95,7 +81,7 @@ def is_parallel_page_draw(job: GenerationJob) -> bool:
 
 
 def _page_pool(job: GenerationJob) -> str:
-    return "codex-page" if job.command.arguments["request"]["provider"] == "codex-dev" else "page"
+    return PageDrawJob.from_job(job).pool
 
 
 # Text-only work with no image spend. It gets its own per-account lane so
@@ -543,10 +529,7 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             job.classification = classify_image_failure(exc)
         job.user_message = user_message_for_image_failure(job.classification)
         job.recoverable = job.classification != "configuration_error"
-        job.phase = (
-            "ambiguous_submission" if getattr(exc, "phase", None) == "ambiguous_submission"
-            else getattr(exc, "page_failure_phase", None)
-        )
+        job.phase = PageDrawJob.failure_phase(exc)
         if job.phase == "analysis":
             job.classification = "analysis_error"
             job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { seedGenerationJob } from "../api/generationTracking";
+import { useGenerationTracking } from "./useGenerationTracking";
+import { generationStatus, isGenerationActive, isCurrentReferenceJob } from "../lib/generationTracking";
+import { useCallback, useState } from "react";
 import { useMutationState, useQueryClient } from "@tanstack/react-query";
-import { useGenerationJobs } from "../api/queries";
 import type { CastReferenceInput, GenerationJob } from "../types/api";
-import { invalidateProject } from "../api/projectScope";
 
 export function useReferenceJob(project: string, identity: "char_id" | "loc_id" | "prop_id", entityId: string, stateId?: string) {
   const qc = useQueryClient();
-  const { data } = useGenerationJobs(project, [], true);
+  const tracking = useGenerationTracking(project);
+  const { data } = tracking;
   const styleHash = data?.current_reference_style_hash;
-  const isCurrent = (job: GenerationJob) => !styleHash || job.reference_style_hash === styleHash;
+  const isCurrent = (job: GenerationJob) => isCurrentReferenceJob(job, styleHash);
   const scopedId = stateId ? `${entityId}:${stateId}` : entityId;
   const submissions = useMutationState({
     filters: { mutationKey: ["reference-instruction", identity] },
@@ -25,7 +27,6 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
   const [localError, setLocalError] = useState<{ terminalId: string | null; message: string | null } | null>(null);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [failedImage, setFailedImage] = useState<string | null>(null);
-  const observed = useRef<string | null>(null);
   const scope = JSON.stringify([project, identity, entityId, stateId, styleHash]);
   const [previousScope, setPreviousScope] = useState(scope);
   if (previousScope !== scope) {
@@ -34,14 +35,9 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     setLocalError(null);
     setFailedImage(null);
   }
-  let latest = previousScope === scope && submitted && isCurrent(submitted) ? submitted : null;
-  for (const job of data?.jobs ?? []) {
-    if (!isCurrent(job)) continue;
-    if (job.payload[identity] !== (stateId ? `${entityId}:${stateId}` : entityId)) continue;
-    if (!latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at)) latest = job;
-  }
+  const latestPolled = tracking.status({ identity, value: scopedId, currentStyle: true }, previousScope === scope ? submitted : null);
   const admittedJob = (submission?.data as { job?: GenerationJob } | undefined)?.job;
-  if (admittedJob && isCurrent(admittedJob) && (!latest || Date.parse(admittedJob.queued_at) > Date.parse(latest.queued_at))) latest = admittedJob;
+  const latest = generationStatus({ identity, value: scopedId, currentStyleHash: styleHash }, latestPolled ? [latestPolled] : [], admittedJob);
   const isSubmitting = submission?.status === "pending";
   const submissionIsLatest = !!submission && (!admittedJob || isCurrent(admittedJob))
     && (!latest || submission.submittedAt >= Date.parse(latest.queued_at));
@@ -49,7 +45,7 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
   const referenceDraft = (submissionIsLatest ? submission.referenceAssets : latest?.payload.reference_assets) as CastReferenceInput[] | undefined;
   const instructionDraft = typeof submittedInstruction === "string" ? submittedInstruction : "";
   const submissionError = submissionIsLatest && submission.status === "error" ? submission.error?.message : null;
-  const activeJob = latest?.status === "queued" || latest?.status === "running" ? latest : null;
+  const activeJob = isGenerationActive(latest) ? latest : null;
   const terminalId = latest && !activeJob ? latest.id : null;
   const terminalError = latest?.status === "failed" ? latest.user_message ?? latest.error ?? "Regeneration failed" : null;
   const refreshToken = `${timestamp}-${styleHash ?? ""}-${terminalId ?? ""}`;
@@ -63,27 +59,11 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     setLocalError({ terminalId, message });
   }, [terminalId, setLocalError]);
 
-  const admittedJobId = admittedJob?.id;
-  useEffect(() => {
-    if (admittedJobId) void invalidateProject(qc, project, "generation-jobs");
-  }, [admittedJobId, project, qc]);
-
-  useEffect(() => {
-    if (!terminalId || observed.current === terminalId) return;
-    observed.current = terminalId;
-    void invalidateProject(qc, project, "image-generation-meta");
-    void invalidateProject(qc, project, "asset-regen-estimate");
-    void invalidateProject(qc, project, "character-ref-versions");
-    void invalidateProject(qc, project, "location-plate-versions");
-    void invalidateProject(qc, project, "status");
-    void invalidateProject(qc, project, "story-bible");
-  }, [terminalId, project, qc]);
-
   const setActiveJob = useCallback((job: GenerationJob | null) => {
     setSubmitted(job);
     setLocalError(null);
-    void invalidateProject(qc, project, "generation-jobs");
+    if (job) seedGenerationJob(qc, project, job);
   }, [project, qc, setSubmitted, setLocalError]);
 
-  return { activeJob, setActiveJob, isSubmitting, instructionDraft, referenceDraft, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };
+  return { start: tracking.start, activeJob, setActiveJob, isSubmitting, instructionDraft, referenceDraft, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };
 }

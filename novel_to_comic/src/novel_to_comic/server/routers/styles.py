@@ -32,8 +32,9 @@ from novel_to_comic.style_contract import (
     style_template_for_suggestion,
 )
 from novel_to_comic.state import (
-    StageState, StageStatus, begin_stage, fail_stage, save_state, load_state,
+    StageState, StageStatus, save_state, load_state,
 )
+from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
     SAMPLE_COUNT,
@@ -630,8 +631,10 @@ async def create_style_direction(
         StageStatus.RUNNING, StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
     )
     if lifecycle_owned:
-        begin_stage(state, "style", SAMPLE_COUNT if with_neighbors else 1)
-        save_state(state, project_dir)
+        channel = request.app.state.event_queues.setdefault(pkey, EventChannel())
+        StageRuntime("style", state, project_dir, on_event=lambda event:
+            channel.put_nowait({**event, "stage": "style_suggest"})
+        ).begin(SAMPLE_COUNT if with_neighbors else 1)
 
 
 
@@ -652,8 +655,7 @@ async def create_style_direction(
         )
     except BaseException:
         if lifecycle_owned:
-            fail_stage(state, "style", "Failed to enqueue style generation")
-            save_state(state, project_dir)
+            StageRuntime("style", load_state(project_dir), project_dir).fail("Failed to enqueue style generation")
         raise
     return {
         "status": "queued",
@@ -714,9 +716,10 @@ async def suggest_styles(
             StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
         )
         if lifecycle_owned:
-            begin_stage(state, "style", NEIGHBOR_COUNT if direction else SAMPLE_COUNT)
+            StageRuntime("style", state, project_dir, on_event=lambda event:
+                queue.put_nowait({**event, "stage": "style_suggest"})
+            ).begin(NEIGHBOR_COUNT if direction else SAMPLE_COUNT)
             lifecycle_started = True
-            save_state(state, project_dir)
         queued_job, _created = await enqueue_reserved_generation_job(
             request.app, project_name=pkey, user_id=user_id,
             project_id=project_id, project_dir=project_dir, stage="style",
@@ -731,9 +734,8 @@ async def suggest_styles(
         )
     except BaseException as exc:
         if lifecycle_started:
-            fail_stage(state, "style", str(exc) or type(exc).__name__)
             try:
-                save_state(state, project_dir)
+                StageRuntime("style", load_state(project_dir), project_dir).fail(str(exc) or type(exc).__name__)
             except BaseException:
                 pass
         if request.app.state.event_queues.get(pkey) is queue:

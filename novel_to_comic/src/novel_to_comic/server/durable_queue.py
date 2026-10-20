@@ -204,11 +204,14 @@ class DurableQueue:
         """Cancel only page operations that have not begun a provider call."""
         from .generation_jobs import generation_jobs_snapshot, job_transition_lock, persist_generation_job
 
+        from .page_draw_job import PageDrawJob
+
         cancelled = []
         async with job_transition_lock(self.app, user_id):
             jobs = [job for job in generation_jobs_snapshot(self.app)
-                    if job.project_name == project_name and job.kind == "complete_page_draw"
-                    and job.status == "queued" and job.started_at is None]
+                    if job.project_name == project_name
+                    and (page_job := PageDrawJob.from_job(job)) is not None
+                    and page_job.can_cancel]
             with self.app.state.admission.journal() as db:
                 dispatches = dict(db.execute(
                     "SELECT id,dispatched FROM operation_outbox WHERE id IN ("

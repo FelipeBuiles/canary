@@ -19,6 +19,8 @@ from typing import Any, Generic, TypeVar
 from pydantic import ValidationError
 
 from novel_to_comic.clients.text import generate_json
+from novel_to_comic.clients.validated_call import RetryPolicy, ValidatedCall
+from novel_to_comic.text_models import TextModelJob
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult, UsageRecord
 
@@ -98,6 +100,7 @@ async def generate_validated_json(
     config: Config,
     *,
     model: str,
+    job: TextModelJob | None = None,
     system_prompt: str,
     user_content: str,
     parse: Callable[[Any], T],
@@ -116,94 +119,72 @@ async def generate_validated_json(
 
     Raises StructuredCallError once ``retries`` corrections are exhausted.
     """
-    from novel_to_comic.server.telemetry import ai_span, observation_context
+    from novel_to_comic.ai.errors import AIStructuredResponseError
 
+    if not temperatures:
+        raise ValueError("A structured call needs at least one temperature")
     usage_records: list[UsageRecord] = []
     last_error: Exception | None = None
     last_parsed: T | None = None
-    total_attempts = retries + 1
+    current_parsed: T | None = None
+    attempts = 0
 
-    # Telemetry tree: one span per call, one per attempt, so a provider
-    # success that failed validation or needed local repair stays visible.
-    with ai_span(f"structured.{feature}", feature=feature) as call_span:
-        for attempt in range(total_attempts):
-            temperature = temperatures[min(attempt, len(temperatures) - 1)]
-            from novel_to_comic.ai.errors import AIStructuredResponseError
-            with ai_span("attempt", attempt_number=attempt + 1) as attempt_span, \
-                    observation_context(attempt_number=attempt + 1):
-                try:
-                    api_result = await (generate or generate_json)(
-                        config=config,
-                        model=model,
-                        system_prompt=system_prompt,
-                        user_content=user_content,
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                        feature=feature,
-                        **({"json_schema": json_schema} if json_schema is not None else {}),
-                    )
-                except AIStructuredResponseError as exc:
-                    attempt_span.set(outcome="unparseable")
-                    call_span.set(outcome="failed", status="failed", attempts=attempt + 1)
-                    raise AIStructuredResponseError(
-                        str(exc), usage_records=(*usage_records, *exc.usage_records),
-                    ) from exc
-                try:
-                    from novel_to_comic.server.metrics import record_structured_attempt
+    def observe(result):
+        usage_records.extend(result.additional_usage)
+        if result.usage is not None:
+            usage_records.append(result.usage)
 
-                    record_structured_attempt(feature=feature, retry=attempt > 0)
-                except Exception:
-                    pass
-                usage_records.extend(api_result.additional_usage)
-                if api_result.usage is not None:
-                    usage_records.append(api_result.usage)
-                parsed_this_attempt: T | None = None
-                try:
-                    parsed_this_attempt = parse(api_result.value)
-                    last_parsed = parsed_this_attempt
+    def parse_candidate(raw):
+        nonlocal last_parsed, current_parsed, last_error
+        current_parsed = None
+        try:
+            current_parsed = parse(raw)
+            last_parsed = current_parsed
+            if validate is not None:
+                validate(current_parsed)
+            return current_parsed
+        except Exception as error:
+            last_error = error
+            raise
+
+    def repair_candidate(raw, error):
+        if repair is not None and current_parsed is not None:
+            try:
+                value = repair(current_parsed, error)
+                if value is not None:
                     if validate is not None:
-                        validate(parsed_this_attempt)
-                    if attempt > 0:
-                        logger.info("%s recovered on retry %d", label, attempt)
-                    attempt_span.set(outcome="accepted")
-                    call_span.set(outcome="accepted" if attempt == 0 else "accepted_after_retry",
-                                  attempts=attempt + 1)
-                    return StructuredCallOutcome(
-                        value=parsed_this_attempt, usage_records=usage_records, attempts=attempt + 1
-                    )
-                except Exception as exc:
-                    last_error = exc
-                    attempt_span.set(outcome="rejected", error_type=type(exc).__name__,
-                                     validation_error_count=(exc.error_count()
-                                                             if isinstance(exc, ValidationError) else None))
-                    if repair is not None and parsed_this_attempt is not None:
-                        try:
-                            repaired = repair(parsed_this_attempt, exc)
-                            if repaired is not None:
-                                if validate is not None:
-                                    validate(repaired)
-                                logger.info("%s repaired locally after attempt %d", label, attempt + 1)
-                                attempt_span.set(outcome="repaired")
-                                call_span.set(outcome="repaired", attempts=attempt + 1)
-                                return StructuredCallOutcome(
-                                    value=repaired,
-                                    usage_records=usage_records,
-                                    attempts=attempt + 1,
-                                )
-                        except Exception:
-                            logger.debug("%s local repair did not validate", label, exc_info=True)
-                    action = "retrying" if attempt < total_attempts - 1 else "no retries left"
-                    logger.warning(
-                        "%s attempt %d/%d rejected; %s: %s",
-                        label,
-                        attempt + 1,
-                        total_attempts,
-                        action,
-                        validation_error_summary(exc),
-                    )
-                    if attempt < total_attempts - 1:
-                        user_content = correction(api_result.value, exc)
-        call_span.set(outcome="failed", status="failed", attempts=total_attempts)
+                        validate(value)
+                    return value
+            except Exception:
+                logger.debug("%s local repair did not validate", label, exc_info=True)
+        return None
 
-    assert last_error is not None
-    raise StructuredCallError(label, last_error, last_parsed, usage_records, total_attempts)
+    def rejected(request, raw, error):
+        action = "retrying" if attempts < retries + 1 else "no retries left"
+        logger.warning("%s attempt %d/%d rejected; %s: %s", label, attempts,
+                       retries + 1, action, validation_error_summary(error))
+
+    def prepare(request, attempt):
+        nonlocal attempts
+        attempts = attempt
+        return {**request, "temperature": temperatures[min(attempt - 1, len(temperatures) - 1)]}
+
+    try:
+        outcome = await ValidatedCall(
+            job or TextModelJob.for_feature(feature, model),
+            RetryPolicy(retries + 1, (Exception,)), parse_candidate, correction,
+            repair=repair_candidate if repair is not None else None,
+        ).run(generate or generate_json, dict(
+            config=config, model=model, system_prompt=system_prompt,
+            user_content=user_content, max_output_tokens=max_output_tokens, feature=feature,
+            **({"json_schema": json_schema} if json_schema is not None else {}),
+        ), observe=observe, prepare_attempt=prepare, rejected=rejected)
+    except AIStructuredResponseError as error:
+        raise AIStructuredResponseError(
+            str(error), usage_records=(*usage_records, *error.usage_records),
+        ) from error
+    except Exception as error:
+        if error is not last_error:
+            raise
+        raise StructuredCallError(label, error, last_parsed, usage_records, attempts) from error
+    return StructuredCallOutcome(outcome.value, usage_records, outcome.attempts)

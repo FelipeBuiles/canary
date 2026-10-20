@@ -59,7 +59,7 @@ from novel_to_comic.usage import ApiResult, UsageRecord
 @pytest.fixture(autouse=True)
 def isolate_editorial_judgment(monkeypatch):
     from .narrative_review_support import accept_narrative
-    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", accept_narrative)
+    monkeypatch.setattr("novel_to_comic.validation_round.review_narrative", accept_narrative)
 
 
 def _adaptation() -> BookAdaptation:
@@ -673,7 +673,7 @@ def test_map_schema_corrections_do_not_consume_narrative_revision(tmp_path, monk
                                      message="Reveal precedes its page turn.", artifact_ids=["page_001", "page_002"],
                                      evidence=["Move the revealing words to the reveal page."]),)
         return ()
-    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", review)
+    monkeypatch.setattr("novel_to_comic.validation_round.review_narrative", review)
     if unresolved:
         with pytest.raises(PlanInvariantError):
             asyncio.run(produce_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=24, maximum=24),
@@ -905,7 +905,7 @@ def test_narrative_repair_redetails_only_the_cited_page_and_may_split_its_panel(
             ),)
         return ()
 
-    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", review)
+    monkeypatch.setattr("novel_to_comic.validation_round.review_narrative", review)
 
     async def generate(**request):
         if request["feature"] == "plan.map":
@@ -4431,7 +4431,7 @@ def test_a_failing_narrative_review_keeps_the_accepted_plan_drawable(tmp_path: P
             update={"input_sha256": "0" * 64}))
         return (InvariantFailure(id="plan_review_1_1", owner_stage="plan", code="narrative_review_gap",
                                  message="The escape loses its cause.", evidence=["Beat 3 has no setup."]),)
-    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", reject)
+    monkeypatch.setattr("novel_to_comic.validation_round.review_narrative", reject)
     corrected = _three_page_page(2, "johansen_soaked")
 
     async def generate(**_request):

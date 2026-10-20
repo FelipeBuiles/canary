@@ -437,8 +437,11 @@ def persist_non_panel_provenance(
 
 
 async def submit_non_panel_request(*, config: Config, project_dir: Path,
-    request: NonPanelRequest, output_path: Path, kind: str = "asset_regen",
+    request: NonPanelRequest, output_path: Path,
     idempotency_key: str | None = None, feature: str = "image.non_panel") -> NonPanelSubmission:
+    from novel_to_comic.asset_versions import record_asset_version
+
+    record_asset_version(output_path, project_dir, reason="before_regenerate")
     frozen = submit_frozen_request(
         project_dir,
         request.wire,

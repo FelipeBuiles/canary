@@ -30,8 +30,15 @@ def make_app(root):
     return app
 
 
-def enqueue(app, label):
-    spec = command("cover", app.state.projects_dir / "account" / "book", Config())
+def enqueue(app, label, *, page_draw=False):
+    directory = app.state.projects_dir / "account" / "book"
+    if page_draw:
+        from .test_complete_page_draw import _compile, _page
+        compiled = _compile(app.state.projects_dir)
+        spec = command("page_draw", directory, Config(), request=compiled.request.model_dump(mode="json"),
+                       page=_page().model_dump(mode="json"), references=[])
+    else:
+        spec = command("cover", directory, Config())
     spec = spec.model_copy(update={"stage": "draw", "user_id": "account", "project_id": "book"})
     return enqueue_generation_job(app, "account:book", "complete_page_draw", label,
                                   {"page_number": int(label)}, None, user_id="account", command=spec)
@@ -255,7 +262,7 @@ def test_cancel_queued_pages_preserves_running_work_and_survives_restore(tmp_pat
         queue.ready = True
         import time
         queue.last_healthy = time.monotonic()
-        waiting, running = enqueue(app, "1"), enqueue(app, "2")
+        waiting, running = enqueue(app, "1", page_draw=True), enqueue(app, "2", page_draw=True)
         running.status = "running"
         persist_generation_job(app, running)
         with app.state.admission.journal() as db:
@@ -389,7 +396,7 @@ def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path,
     state.stages["style"].status = StageStatus.RUNNING
     save_state(state, tmp_path)
     candidates = [style_jobs.style.normalize_suggestion({"id": str(i), "label": f"Style {i}"}) for i in range(3)]
-    monkeypatch.setattr(style_jobs.style, "generate_suggestions", AsyncMock(return_value=(candidates, None)))
+    monkeypatch.setattr(style_jobs.style, "generate_suggestions", AsyncMock(return_value=(candidates, [])))
     brief_author = AsyncMock(return_value=brief)
     monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", brief_author)
 
@@ -548,7 +555,7 @@ def test_page_routes_use_durable_draw_admission_signature(tmp_path, monkeypatch,
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from unittest.mock import create_autospec
-    from novel_to_comic.server.page_admission import enqueue_complete_page_draw
+    from novel_to_comic.server.draw_submission import enqueue_complete_page_draw
     from novel_to_comic.server.routers import pages
     from tests.test_complete_page_draw import _compile, _page
 
@@ -562,8 +569,8 @@ def test_page_routes_use_durable_draw_admission_signature(tmp_path, monkeypatch,
     app.dependency_overrides[pages.get_project] = lambda: (tmp_path, config, None)
     app.dependency_overrides[pages.get_current_user] = lambda: "account"
     monkeypatch.setattr(pages, "TargetArtifacts", lambda directory: target)
-    monkeypatch.setattr(pages, "_prepare_initial_generation", lambda *args: (target, page, compiled))
-    monkeypatch.setattr(pages, "_prepare_explicit_correction", lambda **kwargs: SimpleNamespace(
+    monkeypatch.setattr(pages, "prepare_initial_generation", lambda *args: (target, page, compiled))
+    monkeypatch.setattr(pages, "prepare_explicit_correction", lambda **kwargs: SimpleNamespace(
         compiled=compiled, correction=SimpleNamespace(issue_ids=(), parent_render_revision=1)))
     monkeypatch.setattr(pages, "complete_page_adapter", lambda *args, **kwargs: "adapter")
     monkeypatch.setattr(pages, "page_read_adapter", lambda *args: None)
@@ -596,7 +603,8 @@ def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
         captured.update(kwargs)
         return work, None
     monkeypatch.setattr(page_drawing, "page_draw_execution", execution)
-    monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config, **kwargs: "adapter")
+    monkeypatch.setattr("novel_to_comic.server.draw_submission.complete_page_adapter",
+                        lambda config, **kwargs: "adapter")
     monkeypatch.setattr(job_execution.TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[_page()]))
     monkeypatch.setattr(job_execution.TargetArtifacts, "read_page", lambda self, number: _page())
     spec = command("page_draw", tmp_path, Config(),
@@ -651,9 +659,10 @@ def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_
     def prepare(**kwargs):
         entered.set()
         assert release.wait(2), "Preparation blocked the event loop heartbeat"
-        return target, object(), [(1, SimpleNamespace(page_number=1), object())]
+        compiled = SimpleNamespace(request=SimpleNamespace(request_sha256="a" * 64))
+        return target, object(), [(1, SimpleNamespace(page_number=1), compiled)]
     monkeypatch.setattr(page_operations, "prepare_undrawn_pages", prepare)
-    monkeypatch.setattr(page_operations, "ensure_current_page_edition", lambda *args: None)
+    monkeypatch.setattr(page_operations, "resolve_draw_edition", lambda *args, **kwargs: None)
     app = make_app(tmp_path)
     events = asyncio.Queue()
     app.state.event_queues["account:book"] = events
@@ -947,3 +956,97 @@ def test_style_batch_reports_each_finished_proof_in_the_stage_counts(tmp_path, m
     asyncio.run(exercise())
     assert seen == [0, 1, 2]
     assert load_state(tmp_path).stages["style"].items_done == 3
+
+
+@pytest.mark.parametrize("already_observed", [False, True])
+def test_durable_style_failure_retains_malformed_text_usage_once(tmp_path, monkeypatch, already_observed):
+    from unittest.mock import AsyncMock
+    from novel_to_comic.ai.errors import AIStructuredResponseError
+    from novel_to_comic.server import style_jobs
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+    from novel_to_comic.usage import ApiResult, UsageRecord
+    from tests.test_style_stage import _bible
+
+    state = create_initial_state("book", "novel.txt")
+    state.stages["style"].status = StageStatus.RUNNING
+    save_state(state, tmp_path)
+    prior = UsageRecord(provider="test", model="test", operation="text", input_tokens=10)
+    malformed = UsageRecord(provider="test", model="test", operation="text", input_tokens=30)
+    expected = (prior, malformed) if already_observed else (malformed,)
+    error = AIStructuredResponseError("malformed paid JSON", usage_records=expected)
+    responses = [ApiResult({}, usage=prior), error] if already_observed else [error]
+    monkeypatch.setattr(style_jobs.style.text_client, "generate_json", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", AsyncMock(return_value=None))
+    job = GenerationJob(id="batch", project_name="account:book", kind="style_suggest", label="Styles",
+        payload={}, sequence=1, runner=None, command=command("style_suggest", tmp_path, Config(),
+            bible=_bible().model_dump(mode="json"), lifecycle_owned=True))
+    app = make_app(tmp_path)
+    app.state.generation_jobs[job.id] = job
+    with pytest.raises(AIStructuredResponseError, match="malformed paid JSON"):
+        asyncio.run(style_jobs.execute_style(app, job, tmp_path, Config()))
+    stage = load_state(tmp_path).stages["style"]
+    assert stage.status == StageStatus.FAILED
+    assert [usage["call_id"] for usage in stage.usage_log] == [usage.call_id for usage in expected]
+
+
+@pytest.mark.parametrize("delayed_malformed", [False, True])
+def test_durable_style_drains_paid_production_siblings_and_accounts_failures(tmp_path, monkeypatch, delayed_malformed):
+    from unittest.mock import AsyncMock
+    from novel_to_comic.ai.errors import AIStructuredResponseError
+    from novel_to_comic.server import style_jobs
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+    from novel_to_comic.usage import ApiResult, UsageRecord
+    from tests.test_style_stage import SAMPLE_COUNT, _batch, _bible, _production
+
+    state = create_initial_state("book", "novel.txt")
+    state.stages["style"].status = StageStatus.RUNNING
+    save_state(state, tmp_path)
+    usages = [UsageRecord(provider="test", model="test", operation="text", input_tokens=10 + i)
+              for i in range(SAMPLE_COUNT + 1)]
+    job = GenerationJob(id="batch", project_name="account:book", kind="style_suggest", label="Styles",
+        payload={}, sequence=1, runner=None, command=command("style_suggest", tmp_path, Config(),
+            bible=_bible().model_dump(mode="json"), lifecycle_owned=True))
+    app = make_app(tmp_path)
+    app.state.generation_jobs[job.id] = job
+
+    async def exercise():
+        started = 0
+        all_started, failed, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def answer(**kwargs):
+            nonlocal started
+            if kwargs["feature"] == "style.suggestions":
+                return ApiResult(_batch(), usage=usages[0])
+            started += 1
+            index = started
+            if started == SAMPLE_COUNT:
+                all_started.set()
+            if index == 1:
+                await all_started.wait()
+                failed.set()
+                raise AIStructuredResponseError("malformed production", usage_records=(usages[index],))
+            await release.wait()
+            if index == 2 and delayed_malformed:
+                raise AIStructuredResponseError("later malformed production", usage_records=(usages[index],))
+            return ApiResult(_production(), usage=usages[index])
+
+        monkeypatch.setattr(style_jobs.style.text_client, "generate_json", AsyncMock(side_effect=answer))
+        monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", AsyncMock(return_value=None))
+        task = asyncio.create_task(style_jobs.execute_style(app, job, tmp_path, Config()))
+        try:
+            await asyncio.wait_for(failed.wait(), timeout=2)
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert load_state(tmp_path).stages["style"].status == StageStatus.RUNNING
+        finally:
+            release.set()
+        with pytest.raises(AIStructuredResponseError, match="malformed production"):
+            await task
+
+    asyncio.run(exercise())
+    stage = load_state(tmp_path).stages["style"]
+    assert stage.status == StageStatus.FAILED
+    assert len(stage.usage_log) == len(usages)
+    assert {usage["call_id"] for usage in stage.usage_log} == {usage.call_id for usage in usages}

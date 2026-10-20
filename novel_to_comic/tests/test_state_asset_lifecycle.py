@@ -204,7 +204,7 @@ def test_cast_location_state_missing_parent_is_recorded_not_stage_fatal(
         raise RuntimeError("gateway unavailable")
 
     monkeypatch.setattr(
-        "novel_to_comic.stages.s3_cast.submit_non_panel_request",
+        "novel_to_comic.look_assets.submit_non_panel_request",
         fail_canonical_request,
     )
 

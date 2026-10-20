@@ -3,7 +3,6 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { beforeEach, expect, it, vi } from "vitest";
 import { signOut, useAuth } from "../hooks/useAuth";
 import { queryClient } from "../api/queryClient";
-import { useStyleGenStore } from "../store/styleGen";
 import { usePipelineStore } from "../store/pipeline";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 import type { Session } from "@supabase/supabase-js";
@@ -36,7 +35,7 @@ it("replaces every private cache and transient job/dialog state on account switc
   act(() => {
     aliceClient.setQueryData(["credits", "balance"], "Alice's balance");
     aliceClient.setQueryData(["projects"], ["Alice's private manuscript"]);
-    useStyleGenStore.getState().add("same-project", [1]);
+    aliceClient.setQueryData(["project", "same-project", "generation-admissions"], [{ id: "private-job" }]);
     usePipelineStore.setState({ events: [{ type: "stage_start", stage: "draw" }] });
     useInsufficientCreditsStore.setState({ open: true, onRetry: vi.fn() });
   });
@@ -44,7 +43,7 @@ it("replaces every private cache and transient job/dialog state on account switc
   expect(screen.queryByText("Alice's balance")).toBeNull();
   expect(queryClient).not.toBe(aliceClient);
   expect(queryClient.getQueryData(["projects"])).toBeUndefined();
-  expect(useStyleGenStore.getState().pending).toEqual({});
+  expect(queryClient.getQueryData(["project", "same-project", "generation-admissions"])).toBeUndefined();
   expect(usePipelineStore.getState().events).toEqual([]);
   expect(useInsufficientCreditsStore.getState().onRetry).toBeNull();
   // A late optimistic rollback remains isolated even after the old cache was cleared.

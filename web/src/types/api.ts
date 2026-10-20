@@ -700,8 +700,11 @@ export interface PageIssueSummary {
 }
 
 export interface PageAnalysisRecovery {
-  status: "undrawn" | "stale_render" | "checked" | "cached_evidence" | "requires_ocr";
+  /** "failed": saved evidence is invalid; another paid read would not help. */
+  status: "undrawn" | "stale_render" | "checked" | "cached_evidence" | "requires_ocr" | "failed";
   requires_paid_call: boolean;
+  phase?: "analysis";
+  error?: string;
 }
 
 export type PageRedrawReason = "image" | "description" | "continuity" | "removed";

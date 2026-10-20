@@ -186,16 +186,29 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 - `target_artifacts.py`: canonical full-page artifact storage and validation.
 - `artifacts.py`: Story Bible, style, Cast references, accepted addenda.
 - `book_adaptation.py`, `page_planning.py`: creative text generation and validation.
+- `adaptation_shards.py`: provider-free shard algebra behind Adapt repairs:
+  partition a candidate, plan scoped repairs, splice them back with a complete
+  source ledger.
 - `editorial.py`, `server/routers/editorial.py`: revision-scoped decisions,
   story-change preview/apply; all routes under `/api/projects/{project_id}`.
 - `generation_checkpoints.py`: input-keyed resumable structured responses.
+- `clients/validated_call.py`, `text_models.py`: job-bound validation attempts,
+  checkpoint revalidation, correction feedback, usage observers and telemetry.
+  `clients/structured_call.py` adds parse/local-repair policy for callers that
+  return a structured-call outcome.
+- `validation_round.py`: clean-candidate narrative review, attempt history,
+  persistence and the distinct Adapt and Plan repair policies.
 - `stages/s1_extract.py`: private participation/source-quote validation.
 - `style_briefing.py`, `style_contract.py`, `style_reference.py`, `compiled_request.py`,
   `stages/s2_style.py`, `stages/s3_cast.py`: bounded shared proof selection,
   exact anchors, page/art-only projection, and shared selected-proof resolution.
+- `look_assets.py`, `asset_generation.py`: Look asset reuse, held failures,
+  prior-image archives, bounded production, dependent staleness and Character Check refresh.
 - `state_assets.py`, `artifacts.py`: explicit state conditioning, scoped state
   paths, and reference lineage.
 - `page_drawing.py`: frozen page compilation, image submission, explicit corrections.
+  `page_draw_preparation.py` resolves edition/reference context and preflights
+  compilation for quote, initial/batch submission and visual review.
 - `page_ocr.py`, `page_review.py`: raw response/observation persistence and
   provider-free revalidation, producing-intent retention, correction context,
   and issue lifecycle. `ai/client.py` owns the pre-parse response sink.
@@ -203,14 +216,20 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 - `page_finishing.py`, `models/finish.py`, `server/routers/export.py`: persisted
   preflight, package identity/byte validation, provider-free retry and export.
 - `config.py`, `model_costs.py`, `usage.py`: configured aliases and cost evidence.
-- `ai/client.py`: gateway calls and provider usage events.
+- `ai/client.py`: gateway calls and provider usage events. Text request shaping,
+  route results and paid lifecycle live in `ai/text_requests.py`,
+  `ai/text_routes.py` and `ai/text_finalisation.py`.
 - `server/credited_job.py`, `server/credits.py`, `server/async_credits.py`: durable
   admission and bounded, cancellation-safe ledger I/O.
 - `server/job_commands.py`, `server/job_execution.py`, `server/durable_queue.py`,
   `server/job_journal.py`: typed commands, one executor, dispatch and indexed history.
 - `server/page_operations.py`, `server/pipeline_operations.py`,
-  `server/cover_operations.py`, `server/page_admission.py`, `server/cast_admission.py`:
+  `server/cover_operations.py`, `server/draw_submission.py`, `server/cast_admission.py`:
   application operations; routers translate HTTP, stages never import routers.
+- `server/page_draw_job.py`: frozen page-job execution, scheduling, cancellation
+  and failure-phase policy; `server/render_checks.py`: render status, quotes,
+  credited checks and immutable active-render guards.
+  `server/page_draw_views.py` owns read-only page reference/correction presentation.
 - `server/action_policy.py`, `server/storage_budget.py`: explicit readiness policy,
   account ingestion budget and conservative drained housekeeping.
 - `server/admission.py`, `server/event_channel.py`, `server/generation_jobs.py`:
@@ -239,6 +258,11 @@ Story draft ownership is in `StoryRoom.tsx`; estimated starts use
 `components/composites/StagePlaceholder.tsx`. `PagesRoom.tsx` owns review URL
 and exception filters; `components/pages/PageCheckRecovery.tsx` owns cached/paid
 OCR recovery selection; `BookRoom.tsx` owns package readiness and review links.
+`lib/pageState.ts` owns page-state precedence and edition-specific display images;
+`hooks/useGenerationTracking.ts` owns subject status, admission, terminal handling
+and shared credit recovery, using `lib/generationTracking.ts` and
+`api/generationTracking.ts`. `hooks/useCastReference.ts` owns Cast card regeneration.
+`api/pageCache.ts` owns page-change invalidation.
 `components/InsufficientCreditsDialog.tsx` owns explicit post-top-up Resume.
 `web/src/api/projectScope.ts` owns project keys, part/series paths and
 cross-part invalidation; `components/parts/` owns the part switcher, Parts

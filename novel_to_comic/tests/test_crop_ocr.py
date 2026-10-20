@@ -420,7 +420,7 @@ def test_fragment_top_edges_do_not_reorder_words_or_join_separate_lines():
 
 def test_analysis_recovery_recognizes_enabled_verifier_version(tmp_path, monkeypatch):
     from novel_to_comic.models.draw import PageGenerationProvenance
-    from novel_to_comic.server.routers.pages import _analysis_recovery
+    from novel_to_comic.server.render_checks import render_check_status as _analysis_recovery
     from novel_to_comic.usage import UsageRecord
 
     case = setup_case(tmp_path)

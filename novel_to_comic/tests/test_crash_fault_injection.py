@@ -84,7 +84,7 @@ def _child(root: Path, phase: str):
 
     adapter.generate = generate
 
-    from novel_to_comic.server.page_admission import enqueue_complete_page_draw
+    from novel_to_comic.server.draw_submission import enqueue_complete_page_draw
     from novel_to_comic.server.job_execution import execute_command
     from novel_to_comic.config import Config
     from unittest.mock import patch
@@ -106,7 +106,7 @@ def _child(root: Path, phase: str):
                 reserve(*args, **kwargs)
                 os._exit(73)
             credits.reserve_credits = held_before_submission
-        with patch("novel_to_comic.page_drawing.complete_page_adapter", return_value=adapter):
+        with patch("novel_to_comic.server.draw_submission.complete_page_adapter", return_value=adapter):
             await execute_command(app, job)
         raise AssertionError("fault was not reached")
 

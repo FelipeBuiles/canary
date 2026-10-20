@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { elementRect } from "@lettering-engine";
 import { usePageSource } from "../../api/queries";
-import { pageRenderPreviewUrl } from "../../api/pages";
-import { pageCompositePreviewUrl } from "../../api/lettering";
+import { pageDisplayImage } from "../../lib/pageState";
 import { useI18n } from "../../i18n";
 import type { CompletePageSummary, PageSourceLettering, PageSourceSegment, PageSourceView } from "../../types/api";
 import { SectionHeader } from "../composites/SectionHeader";
@@ -101,9 +100,7 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
   }
 
   const hybrid = item.lettering_mode === "hybrid";
-  const art = revision == null ? null : hybrid
-    ? pageCompositePreviewUrl(project, pageNumber, revision, "reader", item.lettering_revision)
-    : pageRenderPreviewUrl(project, pageNumber, revision, "reader");
+  const art = revision == null ? null : pageDisplayImage(project, { pageNumber, revision, hybrid, letteringRevision: item.lettering_revision });
   const caption = outlines.length > 0
     ? t("Point at highlighted lettering to outline where it sits on the page.")
     : hybrid || data.lettering.length === 0

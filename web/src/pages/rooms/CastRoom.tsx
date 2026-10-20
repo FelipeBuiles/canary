@@ -1,3 +1,4 @@
+import { useGenerationTracking } from "../../hooks/useGenerationTracking";
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { ErrorDetails } from "../../components/composites/ErrorDetails";
 import { CastRegenAction } from "../../components/composites/CastRegenAction";
@@ -5,28 +6,18 @@ import { CastIdentityReview } from "../../components/composites/CastIdentityRevi
 import { useCastReview, useRedrawingCharacters } from "../../api/castReview";
 import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus, Expand } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
-import { useReferenceJob } from "../../hooks/useReferenceJob";
+import { useCastReference } from "../../hooks/useCastReference";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { castCharacters } from "../../lib/castRoster";
 import { msg } from "../../locales/messages";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
-  useGenerationJobs,
   useProjectStatus,
   useStageEstimate,
   useStoryBible,
-  useRegenRef,
-  useRegenStateRef,
-  useRegenLocationState,
   useCastAssetVersions,
   useRestoreCastAssetVersion,
-  useRegenRefWithInstruction,
-  useRegenPlate,
-  useRegenPlateWithInstruction,
-  useRegenProp,
-  useRegenPropWithInstruction,
-  useAssetRegenEstimate,
   useImageGenerationMeta,
   useResetStale,
 } from "../../api/queries";
@@ -42,7 +33,6 @@ import { useImageViewer } from "../../hooks/useImageViewer";
 import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import type { AppearanceState, CastFailure, CastReferenceInput, Character, ContentTrigger, GenerationJob, Location, Prop } from "../../types/api";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { ImageGenerationPreview } from "../../components/composites/ImageGenerationPreview";
 import { StaleStageNotice } from "../../components/composites";
@@ -146,16 +136,15 @@ export function StateRefRow({
   }, true);
 
   const significant = (states ?? []).filter((s) => s.visually_significant);
-  const { data: jobs } = useGenerationJobs(projectName, [], significant.length > 0);
+  const tracking = useGenerationTracking(projectName, significant.length > 0);
   const { data: status } = useProjectStatus(projectName);
   const stateFailure = (stateId: string) => castFailureFor(status?.stages?.cast?.failures, entityId, stateId);
   const updating = useContext(CastUpdatingContext);
   const stateUpdating = (stateId: string) => updating.has(updatingKey(kind === "character" ? "characters" : "locations", entityId, stateId));
   if (significant.length === 0) return null;
-  const stateJob = (stateId: string) => (jobs?.jobs ?? []).filter((job) =>
-    job.payload[kind === "character" ? "char_id" : "loc_id"] === `${entityId}:${stateId}`,
-  ).reduce<GenerationJob | undefined>((latest, job) =>
-    !latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at) ? job : latest, undefined);
+  const stateJob = (stateId: string) => tracking.status({
+    identity: kind === "character" ? "char_id" : "loc_id", value: `${entityId}:${stateId}`, currentStyle: true,
+  });
   const version = (stateId: string) => {
     const job = stateJob(stateId);
     // The pending marker drops when the running Cast redraws this look, so the tile reloads then.
@@ -257,46 +246,28 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
   onClose: () => void; onRestored: () => void;
 }) {
   const { t } = useI18n();
-  const job = useReferenceJob(projectName, kind === "character" ? "char_id" : "loc_id", entityId, state.id);
-  const characterRegen = useRegenStateRef();
-  const locationRegen = useRegenLocationState();
-  const characterEdit = useRegenRefWithInstruction();
-  const locationEdit = useRegenPlateWithInstruction();
+  const job = useCastReference(projectName, kind, entityId, state.id);
   const [instruction, setInstruction] = useState<string | null>(initialInstruction);
-  const { data: estimate } = useAssetRegenEstimate(projectName, kind, entityId, state.id);
-  const busy = job.isSubmitting || !!job.activeJob || characterRegen.isPending || locationRegen.isPending || characterEdit.isPending || locationEdit.isPending;
+  const estimate = job.estimate;
+  const busy = job.isSubmitting || !!job.activeJob;
   const src = `/api${seriesPath(projectName)}/files/${kind === "character"
     ? `refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}/sheet.png`
     : `plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}.png`}?t=${job.timestamp}`;
-  const submit = (text?: string, referenceAssets?: CastReferenceInput[]) => {
-    job.setRegenError(null);
-    const callbacks = {
-      onSuccess: (data: { job: GenerationJob }) => job.setActiveJob(data.job),
-      onError: (error: Error) => {
-        if (maybeShowInsufficientCredits(error, { actionLabel: "Regenerate appearance", onRetry: () => submit(text, referenceAssets) })) return;
-        job.setRegenError(error.message);
-      },
-    };
-    if (text) {
-      if (kind === "character") characterEdit.mutate({ project: projectName, charId: entityId, stateId: state.id, instruction: text, referenceAssets }, callbacks);
-      else locationEdit.mutate({ project: projectName, locId: entityId, stateId: state.id, instruction: text, referenceAssets }, callbacks);
-    } else if (kind === "character") characterRegen.mutate({ project: projectName, charId: entityId, stateId: state.id }, callbacks);
-    else locationRegen.mutate({ project: projectName, locId: entityId, stateId: state.id }, callbacks);
-  };
+  const submit = job.regenerate;
   return <ImageModal isOpen onClose={onClose} src={src} alt={state.label} title={state.label}
     imageAvailable={!job.imgFailed} emptyLabel={t("NOT GENERATED")}
     generationStatus={busy || (stageRegenerating && job.imgFailed) ? (job.activeJob?.status === "queued" ? t("QUEUED") : t("DRAWING…")) : undefined}
     sidebar={<div className="space-y-5">
       <AnchorSection anchor={state.visual_anchor} />
       {failure && !busy && <ErrorNotice error={failure.message} operation="generate" title="This reference could not be completed." />}
-      <img src={src} alt="" className="hidden" onError={() => job.setImgFailed(true)} />
+      <img src={src} alt="" className="hidden" onError={() => job.imageFailed()} />
       <CastRegenAction projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id}
         assetLabel={state.label} cost={estimate} hasImage={!job.imgFailed} busy={busy}
         busyLabel={job.activeJob ? queuedLabel(job.activeJob) : t("DRAWING…")}
         instruction={instruction ?? job.instructionDraft} onInstructionChange={setInstruction}
         error={job.regenError} onRegenerate={() => submit()} onRegenerateWithInstruction={submit} />
       <RefVersionHistory projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id} busy={busy || stageRegenerating}
-        refreshKey={job.timestamp} onRestored={() => { job.setTimestamp(Date.now()); job.setImgFailed(false); onRestored(); }} />
+        refreshKey={job.timestamp} onRestored={() => { job.refreshImage(); onRestored(); }} />
     </div>} />;
 }
 
@@ -579,13 +550,10 @@ function CharacterCastCard({
 }) {
   const refUrl = `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError } =
-    useReferenceJob(projectName, "char_id", character.id);
+  const { imgFailed, imageFailed, timestamp, refreshImage, activeJob, isSubmitting, instructionDraft, regenError, regenerate, estimate: regenEstimate } =
+    useCastReference(projectName, "character", character.id, undefined, isModalOpen);
   const [instruction, setInstruction] = useState<string | null>(null);
   useCastSuggestion("character", character.id, (text) => { setInstruction(text); setIsModalOpen(true); });
-  const regenRef = useRegenRef();
-  const regenRefInstructed = useRegenRefWithInstruction();
-  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", character.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
     `refs/${character.id}/sheet.png`,
@@ -599,66 +567,25 @@ function CharacterCastCard({
   useEffect(() => {
     if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
-        setTimestamp(Date.now());
+        refreshImage();
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, pendingUpdate, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => {
-    setRegenError(null);
-    regenRef.mutate(
-      { project: projectName, charId: character.id },
-      {
-        onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Regenerate character",
-              onRetry: startRegen,
-            })
-          ) {
-            return;
-          }
-          setRegenError(err.message);
-        },
-      }
-    );
+  const startRegen = () => regenerate();
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+    if (!text.trim()) return;
+    setInstruction(text.trim());
+    regenerate(text, referenceAssets);
   };
-
-  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
-    const trimmed = nextInstruction.trim();
-    if (!trimmed) return;
-    setInstruction(trimmed);
-    setRegenError(null);
-    regenRefInstructed.mutate(
-      { project: projectName, charId: character.id, instruction: trimmed, referenceAssets },
-      {
-        onSuccess: (data) => {
-          setActiveJob(data.job);
-        },
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Apply & regenerate character",
-              onRetry: () => submitInstruction(trimmed, referenceAssets),
-            })
-          ) {
-            return;
-          }
-          setRegenError(err.message);
-        },
-      },
-    );
-  };
-
-  const isInstructionBusy = regenRefInstructed.isPending || isSubmitting;
+  const isInstructionBusy = isSubmitting;
 
   const { t } = useI18n();
   const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card shows drawing while its asset is absent, still waiting for the
   // running Cast to redraw it, or while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenRef.isPending || isInstructionBusy || !!activeJob;
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -680,7 +607,7 @@ function CharacterCastCard({
         missingLabel={t("NO REF IMAGE")}
         stageRegenerating={stageRegenerating}
         onOpen={() => setIsModalOpen(true)}
-        onImageError={() => setImgFailed(true)}
+        onImageError={() => imageFailed()}
         meta={[character.age_range, character.gender].filter(Boolean).join(" · ")}
         tags={character.distinguishing_features.slice(0, 3)}
         summary={readableAnchor(character.visual_anchor)}
@@ -714,7 +641,7 @@ function CharacterCastCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={regenRef.isPending || isInstructionBusy || !!activeJob}
+              busy={isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}
@@ -729,8 +656,7 @@ function CharacterCastCard({
               refreshKey={timestamp}
               busy={stageRegenerating || isGenerating || isInstructionBusy}
               onRestored={() => {
-                setTimestamp(Date.now());
-                setImgFailed(false);
+                refreshImage();
               }}
             />
             <StateRefRow projectName={projectName} entityId={character.id} kind="character" states={character.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
@@ -797,13 +723,10 @@ function LocationPlateCard({
 }) {
   const plateUrl = `/api${seriesPath(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
-    useReferenceJob(projectName, "loc_id", location.id);
+  const { imgFailed, imageFailed, timestamp, refreshImage, activeJob, isSubmitting, instructionDraft, regenError, regenerate, estimate: regenEstimate } =
+    useCastReference(projectName, "location", location.id, undefined, isModalOpen);
   const [instruction, setInstruction] = useState<string | null>(null);
   useCastSuggestion("location", location.id, (text) => { setInstruction(text); setIsModalOpen(true); });
-  const regenPlate = useRegenPlate();
-  const regenPlateInstructed = useRegenPlateWithInstruction();
-  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", location.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
     `plates/${location.id}.png`,
@@ -817,66 +740,25 @@ function LocationPlateCard({
   useEffect(() => {
     if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
-        setTimestamp(Date.now());
+        refreshImage();
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, pendingUpdate, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => {
-    setLocalRegenError(null);
-    regenPlate.mutate(
-      { project: projectName, locId: location.id },
-      {
-        onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Regenerate location plate",
-              onRetry: startRegen,
-            })
-          ) {
-            return;
-          }
-          setLocalRegenError(err.message);
-        },
-      }
-    );
+  const startRegen = () => regenerate();
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+    if (!text.trim()) return;
+    setInstruction(text.trim());
+    regenerate(text, referenceAssets);
   };
-
-  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
-    const trimmed = nextInstruction.trim();
-    if (!trimmed) return;
-    setInstruction(trimmed);
-    setLocalRegenError(null);
-    regenPlateInstructed.mutate(
-      { project: projectName, locId: location.id, instruction: trimmed, referenceAssets },
-      {
-        onSuccess: (data) => {
-          setActiveJob(data.job);
-        },
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Apply & regenerate plate",
-              onRetry: () => submitInstruction(trimmed, referenceAssets),
-            })
-          ) {
-            return;
-          }
-          setLocalRegenError(err.message);
-        },
-      },
-    );
-  };
-
-  const isInstructionBusy = regenPlateInstructed.isPending || isSubmitting;
+  const isInstructionBusy = isSubmitting;
 
   const { t } = useI18n();
   const { hasImage, imageSrc, probe } = useLiveStageAsset(plateUrl, timestamp, stageRegenerating);
   // A card shows drawing while its asset is absent, still waiting for the
   // running Cast to redraw it, or while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenPlate.isPending || isInstructionBusy || !!activeJob;
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -898,7 +780,7 @@ function LocationPlateCard({
         missingLabel={t("NO PLATE IMAGE")}
         stageRegenerating={stageRegenerating}
         onOpen={() => setIsModalOpen(true)}
-        onImageError={() => setImgFailed(true)}
+        onImageError={() => imageFailed()}
         tags={[location.time_of_day, location.mood].filter((tag): tag is string => !!tag)}
         summary={readableAnchor(location.visual_anchor)}
         alternates={(
@@ -930,7 +812,7 @@ function LocationPlateCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={regenPlate.isPending || isInstructionBusy || !!activeJob}
+              busy={isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}
@@ -940,7 +822,7 @@ function LocationPlateCard({
             />
             <RefVersionHistory projectName={projectName} assetType="location" assetId={location.id}
               refreshKey={timestamp} busy={stageRegenerating || isGenerating || isInstructionBusy}
-              onRestored={() => { setTimestamp(Date.now()); setImgFailed(false); }} />
+              onRestored={() => { refreshImage(); }} />
             <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
             <AnchorSection anchor={location.visual_anchor} />
             <div className="flex flex-wrap gap-3">
@@ -982,13 +864,10 @@ function PropRefCard({
 }) {
   const refUrl = `/api${seriesPath(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
-    useReferenceJob(projectName, "prop_id", prop.id);
+  const { imgFailed, imageFailed, timestamp, refreshImage, activeJob, isSubmitting, instructionDraft, regenError, regenerate, estimate: regenEstimate } =
+    useCastReference(projectName, "prop", prop.id, undefined, isModalOpen);
   const [instruction, setInstruction] = useState<string | null>(null);
   useCastSuggestion("prop", prop.id, (text) => { setInstruction(text); setIsModalOpen(true); });
-  const regenProp = useRegenProp();
-  const regenPropInstructed = useRegenPropWithInstruction();
-  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "prop", prop.id, undefined, isModalOpen);
   const { data: generationMeta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
     `refs/props/${prop.id}/ref.png`,
@@ -1002,67 +881,26 @@ function PropRefCard({
   useEffect(() => {
     if (!stageRegenerating || !pendingUpdate) {
       const timer = window.setTimeout(() => {
-        setTimestamp(Date.now());
+        refreshImage();
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [stageRegenerating, pendingUpdate, setTimestamp]);
+  }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => {
-    setLocalRegenError(null);
-    regenProp.mutate(
-      { project: projectName, propId: prop.id },
-      {
-        onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Regenerate prop",
-              onRetry: startRegen,
-            })
-          ) {
-            return;
-          }
-          setLocalRegenError(err.message);
-        },
-      }
-    );
+  const startRegen = () => regenerate();
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+    if (!text.trim()) return;
+    setInstruction(text.trim());
+    regenerate(text, referenceAssets);
   };
-
-  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
-    const trimmed = nextInstruction.trim();
-    if (!trimmed) return;
-    setInstruction(trimmed);
-    setLocalRegenError(null);
-    regenPropInstructed.mutate(
-      { project: projectName, propId: prop.id, instruction: trimmed, referenceAssets },
-      {
-        onSuccess: (data) => {
-          setActiveJob(data.job);
-        },
-        onError: (err) => {
-          if (
-            maybeShowInsufficientCredits(err, {
-              actionLabel: "Apply & regenerate prop",
-              onRetry: () => submitInstruction(trimmed, referenceAssets),
-            })
-          ) {
-            return;
-          }
-          setLocalRegenError(err.message);
-        },
-      },
-    );
-  };
-
-  const isInstructionBusy = regenPropInstructed.isPending || isSubmitting;
+  const isInstructionBusy = isSubmitting;
 
   const { t } = useI18n();
   const firstSceneLabel = prop.first_appearance_scene ? firstSceneTitle || sceneLabel(prop.first_appearance_scene, t) : undefined;
   const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card shows drawing while its asset is absent, still waiting for the
   // running Cast to redraw it, or while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || regenProp.isPending || isInstructionBusy || !!activeJob;
+  const isGenerating = (stageRegenerating && (!hasImage || pendingUpdate)) || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -1084,7 +922,7 @@ function PropRefCard({
         missingLabel={t("NO REF IMAGE")}
         stageRegenerating={stageRegenerating}
         onOpen={() => setIsModalOpen(true)}
-        onImageError={() => setImgFailed(true)}
+        onImageError={() => imageFailed()}
         meta={firstSceneLabel ? `${t("First seen")}: ${firstSceneLabel}` : undefined}
         tags={[]}
         summary={readableAnchor(prop.visual_anchor)}
@@ -1108,7 +946,7 @@ function PropRefCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={regenProp.isPending || isInstructionBusy || !!activeJob}
+              busy={isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}

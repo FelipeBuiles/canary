@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as renderWithoutQueries, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GenerationJob } from "../types/api";
@@ -8,7 +9,8 @@ import { StyleRoom } from "../pages/rooms/StyleRoom";
 import { I18nProvider } from "../i18n";
 
 const state = vi.hoisted(() => {
-  const mutation = { mutate: vi.fn(), isPending: false };
+  const mutate = vi.fn();
+  const mutation = { mutate, mutateAsync: (variables: unknown) => new Promise((resolve, reject) => mutate(variables, { onSuccess: resolve, onError: reject })), isPending: false };
   const emptyQuery = () => ({ data: undefined });
   return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"],
     jobs: [] as GenerationJob[], castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn(),
@@ -28,7 +30,7 @@ vi.mock("../api/queries", () => ({
   useImageGenerationMeta: state.emptyQuery,
   useSuggestStyles: () => state.mutation, useCreateStyleDirection: () => state.mutation,
   useGenerateStyleSamples: () => state.mutation, useGenerateStyleValidation: () => state.mutation,
-  useApproveStage: () => state.mutation, useGenerateProjectCover: () => ({ mutate: state.generateCover }),
+  useApproveStage: () => state.mutation, useGenerateProjectCover: () => ({ mutate: state.generateCover, mutateAsync: (variables: unknown) => { state.generateCover(variables); return Promise.resolve({}); } }),
   useSetActiveStyle: () => state.mutation, useUpdateStylePresentation: () => state.presentation,
 }));
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: state.handleRun, isPending: false }) }));
@@ -42,6 +44,11 @@ vi.mock("../components/composites", async (importOriginal) => ({
     open ? <div role="dialog" aria-label={title}><button onClick={onConfirm}>{confirmLabel}</button></div> : null,
   RerunStageAction: () => null,
 }));
+
+function render(ui: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return renderWithoutQueries(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+}
 
 function proof(label: string) {
   const heading = screen.getByRole("heading", { name: label, level: 3 });

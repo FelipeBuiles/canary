@@ -9,6 +9,7 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 from PIL import Image
 
+from novel_to_comic.ai import text_finalisation
 from novel_to_comic import codex_dev
 from novel_to_comic.ai import claude_runtime, client
 from novel_to_comic.ai.errors import AIRefusalError
@@ -310,7 +311,7 @@ def claude_client(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("selected Claude Code call reached API transport or estimation")
     monkeypatch.setattr(client, "_base_url", forbidden)
-    monkeypatch.setattr(client, "estimate_text_cost", forbidden)
+    monkeypatch.setattr(text_finalisation, "estimate_text_cost", forbidden)
     calls = []
 
     async def run(**kwargs):

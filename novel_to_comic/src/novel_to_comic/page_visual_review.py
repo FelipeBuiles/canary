@@ -573,22 +573,10 @@ def compile_visual_review(project_dir, config: Config, artifacts: TargetArtifact
     review is never paid for twice.
     """
     from novel_to_comic.models.draw import RetryProvenance
-    from novel_to_comic.page_drawing import (
-        compile_page_generation_request,
-        ensure_current_page_edition,
-        validate_review_request,
-    )
-    from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
+    from novel_to_comic.page_draw_preparation import DrawPreparation
 
-    edition = ensure_current_page_edition(
-        artifacts, artifacts.read_book_edition(), config, allow_retained_review=True,
-    )
-    compiled = compile_page_generation_request(
-        page, edition, approved_visual_inventory(project_dir), approved_reference_files(project_dir),
-        retry=RetryProvenance(attempt=1), style_template=config.style_template,
-    )
-    validate_review_request(compiled, edition)
-    return compiled
+    authority = DrawPreparation.load(artifacts, config, retained_review=True)
+    return authority.compile(page, retry=RetryProvenance(attempt=1), review=True)
 
 
 async def review_drawn_page(

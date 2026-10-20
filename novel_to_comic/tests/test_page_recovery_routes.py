@@ -21,6 +21,7 @@ from novel_to_comic.models.draw import (
     RawOCRObservation,
 )
 from novel_to_comic.models.page import BookPlan, ComicPage, PageContent, PlannedPageRevision
+from novel_to_comic.server.render_checks import active_provenance
 from novel_to_comic.server import credited_job
 from novel_to_comic.server.routers import pages
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
@@ -224,6 +225,9 @@ def test_later_provider_failure_preserves_success_and_retry_only_pays_failed_pag
 def test_wrong_lineage_cached_evidence_fails_without_falling_back_to_paid_ocr(recovery):
     _cache(recovery, image_sha256="f" * 64)
     quote = _estimate(recovery)
+    assert quote["pages"][0]["status"] == "failed"
+    assert quote["pages"][0]["phase"] == "analysis"
+    assert quote["pages"][0]["requires_paid_call"] is False
     renders = {str(page["page_number"]): page["render_image_sha256"] for page in quote["pages"]}
     results = _recover(recovery, {"allow_paid": True, "renders": renders})
     assert [page["status"] for page in results] == ["failed", "checked"]
@@ -271,7 +275,7 @@ def test_choose_saved_version_updates_reading_lettering_and_finish_without_spend
     assert target.provenance_revisions(1) == (1, 2)
     assert target.read_provenance(1, 1) == original
     assert not target.preflight_path.exists()
-    assert pages._latest_provenance(target, 1).render.revision == 1
+    assert active_provenance(target, 1).render.revision == 1
     assert active_render(target, 1).revision == 1
     render, image, failures = _load_active_render(target, 1)
     assert render.revision == 1
@@ -333,3 +337,17 @@ def test_selecting_older_art_does_not_inherit_verification_from_newer_art(recove
     issue = target.read_issues(1)[0]
     assert issue.status == "open"
     assert issue.resolution_revision is None
+
+
+def test_invalid_cached_evidence_reports_failed_without_quoting_a_replacement_read(recovery):
+    recovery.artifacts.raw_ocr_path(1, 1).parent.mkdir(parents=True, exist_ok=True)
+    recovery.artifacts.raw_ocr_path(1, 1).write_text("{}")
+    quote = _estimate(recovery)
+    failed = quote["pages"][0]
+    assert failed["status"] == "failed"
+    assert failed["phase"] == "analysis"
+    assert failed["error"]
+    assert failed["requires_paid_call"] is False
+    assert quote["paid_pages"] == 1
+    recovery.reserve.assert_not_called()
+    assert recovery.provider_calls == []

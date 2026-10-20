@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { isInsufficientCreditsError } from "../../api/client";
+import { useGenerationTracking } from "../../hooks/useGenerationTracking";
+import { isGenerationActive } from "../../lib/generationTracking";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  useGenerationJobs,
   useStyles,
   useSuggestStyles,
   useCreateStyleDirection,
@@ -32,16 +34,9 @@ import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
 import { StyleDirectionComposer, type StyleDirectionMode } from "../../components/style/StyleDirectionComposer";
-import {
-  useStyleGenStore,
-  usePendingIndices,
-  useStyleJobIds,
-  useStyleJobStatuses,
-} from "../../store/styleGen";
 import { usePipelineStore } from "../../store/pipeline";
 import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import type { CostEstimate, StoryBible } from "../../types/api";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { seriesPath, splitProjectKey } from "../../api/projectScope";
 
 function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
@@ -92,22 +87,19 @@ export function StyleRoom() {
   const createStyleDirection = useCreateStyleDirection();
   const generateSamples = useGenerateStyleSamples();
   const generateValidation = useGenerateStyleValidation();
-  const { data: generationJobs } = useGenerationJobs(
-    id,
-    [], true,
-  );
-  const [validationJobs, setValidationJobs] = useState<Record<string, string>>({});
-  const { data: validationJobResults } = useGenerationJobs(id, Object.values(validationJobs));
-  const trackedJobIds = useStyleJobIds(projectName);
-  const pendingSet = usePendingIndices(projectName);
-  const styleJobStatuses = useStyleJobStatuses(projectName);
-  const { add, attachJobs, updateJob, remove } = useStyleGenStore();
+  const tracking = useGenerationTracking(id);
+  const { data: generationJobs } = tracking;
+  const proofJobs = (stylesData?.suggestions ?? []).map(suggestion => tracking.status({ kind: "style_sample", identity: "index", value: suggestion.index }));
+  const validationJobs = Object.fromEntries((stylesData?.suggestions ?? []).map(suggestion => [suggestion.id,
+    tracking.status({ kind: "style_validation", identity: "id", value: suggestion.id }),
+  ]));
+  const pendingSet = new Set(proofJobs.filter(isGenerationActive).map(job => Number(job!.payload.index)));
+  const styleJobStatuses = Object.fromEntries(proofJobs.filter(isGenerationActive).map(job => [Number(job!.payload.index), job!.status]));
   const events = usePipelineStore((s) => s.events);
   const connect = usePipelineStore((s) => s.connect);
   const clearEvents = usePipelineStore((s) => s.clearEvents);
   const [letteringOpen, setLetteringOpen] = useState(false);
   const [sampleError, setSampleError] = useState<Error | string | null>(null);
-  const [suggestionJobId, setSuggestionJobId] = useState<string | null>(null);
   const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [suggestionError, setSuggestionError] = useState<Error | string | null>(null);
   const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
@@ -143,12 +135,11 @@ export function StyleRoom() {
   const generateCover = useGenerateProjectCover();
   const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && castReady && needsCover);
 
-  const latestSuggestionJob = generationJobs?.jobs.filter((job) => job.kind === "style_suggest")
-    .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
+  const latestSuggestionJob = tracking.status({ kind: "style_suggest" });
   // A suggestion batch, or an author direction that also curates neighbors.
   const activeBatchJob = generationJobs?.jobs
     .filter((job) => (job.kind === "style_suggest" || (job.kind === "style_sample" && !!job.payload.with_neighbors))
-      && (job.status === "queued" || job.status === "running"))
+      && (isGenerationActive(job)))
     .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
   const isSuggesting = !!stylesData?.is_suggesting || latestSuggestionJob?.status === "running"
     || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
@@ -170,75 +161,18 @@ export function StyleRoom() {
     void refetchDirectionEstimate();
   };
 
-  const startSuggestions = useCallback((directionId?: string) => {
+  function startSuggestions(directionId?: string) {
     clearEvents();
     setSuggestionStatus("running");
     setSuggestionError(null);
     setSampleError(null);
-    suggestStyles.mutate(
-      { project: projectName, directionId },
-      {
-        onSuccess: (data) => { setSuggestionJobId(data.job?.id ?? null); connect(projectName); },
-        onError: (err) => {
-          setSuggestionStatus("failed");
-          setSuggestionError(err);
-        },
-      },
-    );
-  }, [clearEvents, connect, projectName, suggestStyles]);
-
-  useEffect(() => {
-    if (!projectName || !generationJobs?.jobs.length) return;
-    const timer = window.setTimeout(() => {
-      for (const job of generationJobs.jobs) {
-        if (!Object.values(trackedJobIds).includes(job.id)) continue;
-        const index = Number(job.payload.index);
-        if (!Number.isFinite(index)) continue;
-        if (job.status === "complete") {
-          setSampleError(null);
-          remove(projectName, [index]);
-          refetchStyles();
-        } else if (job.status === "failed") {
-          setSampleError(job.error ?? "Sample generation failed");
-          remove(projectName, [index]);
-        } else {
-          updateJob(projectName, job);
-        }
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs, projectName, refetchStyles, remove, updateJob, trackedJobIds]);
-
-  useEffect(() => {
-    const trackedIds = new Set(Object.values(validationJobs));
-    if (!trackedIds.size || !validationJobResults?.jobs.length) return;
-    const terminalJobs = validationJobResults.jobs.filter(
-      (job) => trackedIds.has(job.id) && job.kind === "style_validation"
-        && (job.status === "complete" || job.status === "failed"),
-    );
-    if (!terminalJobs.length) return;
-    const timer = window.setTimeout(() => {
-      const finishedIds = new Set(terminalJobs.map((job) => String(job.payload.id ?? "")).filter(Boolean));
-      setValidationJobs((current) => Object.fromEntries(
-        Object.entries(current).filter(([suggestionId]) => !finishedIds.has(suggestionId)),
-      ));
-      const failure = terminalJobs.find((job) => job.status === "failed");
-      if (failure) setSampleError(failure.error ?? t("Action audition failed"));
-      if (terminalJobs.some((job) => job.status === "complete")) refetchStyles();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [refetchStyles, t, validationJobResults, validationJobs]);
-
-  useEffect(() => {
-    const job = generationJobs?.jobs.find((item) => item.id === suggestionJobId);
-    if (!job || (job.status !== "complete" && job.status !== "failed")) return;
-    const timer = window.setTimeout(() => {
-      setSuggestionStatus(job.status === "complete" ? "idle" : "failed");
-      setSuggestionError(job.status === "failed" ? job.user_message ?? job.error : null);
-      refetchStyles();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [generationJobs, suggestionJobId, refetchStyles]);
+    void tracking.start({ kind: "style_suggest" }, () => suggestStyles.mutateAsync({ project: projectName, directionId }), {
+      actionLabel: t("CREATE SIX DIRECTIONS"),
+    }).then(() => { setSuggestionStatus("idle"); connect(projectName); }).catch((error: Error) => {
+      setSuggestionStatus("failed");
+      setSuggestionError(error);
+    });
+  }
 
   // Track the suggest-more-styles SSE job: it streams stage_complete /
   // stage_fail under the "style_suggest" stage tag.
@@ -305,14 +239,9 @@ export function StyleRoom() {
     const startCastIfNeeded = () => {
       // A new Cast run queues its cover on the server after references exist.
       if (castReady && needsCover) {
-        generateCover.mutate(
-          { project: id },
-          {
-            onError: (error) => {
-              maybeShowInsufficientCredits(error, { actionLabel: t("Create project cover") });
-            },
-          },
-        );
+        void tracking.start({ kind: "project_cover" }, () => generateCover.mutateAsync({ project: id }), {
+          actionLabel: t("Create project cover"),
+        }).catch(() => {});
       }
       if (!castStarted) handleRun(id, "cast", { actionLabel: "Cast characters & places" });
       navigate(`/project/${id}/cast`);
@@ -337,28 +266,17 @@ export function StyleRoom() {
 
   function createCustomDirection(input: { direction: string; image: File | null; mode: StyleDirectionMode }) {
     setSuggestionError(null);
-    createStyleDirection.mutate(
-      {
-        project: projectName,
-        direction: input.direction,
-        image: input.image,
-        withNeighbors: input.mode === "neighbors",
-      },
-      {
-        onSuccess: (data) => {
-          if (data.direction.has_image && !data.direction.image_supported) {
-            setSampleError(t("The uploaded image was saved, but this image model used your text description for the proof."));
-          }
-          add(projectName, [data.suggestion.index]);
-          attachJobs(projectName, [data.job]);
-          setShowDirectionComposer(false);
-        },
-        onError: (error) => {
-          setSuggestionStatus("failed");
-          setSuggestionError(error);
-        },
-      },
-    );
+    void tracking.start({ kind: "style_sample" }, () => createStyleDirection.mutateAsync({
+      project: projectName, direction: input.direction, image: input.image, withNeighbors: input.mode === "neighbors",
+    }), { actionLabel: t("ADD A DIRECTION") }).then(data => {
+      if (data.direction.has_image && !data.direction.image_supported) {
+        setSampleError(t("The uploaded image was saved, but this image model used your text description for the proof."));
+      }
+      setShowDirectionComposer(false);
+    }).catch((error: Error) => {
+      setSuggestionStatus("failed");
+      setSuggestionError(error);
+    });
   }
 
   function toggleCompare(idToToggle: string) {
@@ -424,7 +342,7 @@ export function StyleRoom() {
       retryDisabled={proofQueueDisabled}
       awaitingBatch={batchInFlight}
       selectionDisabled={letteringOpen}
-      queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
+      queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] as "queued" | "running" : null}
       fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
       fallbackParameters={{
         width: projectConfig?.image_width,
@@ -436,7 +354,7 @@ export function StyleRoom() {
       isCompared={compareIds.includes(suggestion.id)}
       compareDisabled={comparedSuggestions.length >= 3 && !compareIds.includes(suggestion.id)}
       onToggleCompare={() => toggleCompare(suggestion.id)}
-      validationBusy={suggestion.id in validationJobs}
+      validationBusy={isGenerationActive(validationJobs[suggestion.id])}
       onValidate={() => setPendingValidation(suggestion)}
       onRefresh={() => setPendingProofs({ kind: "refresh", suggestions: [suggestion] })}
       onRetry={() => setPendingProofs({ kind: "retry", suggestions: [suggestion] })}
@@ -456,8 +374,8 @@ export function StyleRoom() {
                 {runningStyleCount > 0 && `${runningStyleCount} ${t("RUNNING")}`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} ${t("QUEUED")}`}
               </span>
             )}
-            {sampleError && (
-              <ErrorNotice error={sampleError} operation="generate" />
+            {(sampleError || [...proofJobs, ...Object.values(validationJobs)].find(job => job?.status === "failed")?.error) && (
+              <ErrorNotice error={sampleError ?? [...proofJobs, ...Object.values(validationJobs)].find(job => job?.status === "failed")?.error} operation="generate" />
             )}
             <div className="flex flex-col items-end gap-1">
               <Button
@@ -477,8 +395,8 @@ export function StyleRoom() {
       {projectConfig?.lettering_mode !== "integrated" && styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
       {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
 
-      {suggestionStatus === "failed" ? (
-        <ErrorNotice error={suggestionError} operation="generate" />
+      {suggestionStatus === "failed" || latestSuggestionJob?.status === "failed" ? (
+        <ErrorNotice error={suggestionError ?? latestSuggestionJob?.user_message ?? latestSuggestionJob?.error} operation="generate" />
       ) : (isSuggesting || isStageGenerating) && (
         <StyleGenerationProgress
           job={activeBatchJob}
@@ -763,25 +681,19 @@ export function StyleRoom() {
         onConfirm={() => {
           if (!pendingProofs) return;
           const pending = pendingProofs;
-          generateSamples.mutate(
-            { project: projectName, ids: pending.suggestions.map((suggestion) => suggestion.id) },
-            {
-              onSuccess: (data) => {
-                if (pending.kind === "retry") setSampleError(null);
-                add(projectName, data.indices);
-                attachJobs(projectName, data.jobs);
-                setPendingProofs(null);
-              },
-              onError: (error) => {
-                if (maybeShowInsufficientCredits(error, {
-                  actionLabel: pending.kind === "retry" ? "Retry style proofs" : "Refresh style proof",
-                  onRetry: () => setPendingProofs(pending),
-                })) return;
-                setSampleError(error);
-                setPendingProofs(null);
-              },
-            },
-          );
+          void tracking.start({ kind: "style_sample" }, () => generateSamples.mutateAsync({
+            project: projectName, ids: pending.suggestions.map(suggestion => suggestion.id),
+          }), {
+            actionLabel: pending.kind === "retry" ? "Retry style proofs" : "Refresh style proof",
+            onRetry: () => setPendingProofs(pending),
+          }).then(() => {
+            if (pending.kind === "retry") setSampleError(null);
+            setPendingProofs(null);
+          }).catch((error: Error) => {
+            if (isInsufficientCreditsError(error)) return;
+            setSampleError(error);
+            setPendingProofs(null);
+          });
         }}
         onClose={() => setPendingProofs(null)}
       />
@@ -833,23 +745,15 @@ export function StyleRoom() {
         onConfirm={() => {
           if (!pendingValidation) return;
           const suggestion = pendingValidation;
-          generateValidation.mutate(
-            { project: projectName, id: suggestion.id },
-            {
-              onSuccess: (data) => {
-                setValidationJobs((current) => ({ ...current, [suggestion.id]: data.job.id }));
-                setPendingValidation(null);
-              },
-              onError: (error) => {
-                if (maybeShowInsufficientCredits(error, {
-                  actionLabel: "Generate action audition",
-                  onRetry: () => setPendingValidation(suggestion),
-                })) return;
-                setSampleError(error);
-                setPendingValidation(null);
-              },
-            },
-          );
+          void tracking.start({ kind: "style_validation", identity: "id", value: suggestion.id },
+            () => generateValidation.mutateAsync({ project: projectName, id: suggestion.id }), {
+              actionLabel: "Generate action audition",
+              onRetry: () => setPendingValidation(suggestion),
+            }).then(() => setPendingValidation(null)).catch((error: Error) => {
+              if (isInsufficientCreditsError(error)) return;
+              setSampleError(error);
+              setPendingValidation(null);
+            });
         }}
         onClose={() => setPendingValidation(null)}
       />

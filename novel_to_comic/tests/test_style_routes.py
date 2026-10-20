@@ -206,7 +206,7 @@ def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
 
 def test_suggest_setup_failure_never_acquires_a_hold(tmp_path, style_ledger):
     request, project = _request(tmp_path), _project(tmp_path)
-    with patch("novel_to_comic.server.routers.styles.save_state", side_effect=RuntimeError("disk")):
+    with patch("novel_to_comic.stage_runtime.save_state", side_effect=RuntimeError("disk")):
         with pytest.raises(RuntimeError, match="disk"):
             asyncio.run(suggest_styles(request,"demo",project=project,user_id="user"))
     assert not request.app.state.generation_jobs
