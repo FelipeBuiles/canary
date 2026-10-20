@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from PIL import Image
 
+from novel_to_comic import look_assets
 from novel_to_comic import artifacts
 from novel_to_comic import cast_design as design
 from novel_to_comic.stages import s3_cast
@@ -76,7 +77,7 @@ def test_invalid_design_response_records_usage_and_never_generates_images(tmp_pa
         return ApiResult(value={"characters": []}, usage=usage)
 
     with patch.object(design.text, "generate_json", side_effect=response), \
-         patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
+         patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock) as images:
         with pytest.raises(ValueError, match="every character"):
             asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
     assert ctx.record_api_usage.call_count == 2
@@ -125,7 +126,7 @@ def test_completed_invalid_design_is_corrected_once_before_saving_or_image_work(
         return ApiResult(value=value, usage=usages[index])
 
     with patch.object(design.text, "generate_json", side_effect=respond), \
-         patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
+         patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock) as images:
         accepted = asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
 
     assert len(calls) == 2
@@ -219,7 +220,7 @@ def test_design_requires_characters_in_provider_schema_and_rejects_missing_key(t
         return ApiResult(value={"designs": []})
 
     with patch.object(design.text, "generate_json", side_effect=response), \
-         patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
+         patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock) as images:
         with pytest.raises(ValueError, match="invalid character roster"):
             asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
 
@@ -302,6 +303,22 @@ def test_review_reports_in_progress_only_during_the_model_call(tmp_path):
     assert design.review_status(config, tmp_path)["reviewing"] is False
 
 
+async def _produce_redrawn_reference(config, directory, redrawn):
+    from novel_to_comic.asset_generation import AssetGenerationInput, compile_non_panel_request, NonPanelSubmission
+    from novel_to_comic.generation_input import GenerationPromptInput
+    request = compile_non_panel_request(config, AssetGenerationInput(
+        asset_identity="character_ref:doctor", asset_kind="character_ref",
+        prompt=GenerationPromptInput(visual_brief="A reference", width=1024, height=1024),
+    ))
+    with patch.object(look_assets, "submit_non_panel_request", new_callable=AsyncMock,
+                      return_value=NonPanelSubmission("request", request.execution_fingerprint, redrawn)):
+        outcome = await look_assets.produce_look_asset(
+            config=config, project_dir=directory, request=request, output_path=redrawn.value,
+            feature="cast.character_ref", force=True, refresh_review=True,
+        )
+    return outcome.result
+
+
 def test_sheet_redraw_reruns_character_check_and_settles_its_usage(tmp_path):
     config, bible, _ = _cast(tmp_path)
     image_usage = UsageRecord(provider="test", model="img", operation="image")
@@ -313,7 +330,7 @@ def test_sheet_redraw_reruns_character_check_and_settles_its_usage(tmp_path):
 
     redrawn = ApiResult(value=artifacts.character_ref_sheet_path(tmp_path, "doctor"), usage=image_usage)
     with patch.object(design.text, "generate_json", side_effect=review) as generate:
-        result = asyncio.run(s3_cast._refresh_cast_review(config, tmp_path, redrawn))
+        result = asyncio.run(_produce_redrawn_reference(config, tmp_path, redrawn))
     assert generate.await_count == 1
     assert result.usage is image_usage and result.additional_usage == (review_usage,)
     assert design.review_status(config, tmp_path)["status"] == "current"
@@ -330,7 +347,7 @@ def test_failed_character_check_never_fails_the_redraw_but_still_bills(tmp_path)
 
     redrawn = ApiResult(value=artifacts.character_ref_sheet_path(tmp_path, "doctor"))
     with patch.object(design.text, "generate_json", side_effect=review):
-        result = asyncio.run(s3_cast._refresh_cast_review(config, tmp_path, redrawn))
+        result = asyncio.run(_produce_redrawn_reference(config, tmp_path, redrawn))
     assert result.additional_usage == (review_usage,)
     assert design.review_status(config, tmp_path)["status"] == "missing"
 

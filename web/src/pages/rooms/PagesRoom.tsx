@@ -1,10 +1,12 @@
+import { useGenerationTracking } from "../../hooks/useGenerationTracking";
+import { pageState, pageDisplayImage } from "../../lib/pageState";
+import { isGenerationActive, isGenerationTerminal } from "../../lib/generationTracking";
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { trackProductEvent } from "../../api/events";
 import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
-import { pageCompositePreviewUrl } from "../../api/lettering";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
@@ -16,7 +18,6 @@ import {
   useApproveStage,
   useCompletePages,
   useGenerateCompletePage,
-  useGenerationJobs,
   useProjectStatus,
   useRunPipeline,
   useStageValidation,
@@ -26,7 +27,6 @@ import {
   usePageAnalysisEstimate,
   useStyles,
 } from "../../api/queries";
-import { pageRenderPreviewUrl } from "../../api/pages";
 import { ReadingWorkspace } from "../../components/pages/ReadingWorkspace";
 import { canReadDocument } from "../../lib/stationAccess";
 import {
@@ -65,7 +65,6 @@ import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { seriesPath } from "../../api/projectScope";
 import { PartNotices } from "../../components/parts/PartNotices";
 import { describeRedrawChanges } from "../../components/pages/redrawChanges";
@@ -82,7 +81,7 @@ type PaidPageIntent =
   | { kind: "analysis"; pageNumber: number };
 
 function needsReview(item: CompletePageSummary) {
-  return item.issues.some((issue) => issue.status === "open" || issue.status === "revised");
+  return pageState(item).needsReview;
 }
 
 function PageSpendConsent({
@@ -420,19 +419,14 @@ export function PagesRoom() {
   const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, Error>>>({});
   const [approvalError, setApprovalError] = useState<Error | null>(null);
   const cancelQueued = useCancelQueuedPageJobs();
-  const { data: generationJobs, isLoading: generationJobsLoading } = useGenerationJobs(id, [], true);
+  const tracking = useGenerationTracking(id);
+  const { data: generationJobs, isLoading: generationJobsLoading } = tracking;
   const observedTerminalJobs = useRef(new Set<string>());
   const firstArtworkObserved = useRef<boolean | null>(null);
   const [revealedPage, setRevealedPage] = useState<number | null>(null);
-  const latestPageJobs = new Map<number, GenerationJob>();
-  for (const job of generationJobs?.jobs ?? []) {
-    if (job.is_current_page === false) continue;
-    if (job.kind !== "complete_page_draw" && pageJobs[job.id] == null) continue;
-    const pageNumber = Number(job.payload?.page_number ?? pageJobs[job.id]);
-    if (!Number.isSafeInteger(pageNumber) || pageNumber < 1) continue;
-    const previous = latestPageJobs.get(pageNumber);
-    if (!previous || Date.parse(job.queued_at) >= Date.parse(previous.queued_at)) latestPageJobs.set(pageNumber, job);
-  }
+  const latestPageJobs = new Map((data?.pages ?? []).map(({ page }) => [page.page_number,
+    tracking.status({ kind: "complete_page_draw", identity: "page_number", value: page.page_number, currentPage: true }) ?? undefined,
+  ]));
 
   const drawStatus = status?.stages.draw?.status ?? "pending";
   const interruptedStage = status?.stages.adapt?.status !== "complete"
@@ -452,7 +446,7 @@ export function PagesRoom() {
     const terminal = (generationJobs?.jobs ?? []).filter((job) =>
       job.is_current_page !== false
       && (job.kind === "complete_page_draw" || pageJobs[job.id] != null)
-      && (job.status === "complete" || job.status === "failed" || job.status === "cancelled")
+      && (isGenerationTerminal(job))
       && !observedTerminalJobs.current.has(job.id),
     );
     if (terminal.length === 0) return;
@@ -517,7 +511,7 @@ export function PagesRoom() {
 
   const projectWorkActive = !!status?.is_running
     || Object.values(status?.stages ?? {}).some((stage) => stage.status === "running")
-    || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running");
+    || (generationJobs?.jobs ?? []).some((job) => isGenerationActive(job));
 
   // Starting over only makes sense once a first adaptation and page plan
   // have finished (or the plan failed); never while that first run is going.
@@ -528,7 +522,7 @@ export function PagesRoom() {
       stage="adapt"
       label="adaptation"
       disabled={!!status.is_running || !status.style_selected || generationJobsLoading
-        || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running")}
+        || (generationJobs?.jobs ?? []).some((job) => isGenerationActive(job))}
     />
   ) : null;
 
@@ -579,7 +573,7 @@ export function PagesRoom() {
               retry
               allowRestart={false}
               disabled={!!status?.is_running || !status?.style_selected || generationJobsLoading
-                || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running")}
+                || (generationJobs?.jobs ?? []).some((job) => isGenerationActive(job))}
             /> : rerunAdaptation}
           </footer>
         </BottomBarPortal>}
@@ -589,18 +583,13 @@ export function PagesRoom() {
   }
   const projectId = id;
   const pages = data.pages;
-  const drawingPages = new Set(startingPages);
-  if (drawStatus !== "failed") batchPages.forEach((page) => drawingPages.add(page));
-  Object.values(pageJobs).forEach((page) => drawingPages.add(page));
-  latestPageJobs.forEach((job, page) => {
-    if (job.status === "queued" || job.status === "running") drawingPages.add(page);
-  });
-  const failedPages = new Set(pages.filter((item) => {
-    if (drawingPages.has(item.page.page_number)) return false;
-    if (item.active_render) return false;
-    const job = latestPageJobs.get(item.page.page_number);
-    return job?.status === "failed" || !!pageFailures[item.page.page_number] || !!item.failure;
-  }).map((item) => item.page.page_number));
+  const states = new Map(pages.map(item => [item.page.page_number, pageState(item, {
+    starting: startingPages.includes(item.page.page_number), batch: batchPages.includes(item.page.page_number),
+    drawFailed: drawStatus === "failed", submitted: Object.values(pageJobs).includes(item.page.page_number),
+    job: latestPageJobs.get(item.page.page_number), failure: pageFailures[item.page.page_number],
+  })]));
+  const drawingPages = new Set(pages.filter(item => states.get(item.page.page_number)!.drawing).map(item => item.page.page_number));
+  const failedPages = new Set(pages.filter(item => states.get(item.page.page_number)!.failed).map(item => item.page.page_number));
   const drawnPages = pages.filter((item) => item.active_render);
   const undrawnPages = pages.filter((item) => !item.active_render);
   const pagesWaitingToDraw = undrawnPages.filter((item) => !drawingPages.has(item.page.page_number));
@@ -674,73 +663,49 @@ export function PagesRoom() {
       delete next[pageNumber];
       return next;
     });
-    generate.mutate(
-      depiction === "canonical"
-        ? { project: projectId, pageNumber }
-        : { project: projectId, pageNumber, depiction },
-      {
-        onSuccess: ({ job }) => {
-          setPaidIntent(null);
-          setStartingPages((current) => current.filter((page) => page !== pageNumber));
-          setPageJobs((current) => ({
-            ...current,
-            [job.id]: pageNumber,
-          }));
-        },
-        onError: (error) => {
-          setActionError(error);
-          setPageActionErrors((current) => ({ ...current, [pageNumber]: error }));
-          maybeShowInsufficientCredits(error, {
-            actionLabel: `${t("Draw page")} ${pageNumber}`,
-            onRetry: () => requestSpend({ kind: "page", pageNumber, depiction }),
-          });
-          setStartingPages((current) => current.filter((page) => page !== pageNumber));
-        },
-      },
-    );
+    void tracking.start({ kind: "complete_page_draw", identity: "page_number", value: pageNumber },
+      () => generate.mutateAsync({ project: projectId, pageNumber, depiction }), {
+        actionLabel: `${t("Draw page")} ${pageNumber}`,
+        onRetry: () => requestSpend({ kind: "page", pageNumber, depiction }),
+      }).then(({ job }) => {
+        setPaidIntent(null);
+        setStartingPages(current => current.filter(page => page !== pageNumber));
+        setPageJobs(current => ({ ...current, [job.id]: pageNumber }));
+      }).catch((error: Error) => {
+        setActionError(error);
+        setPageActionErrors(current => ({ ...current, [pageNumber]: error }));
+        setStartingPages(current => current.filter(page => page !== pageNumber));
+      });
   }
 
   function startDraw(queuePages: boolean, retry = false) {
     if (!status?.style_selected || run.isPending) return;
     setActionError(null);
-    const undrawnPages = pages
-      .filter((item) => !item.active_render)
-      .map((item) => item.page.page_number);
-    run.mutate(
-      { project: projectId, stage: "draw", queuePages },
-      {
-        onSuccess: () => {
-          if (queuePages) setBatchPages(undrawnPages);
-          setPaidIntent(null);
-        },
-        onError: (error) => {
-          setActionError(error);
-          maybeShowInsufficientCredits(error, {
-            actionLabel: t(retry ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE ALL PAGES"),
-            onRetry: () => requestSpend({ kind: "batch", retry }),
-          });
-          if (queuePages) setBatchPages([]);
-        },
-      },
-    );
+    const undrawnPages = pages.filter(item => !item.active_render).map(item => item.page.page_number);
+    void tracking.start({ kind: "complete_page_draw" }, () => run.mutateAsync({ project: projectId, stage: "draw", queuePages }), {
+      actionLabel: t(retry ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE ALL PAGES"),
+      onRetry: () => requestSpend({ kind: "batch", retry }),
+    }).then(() => {
+      if (queuePages) setBatchPages(undrawnPages);
+      setPaidIntent(null);
+    }).catch((error: Error) => {
+      setActionError(error);
+      if (queuePages) setBatchPages([]);
+    });
   }
 
   function retryAnalysis(pageNumber: number) {
     setActionError(null);
-    analyze.mutate({ project: projectId, pageNumber }, {
-      onSuccess: () => {
-        setPaidIntent(null);
-        setPageFailures((current) => ({ ...current, [pageNumber]: undefined }));
-        setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
-      },
-      onError: (error) => {
-        setActionError(error);
-        setPageActionErrors((current) => ({ ...current, [pageNumber]: error }));
-        maybeShowInsufficientCredits(error, {
-          actionLabel: t("RETRY TEXT CHECK"),
-          onRetry: () => requestSpend({ kind: "analysis", pageNumber }),
-        });
-      },
+    void tracking.start({ kind: "page_analysis", identity: "page_number", value: pageNumber }, () => analyze.mutateAsync({ project: projectId, pageNumber }), {
+      actionLabel: t("RETRY TEXT CHECK"),
+      onRetry: () => requestSpend({ kind: "analysis", pageNumber }),
+    }).then(() => {
+      setPaidIntent(null);
+      setPageFailures(current => ({ ...current, [pageNumber]: undefined }));
+      setPageActionErrors(current => ({ ...current, [pageNumber]: undefined }));
+    }).catch((error: Error) => {
+      setActionError(error);
+      setPageActionErrors(current => ({ ...current, [pageNumber]: error }));
     });
   }
 
@@ -885,7 +850,7 @@ export function PagesRoom() {
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
-                  <img src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
+                  <img src={pageDisplayImage(id, { pageNumber: item.page.page_number, revision: item.active_render!.render.revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
                   {t("Page")} {item.page.page_number}
                 </button>
               ))}
@@ -911,15 +876,7 @@ export function PagesRoom() {
           className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))] gap-5"
         >
           {visiblePages.map((item) => {
-            const revision = item.active_render?.render.revision;
-            const pageIsDrawing = drawingPages.has(item.page.page_number);
-            const revisedIssues = item.issues.some((issue) => issue.status === "revised");
-            const openIssueCount = item.issues.filter((issue) => issue.status === "open").length;
-            const serverJob = latestPageJobs.get(item.page.page_number);
-            const pageFailure = item.analysis_recovery?.status === "checked" ? null
-              : item.failure ?? pageFailures[item.page.page_number] ?? (serverJob?.status === "failed" ? serverJob : null);
-            const failurePhase = revision && item.analysis_recovery?.status !== "checked"
-              ? "analysis" : pageFailure?.phase;
+            const { revision, drawing: pageIsDrawing, failure: pageFailure, failurePhase, badge, openIssues: openIssueCount, canRetryGeneration } = states.get(item.page.page_number)!;
             const failureCopy = pageFailure && !revision && !pageIsDrawing
               ? getImageFailureCopy(
                   t,
@@ -928,32 +885,28 @@ export function PagesRoom() {
                   failurePhase === "analysis" ? undefined : pageFailure.error,
                 )
               : null;
-            const canRetryGeneration = Boolean(pageFailure?.recoverable)
-              && !revision
-              && !pageIsDrawing
-              && pageFailure?.classification !== "provider_blocked";
             const pageActionError = pageActionErrors[item.page.page_number];
             return (
               <EntityCard key={item.page.page_number} padding="cozy" className="h-full">
                 <div className="mb-3 flex min-h-7 flex-wrap items-center justify-between gap-2">
                   <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
-                  {pageIsDrawing && revision ? (
+                  {badge === "revising" ? (
                     <StatusPill tone="ink">{t("New revision drawing")}</StatusPill>
-                  ) : revision && item.analysis_recovery?.status === "stale_render" ? (
+                  ) : badge === "stale" ? (
                     <StatusPill tone="red">{t("Re-planned · redraw")}</StatusPill>
-                  ) : revision && item.redraw?.changed_references.length ? (
+                  ) : badge === "earlier-look" ? (
                     <StatusPill tone="gold">{t("Earlier look · redraw")}</StatusPill>
-                  ) : revisedIssues ? (
+                  ) : badge === "confirm-fix" ? (
                     <StatusPill tone="gold">{t("Confirm fix")}</StatusPill>
-                  ) : openIssueCount > 0 ? (
+                  ) : badge === "flagged" ? (
                     <StatusPill tone="red">{openIssueCount} {t("FLAGGED")}</StatusPill>
-                  ) : item.lettering_placement_review_needed ? (
+                  ) : badge === "placement" ? (
                     <StatusPill tone="gold">{t("Needs placement")}</StatusPill>
                   ) : null}
                 </div>
                 <ImageGenerationPreview project={id} target={`page:${item.page.page_number}`} active={pageIsDrawing} keepChildren={!!revision} aspect="2 / 3"
                   aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
-                  finalSrc={revision ? (item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")) : undefined}
+                  finalSrc={revision ? (pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")) : undefined}
                   label={t("DRAWING PAGE…")} caption={t("Queued in the page press")}>
                 {revision ? (
                   <button
@@ -964,7 +917,7 @@ export function PagesRoom() {
                   >
                     <div className="aspect-[2/3] overflow-hidden bg-surface-container">
                       <PageThumbnail
-                        src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
+                        src={pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
                         reveal={revealedPage === item.page.page_number}
                         onRevealEnd={() => setRevealedPage(null)}

@@ -16,6 +16,7 @@ from novel_to_comic.page_drawing import (
 )
 from novel_to_comic.usage import UsageRecord
 from tests.test_complete_page_draw import _page, _inventory, _reference_files
+from .page_draw_support import execute_draw
 
 
 def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_path):
@@ -183,7 +184,7 @@ def test_public_image_failure_never_resubmits(tmp_path, failure):
 def test_unknown_billing_recovery_and_correction_keep_generation_pending(tmp_path):
     from types import SimpleNamespace
     from novel_to_comic.models.draw import CompletePageProviderResult
-    from novel_to_comic.page_drawing import draw_complete_page, correct_complete_page
+    from novel_to_comic.page_drawing import correct_complete_page
     from novel_to_comic.target_artifacts import TargetArtifacts
 
     config = Config(draw_model='image-sunburst')
@@ -201,10 +202,10 @@ def test_unknown_billing_recovery_and_correction_keep_generation_pending(tmp_pat
         usage=UsageRecord(provider='fal-queue', model=profile.model, operation='image', image_count=1))
     artifacts = TargetArtifacts(tmp_path / 'project')
     with patch.object(adapter, 'generate', AsyncMock(return_value=result)) as generate:
-        first = asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+        first = asyncio.run(execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
         assert first.render.cost_usd is None
         assert artifacts.resumable_generation_request(7) is not None
-        recovered = asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+        recovered = asyncio.run(execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
         assert recovered == first
         assert artifacts.resumable_generation_request(7) is not None
         assert generate.await_count == 1
@@ -281,12 +282,8 @@ def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_pat
     monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     with (
         patch.object(TargetArtifacts, 'read_plan', return_value=SimpleNamespace(pages=[page])),
-        patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()),
-        patch('novel_to_comic.server.routers.pages.approved_reference_files', return_value=files),
-        patch('novel_to_comic.server.page_operations.approved_visual_inventory', return_value=_inventory()),
-        patch('novel_to_comic.server.page_operations.approved_reference_files', return_value=files),
-        patch('novel_to_comic.stages.s5_plan.approved_visual_inventory', return_value=_inventory()),
-        patch('novel_to_comic.stages.s5_plan.approved_reference_files', return_value=files),
+        patch('novel_to_comic.page_draw_preparation.approved_visual_inventory', return_value=_inventory()),
+        patch('novel_to_comic.page_draw_preparation.approved_reference_files', return_value=files),
     ):
         response = TestClient(app).get('/pages/generate/estimate')
         assert response.status_code == 200
@@ -301,6 +298,5 @@ def reviewed_story_precondition(monkeypatch):
     # This suite tests rendering/credit contracts with deliberately partial
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
-    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
-    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.draw_submission.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)

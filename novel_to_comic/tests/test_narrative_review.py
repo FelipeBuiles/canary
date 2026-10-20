@@ -846,22 +846,22 @@ def test_draw_entry_points_stop_before_preparation_without_reviews(
     from unittest.mock import Mock
     from fastapi import HTTPException
     from novel_to_comic.config import Config
-    from novel_to_comic.server.routers import pages
+    from novel_to_comic.server import draw_submission
     from novel_to_comic.stages import s7_page_draw
     from novel_to_comic.target_artifacts import ArtifactMissing
 
     prepare = Mock(
         side_effect=AssertionError("No renderer preparation before narrative admission")
     )
-    monkeypatch.setattr(pages, "complete_page_adapter", prepare)
+    monkeypatch.setattr(draw_submission, "complete_page_adapter", prepare)
     project = (tmp_path, Config(), runtime(tmp_path, "draw").state)
     with pytest.raises((ArtifactMissing, ValueError, HTTPException)):
         if entry == "batch":
             page_operations.prepare_undrawn_pages(project_dir=tmp_path, config=Config())
         elif entry == "individual":
-            pages._prepare_initial_generation(project, 1, "canonical")
+            draw_submission.prepare_initial_generation(project, 1, "canonical")
         elif entry == "correction":
-            pages._prepare_explicit_correction(
+            draw_submission.prepare_explicit_correction(
                 target=TargetArtifacts(tmp_path),
                 page_number=1,
                 body=None,
@@ -1419,10 +1419,10 @@ def test_resume_after_splice_crash_reuses_complete_unchecked_repair(
             "adapt.book": {"beats": [repaired.model_dump(mode="json")]},
         }[request["feature"]])
 
-    splice = module._splice_draft_repairs
+    splice = module.splice_repairs
     def crash(*args):
         raise KeyError("beat_0048")
-    monkeypatch.setattr(module, "_splice_draft_repairs", crash)
+    monkeypatch.setattr(module, "splice_repairs", crash)
     target = TargetArtifacts(tmp_path)
     def run(generator, model="test"):
         return asyncio.run(produce_book_adaptation(_source_document(), _story_bible(), _approved_brief(),
@@ -1435,7 +1435,7 @@ def test_resume_after_splice_crash_reuses_complete_unchecked_repair(
     if not has_work_checkpoint:
         for path in (tmp_path / ".checkpoints/adapt/candidate").glob("*.json"):
             path.unlink()
-    monkeypatch.setattr(module, "_splice_draft_repairs", splice)
+    monkeypatch.setattr(module, "splice_repairs", splice)
     resumed = []
     async def review_only(**request):
         resumed.append(request["feature"])

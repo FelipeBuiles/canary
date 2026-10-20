@@ -1,4 +1,6 @@
 """Local complete-page profile boundaries; no SDK or provider calls."""
+from novel_to_comic import page_draw_preparation
+from novel_to_comic.server import draw_submission, page_draw_views
 from novel_to_comic.server import page_operations, pipeline_operations
 import asyncio
 import hashlib
@@ -22,6 +24,7 @@ from novel_to_comic.models.page import ApprovedVisualReference, ApprovedVisualRe
 from novel_to_comic.server.routers import pages
 from novel_to_comic.target_artifacts import TargetArtifacts
 from tests.test_complete_page_draw import _page
+from .page_draw_support import execute_draw
 
 
 CODEX_DRAW = "codex-dev/image/gpt-6.1-sol"
@@ -171,9 +174,10 @@ def test_five_references_keep_original_bytes_and_six_use_a_lossless_sheet(tmp_pa
     for member in members:
         ref = member["authority"]
         assert ref["content_sha256"] == hashlib.sha256(files[ref["id"]].path.read_bytes()).hexdigest()
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
-    entries = pages._reference_entries(tmp_path, prepared.references)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_views, "approved_reference_files", lambda path: files)
+    entries = page_draw_views.reference_entries(tmp_path, prepared.references)
     assert [entry["id"] for entry in entries] == [r.id for r in inventory.references]
     assert all(entry["image_path"] for entry in entries)
     assert all(not entry["visual_anchor"].startswith("{") for entry in entries)
@@ -201,10 +205,10 @@ def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeyp
     monkeypatch.setattr(
         TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page])
     )
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
 
     app = FastAPI()
     app.include_router(pages.router)
@@ -253,10 +257,10 @@ def test_start_draw_packs_references_for_both_entry_paths(tmp_path, monkeypatch,
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_page(page)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page]))
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(pipeline, "project_busy", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline, "_require_previous_stage", lambda *args: None)
     monkeypatch.setattr(styles, "is_style_selected", lambda *args: True)
@@ -320,10 +324,10 @@ def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_pa
     artifacts.write_page(first)
     artifacts.write_page(later)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[first, later]))
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     enqueue = MagicMock(side_effect=AssertionError("partial batch was enqueued"))
     monkeypatch.setattr(page_operations, "enqueue_complete_page_draw", enqueue)
     from novel_to_comic.server import credited_job
@@ -355,10 +359,10 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_page(page)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page] if page_count else []))
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
@@ -421,7 +425,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     artifacts = TargetArtifacts(tmp_path / "project")
 
     async def work():
-        provenance = await page_drawing.draw_complete_page(
+        provenance = await execute_draw(
             compiled, adapter=adapter, artifacts=artifacts, page=page,
         )
         return ApiResult(value=provenance, usage=provenance.usage)
@@ -489,10 +493,10 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
         edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
     artifacts.write_request(original.request, request_revision=1)
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
@@ -509,7 +513,7 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
         assert response.status_code == 200, response.text
         assert response.json()["funding"] == "codex_subscription"
         assert artifacts.request_revisions(page.page_number) == tuple(range(1, attempt))
-        _, _, compiled = pages._prepare_initial_generation(
+        _, _, compiled = draw_submission.prepare_initial_generation(
             (tmp_path, _codex_config(), None), page.page_number, "canonical",
         )
         assert compiled.request.retry == RetryProvenance(
@@ -536,7 +540,7 @@ def test_codex_draw_failure_submits_once_even_on_explicit_retry(
     retried = page_drawing.compile_page_generation_request(
         page, page_drawing.select_book_edition(
             edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
-        ), inventory, files, retry=pages._generation_retry(artifacts, page.page_number),
+        ), inventory, files, retry=draw_submission.generation_retry(artifacts, page.page_number),
     )
     error = codex_runtime.CodexRuntimeError(
         "image_tool_failed", {"submitted": True, "indeterminate": indeterminate},
@@ -547,7 +551,7 @@ def test_codex_draw_failure_submits_once_even_on_explicit_retry(
     monkeypatch.setattr(finalisation, "finalise_image_failure", AsyncMock())
 
     with pytest.raises(codex_runtime.CodexRuntimeError):
-        asyncio.run(page_drawing.draw_complete_page(
+        asyncio.run(execute_draw(
             retried, adapter=page_drawing.complete_page_adapter(_codex_config()),
             artifacts=artifacts, page=page,
         ))
@@ -573,7 +577,7 @@ def test_failed_codex_correction_can_be_explicitly_retried(tmp_path, dev_routes)
         page, page_drawing.select_book_edition(
             edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
         ), inventory, files,
-        retry=pages._aggregated_correction_retry(
+        retry=draw_submission.correction_retry(
             artifacts, page_number=page.page_number, issue_ids=correction.issue_ids,
         ),
         correction=correction, edit_source_bytes=parent,
@@ -613,8 +617,7 @@ def reviewed_story_precondition(monkeypatch):
     # This suite tests rendering/credit contracts with deliberately partial
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
-    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
-    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.draw_submission.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
 
 
@@ -644,7 +647,7 @@ def test_native_draw_rejects_wrong_page_shape_without_retry_or_publication(
     monkeypatch.setattr(client, "_finalize_event_shielded", succeeded)
     artifacts = TargetArtifacts(tmp_path / "project")
     with pytest.raises(codex_runtime.CodexRuntimeError, match="page_aspect_ratio_mismatch"):
-        asyncio.run(page_drawing.draw_complete_page(
+        asyncio.run(execute_draw(
             compiled, adapter=page_drawing.complete_page_adapter(_codex_config()),
             artifacts=artifacts, page=page,
         ))
@@ -667,20 +670,20 @@ def test_a_replanned_page_draws_fresh_while_current_art_still_needs_a_correction
     artifacts.write_book_edition(page_drawing.select_book_edition(
         edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
     project = (tmp_path, _codex_config(), None)
 
-    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: False)
+    monkeypatch.setattr(draw_submission, "latest_render_is_stale", lambda target, number, revision: False)
     with pytest.raises(HTTPException) as refused:
-        pages._prepare_initial_generation(project, page.page_number, "canonical")
+        draw_submission.prepare_initial_generation(project, page.page_number, "canonical")
     assert refused.value.status_code == 409 and "request a correction" in refused.value.detail
 
-    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: True)
-    _, _, compiled = pages._prepare_initial_generation(project, page.page_number, "canonical")
+    monkeypatch.setattr(draw_submission, "latest_render_is_stale", lambda target, number, revision: True)
+    _, _, compiled = draw_submission.prepare_initial_generation(project, page.page_number, "canonical")
     assert compiled.request.correction is None
     assert not compiled.request.is_stale_for(page)
 
@@ -692,14 +695,14 @@ def test_a_page_drawn_from_a_changed_cast_reference_draws_fresh(tmp_path, monkey
     artifacts.write_book_edition(page_drawing.select_book_edition(
         edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
-    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_draw_preparation, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(draw_submission, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_draw_preparation, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
-    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: False)
-    monkeypatch.setattr(pages, "_page_redraw", lambda project_dir, target, number: {
+    monkeypatch.setattr(draw_submission, "latest_render_is_stale", lambda target, number, revision: False)
+    monkeypatch.setattr(draw_submission, "page_redraw", lambda project_dir, target, number: {
         "plan_changed": False, "changed_references": [{"entity_id": "carl"}]})
 
-    _, _, compiled = pages._prepare_initial_generation((tmp_path, _codex_config(), None), page.page_number, "canonical")
+    _, _, compiled = draw_submission.prepare_initial_generation((tmp_path, _codex_config(), None), page.page_number, "canonical")
     assert compiled.request.correction is None

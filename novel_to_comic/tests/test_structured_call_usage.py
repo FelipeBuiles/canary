@@ -20,7 +20,7 @@ def test_declared_schema_reaches_every_attempt():
         Config(), model='test', system_prompt='Return JSON', user_content='question',
         json_schema=schema, parse=lambda value: value['answer'],
         correction=lambda raw, error: 'Return the required answer',
-        label='Test', feature='test.schema', generate=generate))
+        label='Test', feature='extract.schema', generate=generate))
     assert result.value == 'accepted'
     assert result.attempts == 2
     assert [call['json_schema'] for call in calls] == [schema, schema]
@@ -43,7 +43,7 @@ def test_nested_attempts_keep_usage(fail):
     async def run():
         return await generate_validated_json(
             Config(), model="test", system_prompt="json", user_content="json", parse=int,
-            correction=lambda value, error: "correct", label="test", feature="test", generate=generate,
+            correction=lambda value, error: "correct", label="test", feature="extract.test", generate=generate,
         )
 
     if fail:
@@ -54,3 +54,14 @@ def test_nested_attempts_keep_usage(fail):
         result = asyncio.run(run())
         assert result.value == 42
         assert result.usage_records == usages
+
+
+def test_unscoped_feature_must_name_its_model_job():
+    async def generate(**kwargs):
+        raise AssertionError("no request may be sent without a model job")
+
+    with pytest.raises(ValueError, match="names no model job"):
+        asyncio.run(generate_validated_json(
+            Config(), model="test", system_prompt="json", user_content="json", parse=int,
+            correction=lambda value, error: "correct", label="test", feature="unscoped", generate=generate,
+        ))

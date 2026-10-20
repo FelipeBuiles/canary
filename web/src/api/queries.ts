@@ -1,4 +1,7 @@
-import type { CastReferenceInput } from "../types/api";
+import { seedGenerationJob } from "./generationTracking";
+import { isGenerationActive } from "../lib/generationTracking";
+import { invalidatePageReview } from "./pageCache";
+import type { CastReferenceInput, GenerationJob } from "../types/api";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { isNotFoundError } from "./client";
 import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory, previewSource } from "./projects";
@@ -408,13 +411,21 @@ export function useGenerationJobs(
   ids: string[],
   watchAll = false,
 ) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ["project", project, "generation-jobs", ids],
-    queryFn: () => getGenerationJobs(project!, ids),
+    queryFn: async () => {
+      const fresh = await getGenerationJobs(project!, ids);
+      const key = ["project", project, "generation-admissions"];
+      const pending = qc.getQueryData<GenerationJob[]>(key);
+      const acknowledged = new Set(fresh.jobs.map(job => job.id));
+      if (pending?.some(job => acknowledged.has(job.id))) qc.setQueryData(key, pending.filter(job => !acknowledged.has(job.id)));
+      return fresh;
+    },
     enabled: !!project && (ids.length > 0 || watchAll),
     refetchInterval: (query) => {
       const jobs = query.state.data?.jobs ?? [];
-      return jobs.some((job) => job.status === "queued" || job.status === "running")
+      return jobs.some((job) => isGenerationActive(job))
         ? 1000
         : watchAll ? 15_000 : false;
     },
@@ -609,15 +620,6 @@ export function usePageAnalysisEstimate(
   });
 }
 
-function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
-  invalidateProject(qc, project, "complete-pages");
-  if (pageNumber != null) {
-    invalidateProject(qc, project, "complete-pages", pageNumber);
-  }
-  invalidateProject(qc, project, "status");
-  qc.invalidateQueries({ queryKey: ["credits", "history"] });
-  invalidateProject(qc, project, "generation-jobs");
-}
 
 export function useGenerateCompletePage() {
   const qc = useQueryClient();
@@ -631,6 +633,7 @@ export function useGenerateCompletePage() {
       pageNumber: number;
       depiction?: "canonical" | "less_graphic";
     }) => generateCompletePage(project, pageNumber, depiction),
+    onSuccess: (data, { project }) => seedGenerationJob(qc, project, data.job),
     onSettled: (_data, _error, { project, pageNumber }) =>
       invalidatePageReview(qc, project, pageNumber),
   });
@@ -751,7 +754,8 @@ export function useSuggestStyles() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ project, directionId }: { project: string; directionId?: string }) => suggestStyles(project, directionId),
-    onSuccess: (_data, { project }) => {
+    onSuccess: (data, { project }) => {
+      if ("job" in data && data.job) seedGenerationJob(qc, project, data.job);
       invalidateProject(qc, project, "styles");
     },
   });
@@ -762,7 +766,8 @@ export function useCreateStyleDirection() {
   return useMutation({
     mutationFn: ({ project, direction, image, withNeighbors }: { project: string; direction: string; image: File | null; withNeighbors: boolean }) =>
       createStyleDirection(project, { direction, image, withNeighbors }),
-    onSuccess: (_data, { project }) => {
+    onSuccess: (data, { project }) => {
+      if ("job" in data && data.job) seedGenerationJob(qc, project, data.job);
       invalidateProject(qc, project, "styles");
       invalidateProject(qc, project, "status");
     },
@@ -801,6 +806,7 @@ export function useGenerateStyleSamples() {
   return useMutation({
     mutationFn: ({ project, ids }: { project: string; ids: string[] }) =>
       generateStyleSamples(project, ids),
+    onSuccess: (data, { project }) => { for (const job of data.jobs) seedGenerationJob(qc, project, job); },
     onSettled: (_data, _error, { project }) => {
       invalidateProject(qc, project, "styles");
     },
@@ -812,6 +818,7 @@ export function useGenerateStyleValidation() {
   return useMutation({
     mutationFn: ({ project, id }: { project: string; id: string }) =>
       generateStyleValidation(project, id),
+    onSuccess: (data, { project }) => seedGenerationJob(qc, project, data.job),
     onSettled: (_data, _error, { project }) => {
       invalidateProject(qc, project, "styles");
     },

@@ -21,6 +21,7 @@ from novel_to_comic.ai.errors import AIStructuredResponseError
 from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.clients import text
 from novel_to_comic.style_reference import find_style_reference
+from novel_to_comic.text_models import TextModelJob
 from novel_to_comic.clients.structured_call import (
     StructuredCallError, generate_validated_json, validation_error_summary,
 )
@@ -411,7 +412,8 @@ async def ensure_design(config, project_dir, bible, ctx):
 
     try:
         outcome = await generate_validated_json(
-            config, model=config.effective_prompt_model(), system_prompt=DESIGN_SYSTEM,
+            config, model=config.effective_prompt_model(), job=TextModelJob.from_config(config, "prompt"),
+            system_prompt=DESIGN_SYSTEM,
             user_content=request, parse=parse_response, correction=correction,
             label="Cast design", feature="cast.design",
             max_output_tokens=max(4096, len(missing_ids) * 900),

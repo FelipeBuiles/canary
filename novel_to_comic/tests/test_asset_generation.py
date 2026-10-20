@@ -331,7 +331,7 @@ def test_non_panel_submission_freezes_before_transport_and_persists_provenance(t
     )
     submission = asyncio.run(submit_non_panel_request(
         config=config, project_dir=tmp_path, request=request,
-        output_path=output_path, feature="style.sample", kind="style_sample",
+        output_path=output_path, feature="style.sample",
     ))
 
     assert submission.request_id
@@ -367,7 +367,7 @@ def test_non_panel_failure_persists_request_provenance_without_provider_result(t
     with pytest.raises(RuntimeError):
         asyncio.run(submit_non_panel_request(
             config=config, project_dir=tmp_path, request=request,
-            output_path=output_path, feature="style.sample", kind="style_sample",
+            output_path=output_path, feature="style.sample",
         ))
 
     failure = json.loads(output_path.with_suffix(".png.failure.json").read_text())
@@ -405,7 +405,7 @@ def test_non_panel_gateway_failure_persists_retryable_service_classification(
     with pytest.raises(RuntimeError):
         asyncio.run(submit_non_panel_request(
             config=config, project_dir=tmp_path, request=request,
-            output_path=output_path, feature="style.sample", kind="style_sample",
+            output_path=output_path, feature="style.sample",
         ))
 
     failure = json.loads(output_path.with_suffix(".png.failure.json").read_text())

@@ -1,4 +1,5 @@
 """Hosted OCR lifecycle contracts; no gateway, credentials, or provider calls."""
+from novel_to_comic.server.render_checks import render_check_status
 import asyncio
 import hashlib
 import json
@@ -199,7 +200,7 @@ def test_hosted_only_route_estimate_and_admission_are_free(harness, monkeypatch)
     case[3].write_provenance(PageGenerationProvenance(render=case[1],
         usage=UsageRecord(provider="fixture", model="fixture", operation="image", cost_usd=0)))
     # The optional second look never makes the page unchecked or asks the author to pay.
-    recovery = pages._analysis_recovery(case[3], 34)
+    recovery = render_check_status(case[3], 34)
     assert recovery == {"status": "checked", "requires_paid_call": False}
     project = (case[3].project_dir, Config(), None)
     quote = pages.estimate_page_analysis(34, project)

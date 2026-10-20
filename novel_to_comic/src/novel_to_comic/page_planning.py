@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from novel_to_comic.validation_round import (
+    PlanRepairPolicy, persist_validation, review_clean_candidate, record_validation_attempt,
+)
+from novel_to_comic.clients.validated_call import RetryPolicy, ValidatedCall
+from novel_to_comic.text_models import TextModelJob
+
 import json
 import re
 from copy import deepcopy
@@ -44,10 +50,9 @@ from novel_to_comic.models.page import (
 from novel_to_comic.models.validation import (
     EditorialIssue,
     InvariantFailure,
-    StageValidation,
     ValidationAttempt,
 )
-from novel_to_comic.narrative_review import planning_context, review_narrative, reviewed_validation
+from novel_to_comic.narrative_review import planning_context, reviewed_validation
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
@@ -1216,38 +1221,23 @@ async def _produce_book_plan_one_shot(
         history: list[ValidationAttempt] = []
         for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             candidate_prompt = attempt_prompt
-            # A formatting slip must not consume the remaining semantic repair.
-            for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-                with ai_source_context("book", tuple(dict.fromkeys(
-                    unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
-                ))):
-                    request = dict(
-                        system_prompt=(
-                            "You are the sole global page architect for a complete comic book."
-                        ),
-                        user_content=attempt_prompt,
-                        feature="plan.book",
-                        max_output_tokens=_PLAN_BOOK_MAX_OUTPUT_TOKENS,
-                        json_schema=_plan_response_schema(references),
-                    )
-                    result = await generate(**request)
-                # A retried attempt was still paid for, so its usage is recorded
-                # without counting a completed item.
-                _record_plan_usage(ctx, result)
-                try:
-                    draft = _BookPlanDraft.model_validate(
-                        _normalize_book_plan_draft(
-                            result.value,
-                            adaptation,
-                        )
-                    )
-                except ValidationError as error:
-                    discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
-                    if schema_attempt == _MAX_PLAN_ATTEMPTS:
-                        raise
-                    attempt_prompt = _schema_repair_prompt(candidate_prompt, result.value, error)
-                    continue
-                break
+            with ai_source_context("book", tuple(dict.fromkeys(
+                unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
+            ))):
+                outcome = await ValidatedCall(
+                    TextModelJob("plan", model), RetryPolicy(_MAX_PLAN_ATTEMPTS, (ValidationError,)),
+                    lambda value: _BookPlanDraft.model_validate(_normalize_book_plan_draft(value, adaptation)),
+                    lambda value, error: _schema_repair_prompt(candidate_prompt, value, error),
+                ).run(generate, dict(
+                    system_prompt="You are the sole global page architect for a complete comic book.", user_content=attempt_prompt,
+                    feature="plan.book", max_output_tokens=_PLAN_BOOK_MAX_OUTPUT_TOKENS, json_schema=_plan_response_schema(references),
+                ), observe=lambda result: _record_plan_usage(ctx, result),
+                    rejected=lambda request, value, error: discard_checkpointed_response(
+                        artifacts=artifacts, stage="plan", model=model, request=request,
+                    ))
+            draft = outcome.value
+            request, result = outcome.request, outcome.response
+            attempt_prompt = request["user_content"]
             try:
                 pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat,
                                     integrated_lettering=integrated_lettering)
@@ -1257,32 +1247,23 @@ async def _produce_book_plan_one_shot(
                 validation = _canonical_page_validation(error)
             if not validation.invariant_failures:
                 artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
-                review_failures = await review_narrative(
-                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                    artifacts=artifacts, model=model, instruction=story_instruction, concurrency=concurrency,
-                )
-                validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
-            history.append(_attempt_record(attempt, validation))
+            validation = await review_clean_candidate(validation,
+                planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                artifacts=artifacts, model=model, instruction=story_instruction, concurrency=concurrency,
+            )
+            history.append(record_validation_attempt(attempt, validation))
             if not validation.invariant_failures:
                 ctx.record_item_done()
                 break
-            if any(f.owner_stage == "plan" and f.code != "narrative_review_invalid"
-                   for f in validation.invariant_failures):
+            if PlanRepairPolicy.rejects_response(validation.invariant_failures):
                 discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
-            if any(f.code == "narrative_review_invalid" for f in validation.invariant_failures):
-                break
-            if all(
-                failure.owner_stage != "plan"
-                for failure in validation.invariant_failures
-            ):
-                # Nothing Plan can re-allocate would clear these, so stop paying
-                # for attempts and let the owning stage be re-run instead.
+            if not PlanRepairPolicy.may_retry(validation.invariant_failures, allow_mixed_owners=True):
                 break
             if attempt < _MAX_PLAN_ATTEMPTS:
                 attempt_prompt = _repair_prompt(prompt, result.value, validation)
         ctx.progress(1, 1)
 
-        _persist_validation(
+        persist_validation("plan",
             artifacts, validation, attempts=attempt, history=tuple(history)
         )
         if validation.invariant_failures:
@@ -1409,48 +1390,37 @@ async def _generate_page_map(
     page_map: _BookPageMap | None = None
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
         candidate_prompt = attempt_prompt
-        # Formatting repair is not a narrative revision. Each map candidate
-        # gets one schema correction before its editorial judgment is evaluated.
-        for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            with ai_source_context("page_map", tuple(dict.fromkeys(
-                unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
-            ))):
-                request = dict(
-                    system_prompt=(
-                        "You are the global rhythm architect for a complete comic book."
-                    ),
-                    user_content=attempt_prompt,
-                    feature="plan.map",
-                    max_output_tokens=_PAGE_MAP_MAX_OUTPUT_TOKENS,
-                    json_schema=_BookPageMap.model_json_schema(),
-                )
-                result = await generate(**request)
-            _record_plan_usage(ctx, result)
-            try:
-                page_map = _canonicalize_page_map(result.value)
-            except ValidationError as error:
-                discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
-                if schema_attempt == _MAX_PLAN_ATTEMPTS:
-                    raise
-                attempt_prompt = _schema_repair_prompt(candidate_prompt, result.value, error)
-                continue
-            break
+        with ai_source_context("page_map", tuple(dict.fromkeys(
+            unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
+        ))):
+            outcome = await ValidatedCall(
+                TextModelJob("plan", model), RetryPolicy(_MAX_PLAN_ATTEMPTS, (ValidationError,)),
+                lambda value: _canonicalize_page_map(value),
+                lambda value, error: _schema_repair_prompt(candidate_prompt, value, error),
+            ).run(generate, dict(
+                system_prompt="You are the global rhythm architect for a complete comic book.", user_content=attempt_prompt,
+                feature="plan.map", max_output_tokens=_PAGE_MAP_MAX_OUTPUT_TOKENS, json_schema=_BookPageMap.model_json_schema(),
+            ), observe=lambda result: _record_plan_usage(ctx, result),
+                rejected=lambda request, value, error: discard_checkpointed_response(
+                    artifacts=artifacts, stage="plan", model=model, request=request,
+                ))
+        page_map = outcome.value
+        request = outcome.request
+        attempt_prompt = request["user_content"]
         validation = _validate_page_map(adaptation, target_range, page_map)
         if not validation.invariant_failures:
             if progress is not None:
                 progress.map_drafted(page_map)
-            review_failures = await review_narrative(
-                planning_context(adaptation, page_map.pages, phase="plan_map"),
-                generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction, concurrency=concurrency,
-            )
-            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
-        history.append(_attempt_record(attempt, validation))
+        validation = await review_clean_candidate(validation,
+            planning_context(adaptation, page_map.pages, phase="plan_map"),
+            generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction, concurrency=concurrency,
+        )
+        history.append(record_validation_attempt(attempt, validation))
         if not validation.invariant_failures:
             return page_map, history
-        if any(f.owner_stage == "plan" and f.code != "narrative_review_invalid"
-               for f in validation.invariant_failures):
+        if PlanRepairPolicy.rejects_response(validation.invariant_failures):
             discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
-        if any(f.owner_stage != "plan" or f.code == "narrative_review_invalid" for f in validation.invariant_failures):
+        if not PlanRepairPolicy.may_retry(validation.invariant_failures):
             raise PlanInvariantError(validation, history=tuple(history))
         if attempt == _MAX_PLAN_ATTEMPTS:
             raise PlanInvariantError(validation, history=tuple(history))
@@ -1684,51 +1654,46 @@ async def _generate_detail_batch(
     ))
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
         candidate_prompt = attempt_prompt
-        draft = None
-        # A formatting slip must not consume the remaining semantic repair.
-        for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            with ai_source_context(f"pages_{start + 1}-{stop}", source_unit_ids):
-                schema = _plan_response_schema(
-                    references, page_map.pages[start:stop],
-                    shared_panel=text_wire(model).claude_native_json or gemini,
-                )
-                if gemini:
-                    schema = generic_detail_schema(schema, page_map.pages[start:stop])
-                request = dict(
-                    system_prompt=(
-                        "You are the local page-composition architect working under a "
-                        "fixed global comic-book page map."
-                    ),
-                    user_content=attempt_prompt,
-                    feature="plan.detail",
-                    max_output_tokens=_PLAN_DETAIL_MAX_OUTPUT_TOKENS,
-                    json_schema=schema,
-                )
-                result = await generate(**request)
-            _record_plan_usage(ctx, result)
+        schema = _plan_response_schema(
+            references, page_map.pages[start:stop],
+            shared_panel=text_wire(model).claude_native_json or gemini,
+        )
+        if gemini:
+            schema = generic_detail_schema(schema, page_map.pages[start:stop])
+
+        def parse_detail(value):
             try:
-                detail_value = ungeneric_detail_response(result.value) if gemini else result.value
+                detail_value = ungeneric_detail_response(value) if gemini else value
                 draft = _compile_detail_response(detail_value, page_map.pages[start:stop], adaptation)
-            except ValidationError as error:
-                if artifacts is not None:
-                    discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
-                if schema_attempt == _MAX_PLAN_ATTEMPTS:
-                    raise
-                attempt_prompt = _schema_repair_prompt(
-                    candidate_prompt,
-                    result.value,
-                    error,
-                )
-                continue
+            except ValidationError:
+                raise
             except ValueError as error:
-                errors = (str(error),)
-                reference_failures = ()
-            else:
-                errors = _detail_matches_map(draft, page_map.pages[start:stop])
-                reference_failures = (*_reference_authority_failures(
-                    draft.pages, references, page_number_offset=start,
-                ), *_speaker_acting_failures(adaptation, references, draft.pages))
-            break
+                return None, (str(error),), ()
+            return draft, _detail_matches_map(draft, page_map.pages[start:stop]), (
+                *_reference_authority_failures(draft.pages, references, page_number_offset=start),
+                *_speaker_acting_failures(adaptation, references, draft.pages),
+            )
+
+        def rejected(request, value, error):
+            if artifacts is not None:
+                discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
+
+        with ai_source_context(f"pages_{start + 1}-{stop}", source_unit_ids):
+            outcome = await ValidatedCall(
+                TextModelJob("plan", model), RetryPolicy(_MAX_PLAN_ATTEMPTS, (ValidationError,)),
+                parse_detail,
+                lambda value, error: _schema_repair_prompt(candidate_prompt, value, error),
+            ).run(generate, dict(
+                system_prompt=(
+                    "You are the local page-composition architect working under a "
+                    "fixed global comic-book page map."
+                ),
+                user_content=attempt_prompt, feature="plan.detail",
+                max_output_tokens=_PLAN_DETAIL_MAX_OUTPUT_TOKENS, json_schema=schema,
+            ), observe=lambda result: _record_plan_usage(ctx, result), rejected=rejected)
+        draft, errors, reference_failures = outcome.value
+        request, result = outcome.request, outcome.response
+        attempt_prompt = request["user_content"]
         if not errors and not reference_failures:
             return draft
         _log(ctx, f"Plan pages {start + 1}-{stop} detail rejected: " + "; ".join(
@@ -2008,7 +1973,7 @@ async def _produce_book_plan_two_pass(
                 progress=progress, integrated_lettering=integrated_lettering,
             )
         except PlanInvariantError as error:
-            _persist_validation(
+            persist_validation("plan",
                 artifacts,
                 error.validation,
                 attempts=len(error.history) or 1,
@@ -2057,7 +2022,7 @@ async def _produce_book_plan_two_pass(
                 limit=concurrency,
             )
         except PlanInvariantError as error:
-            _persist_validation(
+            persist_validation("plan",
                 artifacts,
                 error.validation,
                 attempts=_MAX_PLAN_ATTEMPTS,
@@ -2075,30 +2040,20 @@ async def _produce_book_plan_two_pass(
         if not validation.invariant_failures:
             progress.publish("reviewing")
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
-            review_failures = await review_narrative(
-                planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
-            )
-            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
+        validation = await review_clean_candidate(validation,
+            planning_context(adaptation, pages), generate=generate, ctx=ctx,
+            artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
+        )
 
 
         # Structural and narrative concerns each get one repair round. Review
         # runs only on a structurally valid draft, so a first draft with
         # structural failures meets its narrative review after that repair and
         # must still get the narrative repair it has not yet received.
-        narrative_repaired = any(
-            any(code.startswith("narrative_review_") for code in record.invariant_codes)
-            for record in history
-        )
-        structure_repaired = False
+        repair_policy = PlanRepairPolicy.from_history(history)
         attempt = 1
         while True:
-            repairable = tuple(
-                f for f in validation.invariant_failures if f.owner_stage == "plan"
-                and f.code != "narrative_review_invalid"
-                and (not narrative_repaired if f.code.startswith("narrative_review_")
-                     else not structure_repaired)
-            )
+            repairable = repair_policy.eligible(validation.invariant_failures)
             spans = _concern_page_spans(
                 tuple(repairable),
                 page_count=len(page_map.pages),
@@ -2106,9 +2061,8 @@ async def _produce_book_plan_two_pass(
             )
             if not spans:
                 break
-            narrative_repaired |= any(f.code.startswith("narrative_review_") for f in repairable)
-            structure_repaired |= any(not f.code.startswith("narrative_review_") for f in repairable)
-            history.append(_attempt_record(attempt, validation))
+            repair_policy.repaired(repairable)
+            history.append(record_validation_attempt(attempt, validation))
             attempt += 1
             total_steps += len(spans)
             ctx.set_progress_total(total_steps)
@@ -2168,14 +2122,13 @@ async def _produce_book_plan_two_pass(
             if not validation.invariant_failures:
                 progress.publish("reviewing")
                 artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
-                review_failures = await review_narrative(
-                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                    artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
-                )
-                validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
+            validation = await review_clean_candidate(validation,
+                planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
+            )
         validation = reviewed_validation(validation, validation.invariant_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
-        history.append(_attempt_record(attempt, validation))
-        _persist_validation(
+        history.append(record_validation_attempt(attempt, validation))
+        persist_validation("plan",
             artifacts,
             validation,
             attempts=attempt,
@@ -2343,48 +2296,6 @@ def _canonical_page_validation(error: ValidationError) -> PlanValidation:
     )
 
 
-def _attempt_record(attempt: int, validation: PlanValidation) -> ValidationAttempt:
-    return ValidationAttempt(
-        attempt=attempt,
-        invariant_codes=tuple(
-            failure.code for failure in validation.invariant_failures
-        ),
-        editorial_codes=tuple(issue.code for issue in validation.editorial_issues),
-    )
-
-
-def _persist_validation(
-    artifacts: TargetArtifacts,
-    validation: PlanValidation,
-    *,
-    attempts: int,
-    history: tuple[ValidationAttempt, ...] = (),
-) -> None:
-    """Persist Plan's verdict, including any page-range recommendation.
-
-    A range conflict is the one blocking failure the user can actually act on,
-    and its recommendation only exists inside the failure evidence — so it is
-    written down before the stage raises.
-    """
-
-    recommendations = tuple(
-        evidence
-        for failure in validation.invariant_failures
-        if failure.code == "target_page_range_conflict"
-        for evidence in failure.evidence
-    )
-    artifacts.write_validation(
-        StageValidation(
-            owner_stage="plan",
-            attempts=attempts,
-            invariant_failures=validation.invariant_failures,
-            editorial_issues=validation.editorial_issues,
-            recommendations=recommendations,
-            attempt_history=history,
-        )
-    )
-
-
 def _merged_editorial_issues(
     derived: tuple[EditorialIssue, ...],
     authored: tuple[EditorialIssue, ...],
@@ -2481,8 +2392,8 @@ def _raise_on_adaptation_preconditions(
     failures = _adaptation_precondition_failures(adaptation, references)
     if failures:
         validation = PlanValidation(invariant_failures=failures)
-        history = (_attempt_record(1, validation),)
-        _persist_validation(artifacts, validation, attempts=1, history=history)
+        history = (record_validation_attempt(1, validation),)
+        persist_validation("plan", artifacts, validation, attempts=1, history=history)
         raise PlanInvariantError(validation, history=history)
 
 
@@ -4170,11 +4081,12 @@ async def replan_page(
         previous_review = artifacts.read_narrative_review("plan")
     except (ArtifactMissing, ArtifactInvalid):
         previous_review = None
-    review_failures = await review_narrative(
+    review_validation = await review_clean_candidate(PlanValidation(),
         planning_context(adaptation, candidate), generate=generate, ctx=sink,
         artifacts=artifacts, model=model,
         instruction=previous_review.instruction if previous_review is not None else "",
     )
+    review_failures = review_validation.invariant_failures
     if review_failures:
         if previous_review is not None:
             artifacts.write_narrative_review("plan", previous_review)

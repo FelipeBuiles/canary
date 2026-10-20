@@ -243,15 +243,17 @@ def build_location_state_spec(
 
 
 def mark_dependent_states_stale(
-    project_dir: Path, asset_kind: Literal["character", "location"], entity_id: str,
+    project_dir: Path, asset_kind: Literal["character", "location", "prop"], entity_id: str,
 ) -> list[dict]:
     parent = (
         artifacts.character_ref_sheet_path(project_dir, entity_id)
-        if asset_kind == "character" else artifacts.location_plate_path(project_dir, entity_id)
+        if asset_kind == "character" else artifacts.prop_ref_path(project_dir, entity_id)
+        if asset_kind == "prop" else artifacts.location_plate_path(project_dir, entity_id)
     )
     current_hash = _sha256(parent)
     root = series_root(project_dir)
     pattern = (root / "refs" / entity_id / "states" if asset_kind == "character"
+               else artifacts.prop_ref_path(project_dir, entity_id).parent / "states" if asset_kind == "prop"
                else root / "plates" / entity_id / "states")
     warnings: list[dict] = []
     for meta_path in sorted(pattern.glob("**/*.png.meta.json")) if pattern.exists() else []:

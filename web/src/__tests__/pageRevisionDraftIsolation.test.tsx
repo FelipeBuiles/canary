@@ -31,6 +31,7 @@ const pageState = vi.hoisted(() => ({
 }));
 
 vi.mock("../api/queries", () => ({
+  useGenerationJobs: () => ({ data: { jobs: [] } }),
   useAdaptation: () => ({ data: { beats: [] }, isLoading: false, error: null }),
   useCompletePage: () => ({
     data: { renders: pageState.renders.map((item) => ({ render: {

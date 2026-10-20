@@ -12,7 +12,6 @@ import os
 import random
 import re
 import time
-import uuid
 from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -20,20 +19,16 @@ from typing import Any
 
 import httpx
 
-from novel_to_comic.ai.codex_schema import strict_output_schema
-from novel_to_comic.ai.anthropic_schema import anthropic_output_schema
 from novel_to_comic.ai.context import (
     current_ai_request_context,
-    current_generation_probe,
     current_stream_observer,
     generation_probe,
     mark_generation_executing,
     mark_generation_first_content,
 )
 from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
-from novel_to_comic.ai.prompt_parts import plain_prompt, prompt_parts
 from novel_to_comic.ai.admission import (
-    AdmissionRejected, cancelled_before_submission,
+    cancelled_before_submission,
     post as admitted_post, stream as admitted_stream,
 )
 from novel_to_comic.ai.finalisation import (
@@ -43,17 +38,14 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_success,
 )
 from novel_to_comic.config import Config, mock_mode_active
-from novel_to_comic.gemini_tuning import tuned_request
-from novel_to_comic.codex_dev import CodexRoute, CodexRoutingError, is_subscription, route_for
+from novel_to_comic.codex_dev import CodexRoute, is_subscription
 from novel_to_comic.provider_wire import ProviderWireRequest
-from novel_to_comic.text_models import is_gemini_model, text_wire, request_reasoning
+from novel_to_comic.text_models import text_wire
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
     calculate_cost_breakdown,
-    estimate_text_cost,
-    estimate_text_usage,
     usage_has_billable_activity,
 )
 
@@ -1689,471 +1681,14 @@ async def _chat_completion_once(
     image_attachments: tuple[tuple[bytes, str], ...] = (),
     retry_transport: bool = True,
 ) -> dict[str, Any]:
-    effective_request = tuned_request(model, {
-        "system_prompt": system_prompt, "user_content": user_content,
-        "feature": feature, "json_schema": json_schema, "json_mode": json_mode,
-    })
-    system_prompt = effective_request["system_prompt"]
-    # Cache-break markers never reach a model: Gemini receives the pieces as
-    # separate parts (ai/prompt_parts.py); everything else sees plain text.
-    user_parts = prompt_parts(effective_request["user_content"])
-    user_content = plain_prompt(effective_request["user_content"])
-    json_schema = effective_request["json_schema"]
-    json_mode = effective_request["json_mode"]
-    route = route_for("text", model)
-    if config.mock_mode and (route is not None or not mock_mode_active(config)):
-        raise CodexRoutingError("Mock projects cannot execute live Codex requests")
-    event_id = str(uuid.uuid4())
-    operation = "text"
-    metadata = _metadata(feature, operation, model, event_id)
-    if route is not None:
-        metadata.update({
-            "funding": route.funding,
-            "subscription_runtime": route.runtime,
-            "codex_reasoning_model": route.reasoning_model,
-            "unsupported_controls": {
-                "temperature": temperature,
-                "max_output_tokens": max_output_tokens,
-            },
-        })
-    wire = text_wire(model)
-    if image_attachments and not wire.vision:
-        raise ValueError(f"Vision is not enabled for {model}")
-    effort = request_reasoning(config, model, feature)
-    open_thinking = wire.provider_key in {"openrouter", "together_ai"} and effort != "none"
-    response_format: dict[str, Any] | None
-    effective_system = system_prompt
-    if json_schema:
-        request_schema = json_schema
-        if route is None and not wire.claude_native_json and not is_gemini_model(model):
-            request_schema = strict_output_schema(json_schema)
-        schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": True,
-                "schema": request_schema,
-            },
-        }
-    elif json_mode:
-        response_format = {"type": "json_object"}
-    else:
-        response_format = None
-    if json_mode and "json" not in (system_prompt + user_content).lower():
-        effective_system += "\n\nRespond with valid JSON."
-    # An image-reading call keeps ``user_content`` as its text part so cost
-    # estimation, request summaries, and Langfuse logging stay comparable with
-    # text-only calls; only the wire message becomes multimodal.
-    message_content: str | list[dict[str, Any]] = user_content
-    if route is None and not image_attachments and len(user_parts) > 1 and is_gemini_model(model):
-        message_content = [{"type": "text", "text": part} for part in user_parts]
-    if image_attachments and route is None:
-        message_content = [{"type": "text", "text": user_content}]
-        for image_bytes, media_type in image_attachments:
-            encoded = base64.b64encode(image_bytes).decode()
-            message_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{media_type};base64,{encoded}"},
-                }
-            )
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": effective_system},
-            {"role": "user", "content": message_content},
-        ],
-        "metadata": metadata,
-    }
-    if route is None and wire.native_vertex_thinking:
-        payload["thinkingConfig"] = {"thinkingLevel": effort, "includeThoughts": True}
-    elif route is None and wire.effort and not wire.claude_native_json:
-        payload["reasoning_effort"] = effort
-    if route is None and wire.provider_key in {"openrouter", "together_ai"}:
-        payload["extra_body"] = {"reasoning": {"enabled": effort != "none"}}
-        if wire.provider_key == "openrouter":
-            payload["extra_body"]["provider"] = {"require_parameters": True}
-    if route is None and wire.temperature:
-        payload["temperature"] = temperature
-    if route is None and wire.claude_native_json:
-        output_config: dict[str, Any] = {}
-        # The gateway drops a route's reasoning_effort once output_config is
-        # present, so effort travels with the format it would otherwise lose to.
-        if wire.effort:
-            output_config["effort"] = effort
-        # Schema-less JSON uses the instruction and parser above.
-        if json_schema:
-            output_config["format"] = {
-                "type": "json_schema", "schema": anthropic_output_schema(json_schema),
-            }
-        if output_config:
-            payload["output_config"] = output_config
-    elif response_format is not None and wire.json_mode:
-        payload["response_format"] = response_format
-    effective_max_output_tokens = (max_output_tokens or 16_384) + (16_384 if open_thinking else wire.thinking_headroom_tokens)
-    if wire.max_output_tokens:
-        effective_max_output_tokens = min(effective_max_output_tokens, wire.max_output_tokens)
-    if route is None:
-        payload[wire.token_limit_field] = effective_max_output_tokens
-    # Stream so the read timeout is per-chunk: long adapt repairs exceed the
-    # read budget as a single blocking response. include_usage puts the usage
-    # block on a final chunk, which streaming otherwise omits.
-    streaming = route is None and wire.streaming and _stream_text_enabled()
-    if streaming:
-        payload["stream"] = True
-        payload["stream_options"] = {"include_usage": True}
-    if (probe := current_generation_probe()) is not None:
-        from novel_to_comic.server.telemetry import content_capture_enabled
+    from novel_to_comic.ai.text_finalisation import complete_text
 
-        probe.describe(
-            system_prompt=effective_system, user_content=user_content, json_schema=json_schema,
-            stream=streaming, keep_content=content_capture_enabled(),
-        )
-
-    estimated_cost_usd = (
-        (estimate_text_cost(
-            model, effective_system + "\n" + user_content,
-            # The answer budget; the estimator adds the model's typical thinking.
-            output_chars=((max_output_tokens or 16_384) + (4_096 if open_thinking else 0)) * 4,
-        ) or None)
-        if route is None else None
+    return await complete_text(
+        config=config, model=model, system_prompt=system_prompt, user_content=user_content,
+        temperature=temperature, max_output_tokens=max_output_tokens, json_mode=json_mode,
+        feature=feature, json_schema=json_schema, image_attachments=image_attachments,
+        retry_transport=retry_transport,
     )
-    # Everything the terminal handlers reference must exist before the first
-    # cancellable await: offloading the insert to a thread means cancellation
-    # can now land here, and the CancelledError handler reads all of these.
-    started = time.perf_counter()
-    started_at = datetime.datetime.now(datetime.UTC)
-    response: httpx.Response | None = None
-    data: dict[str, Any] = {}
-    paid_call = bool(
-        route is None and current_ai_request_context().user_id and not mock_mode_active(config)
-    )
-    provider_submission_started = False
-    insert_task = asyncio.create_task(
-        _insert_event_async(
-            event_id=event_id,
-            model_alias=model,
-            feature=feature,
-            operation=operation,
-            params_json=_redacted_params(payload),
-            request_summary_json=_content_summary(effective_system, user_content),
-            metadata_json=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-            started_at=started_at,
-
-        )
-    )
-    try:
-        await _await_usage_task(insert_task)
-    except asyncio.CancelledError as exc:
-        # The request was never issued, but the started row must still reach
-        # a terminal state: wait out the insert, book the cancellation, then
-        # propagate. Exactly once — the main try block is never entered.
-        await _finalize_event_shielded(
-            event_id=event_id,
-            status="cancelled",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            error=exc,
-            error_response=response,
-            config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-
-            started_at=started_at,
-        )
-        raise
-    try:
-        await _authorize_model_submission(
-            event_id=event_id, estimated_cost_usd=estimated_cost_usd,
-            funding=metadata.get("funding", "api"), config=config,
-        )
-        endpoint = "/v1/chat/completions"
-        # Keep a local breadcrumb alongside the queued Langfuse observation.
-        logger.debug(
-            "AI request issued feature=%s model=%s streaming=%s event_id=%s",
-            feature,
-            model,
-            streaming,
-            event_id,
-        )
-        try:
-            if route is not None and route.runtime == "claude":
-                from novel_to_comic.ai.claude_runtime import run_text as run_claude_text
-
-                # The API route's model controls, so the two runs are comparable.
-                claude_wire = text_wire(route.reasoning_model)
-                claude_limit = (max_output_tokens or 16_384) + claude_wire.thinking_headroom_tokens
-                if claude_wire.max_output_tokens:
-                    claude_limit = min(claude_limit, claude_wire.max_output_tokens)
-                claude_result = await run_claude_text(
-                    model=route.reasoning_model,
-                    system_prompt=effective_system,
-                    user_content=user_content,
-                    json_schema=json_schema,
-                    image_attachments=image_attachments,
-                    effort=effort,
-                    max_output_tokens=claude_limit,
-                )
-                metadata["codex_runtime"] = claude_result.metadata
-                data = {
-                    "model": claude_result.model,
-                    "choices": [{"message": {"content": claude_result.text}, "finish_reason": "stop"}],
-                    "usage": _claude_token_usage({
-                        "input_tokens": claude_result.input_tokens,
-                        "output_tokens": claude_result.output_tokens,
-                        "cache_read_input_tokens": claude_result.cache_read_input_tokens,
-                        "cache_creation_input_tokens": claude_result.cache_creation_input_tokens,
-                    }),
-                }
-            elif route is not None:
-                from novel_to_comic.ai.codex_runtime import run_text
-
-                result = await run_text(
-                    model=route.reasoning_model,
-                    system_prompt=effective_system,
-                    user_content=user_content,
-                    json_schema=json_schema,
-                    image_attachments=image_attachments,
-                    effort=effort,
-                )
-                metadata["codex_runtime"] = result.metadata
-                data = {
-                    "model": result.model,
-                    "choices": [{"message": {"content": result.text}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": result.input_tokens, "completion_tokens": result.output_tokens},
-                }
-                if result.model != route.reasoning_model:
-                    raise CodexRoutingError("Codex returned a different reasoning model than requested")
-            elif streaming:
-                provider_submission_started = True
-                if retry_transport:
-                    data, response = await _stream_with_retry(
-                        f"{_base_url(config)}{endpoint}",
-                        headers=_headers(config, event_id),
-                        payload=payload,
-                        **({"retry_ambiguous": False} if paid_call else {}),
-                    )
-                else:
-                    data, response = await _read_chat_stream(
-                        f"{_base_url(config)}{endpoint}",
-                        headers=_headers(config, event_id),
-                        payload=payload,
-                    )
-            else:
-                provider_submission_started = True
-                if retry_transport:
-                    response = await _post_with_retry(
-                        f"{_base_url(config)}{endpoint}",
-                        headers=_headers(config, event_id),
-                        json=payload,
-                        **({"retry_ambiguous": False} if paid_call else {}),
-                    )
-                else:
-                    response = await admitted_post(
-                        _http, f"{_base_url(config)}{endpoint}",
-                        headers=_headers(config, event_id),
-                        json=payload,
-                    )
-                data = {}
-            if response is not None and response.status_code >= 400:
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if paid_call and exc.response.status_code >= 500:
-                from novel_to_comic.server.credits import retain_ambiguous_job
-                retain_ambiguous_job(current_ai_request_context().job_id)
-            gateway_error = _gateway_http_error(
-                exc.response,
-                feature=feature,
-                model=model,
-                endpoint=endpoint,
-            )
-            logger.error(
-                "AI gateway rejected request feature=%s model=%s event_id=%s status=%s error=%s",
-                feature,
-                model,
-                event_id,
-                exc.response.status_code,
-                gateway_error,
-            )
-            raise gateway_error from exc
-        except _TRANSPORT_ERRORS as exc:
-            if paid_call and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
-                from novel_to_comic.server.credits import retain_ambiguous_job
-                retain_ambiguous_job(current_ai_request_context().job_id)
-            raise _gateway_transport_error(
-                exc,
-                feature=feature,
-                model=model,
-                endpoint=endpoint,
-            ) from exc
-        if route is None and not streaming:
-            data = response.json()
-        refusal = _refusal_reason(data)
-        if refusal:
-            raise _text_refusal_error(
-                data, reason=refusal, model=model, feature=feature,
-                event_id=event_id, response=response,
-            )
-        choice = (data.get("choices") or [{}])[0]
-        if data.get("error") is not None or str(choice.get("finish_reason") or "").lower() == "error":
-            raise _text_response_error(data, model=model, feature=feature,
-                                       event_id=event_id, response=response)
-        text = (choice.get("message") or {}).get("content")
-        if not text:
-            # Output-cap exhaustion is not transient: another identical request
-            # cannot be assumed to help. Refusals were already handled above.
-            empty = str(choice.get("finish_reason") or "").lower() in {"", "stop"}
-            raise _text_response_error(data, model=model, feature=feature,
-                                       event_id=event_id, response=response, empty=empty)
-        usage = (
-            _codex_text_usage(event_id, model, route, data.get("usage") or {})
-            if route is not None else _extract_usage(data, event_id, model, operation, response.headers)
-        )
-        if route is not None and route.runtime == "claude":
-            metadata["api_equivalent_cost_usd"] = _api_equivalent_cost(route.reasoning_model, usage)
-        if (
-            route is None
-            and not usage.input_tokens
-            and not usage.output_tokens
-            and usage.cost_source != "mock"
-        ):
-            usage = estimate_text_usage(
-                provider=usage.provider,
-                model=model,
-                system_prompt=effective_system,
-                user_content=user_content,
-                output_text=text,
-                call_id=event_id,
-            )
-    except asyncio.CancelledError as exc:
-        if paid_call and provider_submission_started and not cancelled_before_submission(exc):
-            from novel_to_comic.server.credits import retain_ambiguous_job
-            retain_ambiguous_job(current_ai_request_context().job_id)
-        if route is not None:
-            metadata["codex_runtime"] = getattr(exc, "metadata", {})
-        # Shielded: the task must not return before billing persistence
-        # completes, even if a second cancellation arrives mid-write. The
-        # success write lives outside this catcher, so a late cancel can
-        # never overwrite a completed success with a cancelled status.
-        await _finalize_event_shielded(
-            event_id=event_id,
-            status="cancelled",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            error=exc,
-            usage=_codex_error_usage(event_id, model, route, exc) if route else None,
-            error_response=response,
-            config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-
-            started_at=started_at,
-        )
-        raise
-    except AIRefusalError as exc:
-        # `data` is the collapsed stream body — a streamed response has no
-        # buffered content to re-parse here.
-        logger.warning("AI text refusal diagnostics=%s", exc.diagnostics)
-        usage = (
-            _codex_error_usage(event_id, model, route, exc)
-            if route else (_extract_usage(data, event_id, model, operation) if data else None)
-        )
-        await _finalize_event_shielded(
-            event_id=event_id,
-            status="refused",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            response_data=data,
-            error=exc,
-            error_response=response,
-            config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-
-            started_at=started_at,
-        )
-        raise
-    except Exception as exc:
-        usage = _codex_error_usage(event_id, model, route, exc) if route else None
-        if isinstance(exc, AdmissionRejected):
-            provider_submission_started = False
-        if route is None and data.get("usage"):
-            usage = _extract_usage(data, event_id, model, operation,
-                                   response.headers if response is not None else None)
-        if route is not None:
-            metadata["codex_runtime"] = getattr(exc, "metadata", None) or metadata.get("codex_runtime", {})
-            if data.get("usage"):
-                usage = _codex_text_usage(event_id, model, route, data["usage"])
-        if usage is None and route is None and config.ai_bill_failed_requests == "estimate_all" and response is not None:
-            usage = estimate_text_usage(
-                provider="litellm",
-                model=model,
-                system_prompt=effective_system,
-                user_content=user_content,
-                output_text="",
-                call_id=event_id,
-            )
-        if (paid_call and provider_submission_started and usage is None
-                and isinstance(exc, AITransportError)
-                and exc.phase in {"provider_response", "empty_response", "ambiguous_submission"}):
-            from novel_to_comic.server.credits import retain_ambiguous_job
-            retain_ambiguous_job(current_ai_request_context().job_id)
-        if isinstance(exc, AIEmptyResponseError):
-            exc.usage = usage
-        await _finalize_event_shielded(
-            event_id=event_id,
-            status="failed",
-            feature=feature,
-            model_alias=model,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            usage=usage,
-            response_data=data,
-            error=exc,
-            error_response=response,
-            config=config,
-            operation=operation,
-            metadata=metadata,
-            estimated_cost_usd=estimated_cost_usd,
-
-            started_at=started_at,
-        )
-        raise
-    if probe is not None and probe.input_messages is not None:
-        probe.output_text = text
-    # The success write runs outside the cancellation catcher: it is shielded,
-    # so a cancel landing mid-write waits it out, then propagates without a
-    # second terminal write overwriting the succeeded status.
-    await _finalize_event_shielded(
-        event_id=event_id,
-        status="succeeded",
-        feature=feature,
-        model_alias=model,
-        latency_ms=int((time.perf_counter() - started) * 1000),
-        usage=usage,
-        response_data=data,
-        config=config,
-        operation=operation,
-        metadata=metadata,
-        estimated_cost_usd=estimated_cost_usd,
-
-
-        started_at=started_at,
-    )
-    return {
-        "text": text,
-        "usage": usage,
-        "finish_reason": choice.get("finish_reason"),
-        "stream": data.get("_canary_stream") or {},
-    }
 
 
 async def generate_wire_image(

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from novel_to_comic.server.page_admission import enqueue_complete_page_draw
+from novel_to_comic.server.draw_submission import enqueue_complete_page_draw
 
 from .plan_detail_support import with_reservations
 from .style_reference_support import write_style_proof
@@ -37,10 +37,12 @@ from novel_to_comic.models.page import (
     LetteringReservation,
     PageContent,
 )
-from novel_to_comic.page_drawing import ApprovedReferenceFile, analyze_complete_page, GoogleVertexCompletePageTransport, VertexCompletePageAdapter, compile_page_generation_request, draw_complete_page, estimate_draw_api_cost, ensure_current_page_edition, current_page_capability_profile, fal_sunburst_page_capability_profile, production_page_capability_profile, select_book_edition
-from novel_to_comic.server.routers.pages import _aggregated_correction_retry, _generation_retry
+from novel_to_comic.page_drawing import ApprovedReferenceFile, analyze_complete_page, GoogleVertexCompletePageTransport, VertexCompletePageAdapter, compile_page_generation_request, estimate_draw_api_cost, ensure_current_page_edition, current_page_capability_profile, fal_sunburst_page_capability_profile, production_page_capability_profile, select_book_edition
+from novel_to_comic.server.draw_submission import correction_retry as _aggregated_correction_retry
+from novel_to_comic.server.draw_submission import generation_retry as _generation_retry
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
+from .page_draw_support import execute_draw
 
 
 
@@ -546,7 +548,7 @@ def test_failed_request_gets_its_own_revision_before_render_retry(
     artifacts.write_request(compiled.request, request_revision=1)
 
     asyncio.run(
-        draw_complete_page(
+        execute_draw(
             compiled,
             adapter=_vertex_adapter(
                 _RecordingTransport(_provider_result())
@@ -720,7 +722,7 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
     artifacts = TargetArtifacts(tmp_path / "project")
 
     result = asyncio.run(
-        draw_complete_page(
+        execute_draw(
             compiled,
             adapter=adapter,
             artifacts=artifacts,
@@ -750,13 +752,13 @@ def test_a_fresh_redraw_of_a_drawn_page_is_a_later_render_without_a_parent(tmp_p
     # A page re-planned (or redrawn for new references) after it was drawn is
     # drawn fresh: no correction, no edit parent. The paid image must be kept.
     artifacts = TargetArtifacts(tmp_path / "project")
-    first = asyncio.run(draw_complete_page(
+    first = asyncio.run(execute_draw(
         _compile(tmp_path), adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=_page(),
     ))
     replanned = _page(revision=3, visual_intent="Ward drops the idol.")
 
-    redrawn = asyncio.run(draw_complete_page(
+    redrawn = asyncio.run(execute_draw(
         _compile(tmp_path, page=replanned), adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=replanned,
     ))
@@ -803,7 +805,7 @@ def _enqueue_draw(*args, **kwargs):
     app = args[0]
     job, created = asyncio.run(enqueue_complete_page_draw(*args, **kwargs))
     async def execute():
-        with patch("novel_to_comic.page_drawing.complete_page_adapter", return_value=kwargs["adapter"]), \
+        with patch("novel_to_comic.server.draw_submission.complete_page_adapter", return_value=kwargs["adapter"]), \
              patch("novel_to_comic.lettering.page_read.page_read_adapter", return_value=kwargs.get("ocr")):
             return await execute_command(app, job)
     job.runner = execute
@@ -1137,7 +1139,7 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
     artifacts = TargetArtifacts(tmp_path / "project")
     page = _page()
     initial = asyncio.run(
-        draw_complete_page(
+        execute_draw(
             _compile(tmp_path),
             adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
@@ -1147,7 +1149,7 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
     assert initial.render.revision == 1
 
     correction = PageRenderCorrection(
-        issue_ids=("issue-hand",),
+        issue_ids=(),
         page_number=7,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
@@ -1155,9 +1157,10 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
         parent_render_image_sha256=hashlib.sha256(b"complete-page-png").hexdigest(),
         mode="instructed",
         instruction="Correct the hand.",
+        note="Correct the hand.",
     )
     corrected = asyncio.run(
-        draw_complete_page(
+        execute_draw(
             compile_page_generation_request(
                 page,
                 _edition(),
@@ -1250,7 +1253,7 @@ def test_explicit_draw_analysis_records_advisory_lettering_issues(
             )
 
     asyncio.run(
-        draw_complete_page(
+        execute_draw(
             _compile(tmp_path),
             adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
@@ -1272,7 +1275,7 @@ def test_explicit_draw_analysis_records_advisory_lettering_issues(
 def test_a_stale_compiled_request_cannot_be_drawn(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="stale"):
         asyncio.run(
-            draw_complete_page(
+            execute_draw(
                 _compile(tmp_path),
                 adapter=_vertex_adapter(
                     _RecordingTransport(_provider_result())
@@ -1293,7 +1296,7 @@ def test_a_failed_read_back_leaves_the_paid_render_recorded(tmp_path: Path) -> N
             raise RuntimeError("gateway rejected the vision request")
 
     asyncio.run(
-        draw_complete_page(
+        execute_draw(
             _compile(tmp_path),
             adapter=_vertex_adapter(
                 _RecordingTransport(_provider_result())
@@ -1334,12 +1337,12 @@ def test_an_existing_render_can_be_analyzed_without_redrawing_it(
             )
 
     provenance = asyncio.run(
-        draw_complete_page(
+        execute_draw(
             _compile(tmp_path),
             adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=page,
-            defer_completion=True,
+            settle=False,
         )
     )
     assert not artifacts.analysis_path(7, 1).exists()
@@ -1393,7 +1396,7 @@ def test_visual_review_uses_exact_references_and_reuses_saved_result(tmp_path):
 
     compiled = _compile(tmp_path)
     artifacts = TargetArtifacts(tmp_path)
-    provenance = asyncio.run(draw_complete_page(
+    provenance = asyncio.run(execute_draw(
         compiled, adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=_page(),
     ))
@@ -1453,15 +1456,15 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
     files = _reference_files(tmp_path)
     artifacts.write_page(page)
     artifacts.write_book_edition(_edition())
-    asyncio.run(draw_complete_page(_compile(tmp_path, files=files),
+    asyncio.run(execute_draw(_compile(tmp_path, files=files),
         adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page))
 
     async def admitted(**kwargs):
         return await kwargs['work']()
 
-    with patch('novel_to_comic.stages.s5_plan.approved_visual_inventory', return_value=_inventory()), \
-         patch('novel_to_comic.stages.s5_plan.approved_reference_files', return_value=files), \
+    with patch('novel_to_comic.page_draw_preparation.approved_visual_inventory', return_value=_inventory()), \
+         patch('novel_to_comic.page_draw_preparation.approved_reference_files', return_value=files), \
          patch('novel_to_comic.server.credited_job.run_credited_page_check', side_effect=admitted), \
          patch('novel_to_comic.clients.text.generate_json', new_callable=AsyncMock,
                return_value=ApiResult(value={'findings': [], 'uncertain': []})) as generate:
@@ -1501,8 +1504,8 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
-    with patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
-         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files), \
+    with patch("novel_to_comic.page_draw_preparation.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.page_draw_preparation.approved_reference_files", return_value=files), \
          patch("novel_to_comic.server.credited_job.reserve_credits") as reserve:
         client = TestClient(app)
         response = client.get("/pages/7/generate/estimate?depiction=less_graphic")
@@ -1530,7 +1533,7 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     files = _reference_files(tmp_path)
     artifacts.write_page(page)
     artifacts.write_book_edition(_edition())
-    asyncio.run(draw_complete_page(
+    asyncio.run(execute_draw(
         _compile(tmp_path, files=files),
         adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page,
@@ -1539,8 +1542,8 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
     with patch("novel_to_comic.server.credited_job.reserve_credits") as reserve, \
-         patch("novel_to_comic.stages.s5_plan.approved_visual_inventory", return_value=_inventory()), \
-         patch("novel_to_comic.stages.s5_plan.approved_reference_files", return_value=files):
+         patch("novel_to_comic.page_draw_preparation.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.page_draw_preparation.approved_reference_files", return_value=files):
         client = TestClient(app)
         for check in ("analyze", "visual-review"):
             response = client.get(f"/pages/7/{check}/estimate")
@@ -1571,7 +1574,7 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     files = _reference_files(tmp_path)
     for page in [first, *remaining]:
         artifacts.write_page(page)
-    asyncio.run(draw_complete_page(
+    asyncio.run(execute_draw(
         _compile(tmp_path, files=files),
         adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=first,
@@ -1584,9 +1587,9 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     # This fixture isolates page holds from the separately quoted first cover.
     with patch("novel_to_comic.server.cover_operations.needs_initial_project_cover", return_value=False), \
          patch.object(TargetArtifacts, "read_plan", return_value=SimpleNamespace(pages=[first, *remaining])), \
-         patch("novel_to_comic.server.page_operations.approved_visual_inventory", return_value=_inventory()), \
-         patch("novel_to_comic.server.page_operations.approved_reference_files", return_value=files):
-        with patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
+         patch("novel_to_comic.page_draw_preparation.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.page_draw_preparation.approved_reference_files", return_value=files):
+        with patch("novel_to_comic.page_draw_preparation.approved_visual_inventory", return_value=_inventory()), patch("novel_to_comic.page_draw_preparation.approved_reference_files", return_value=files):
             single = TestClient(app).get("/pages/8/generate/estimate")
         client = TestClient(app)
         batch = client.get("/pages/generate/estimate")
@@ -1611,9 +1614,9 @@ def test_interrupted_paid_result_publication_recovers_without_resubmission(
         raise OSError("publication interrupted")
     monkeypatch.setattr(artifacts, publication_step, crash)
     with pytest.raises(OSError, match="publication interrupted"):
-        asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+        asyncio.run(execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
     monkeypatch.setattr(artifacts, publication_step, original)
-    from novel_to_comic.server.routers.pages import _generation_retry
+    from novel_to_comic.server.draw_submission import generation_retry as _generation_retry
 
     # Exercise the route's retry decision, not an artificial replay of the
     # original in-memory compiled object after publication has failed.
@@ -1628,7 +1631,7 @@ def test_interrupted_paid_result_publication_recovers_without_resubmission(
             raise asyncio.CancelledError("read-back interrupted after publication")
 
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(draw_complete_page(
+        asyncio.run(execute_draw(
             compiled, adapter=adapter, artifacts=artifacts, page=_page(),
             ocr=UnavailableOCR(),
         ))
@@ -1639,7 +1642,7 @@ def test_interrupted_paid_result_publication_recovers_without_resubmission(
         retry=_generation_retry(artifacts, 7),
     )
     recovered = asyncio.run(
-        draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page())
+        execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page())
     )
     assert len(transport.submitted) == 1
     assert artifacts.read_render(7, 1) == transport.result.image_bytes
@@ -1652,7 +1655,7 @@ def test_legacy_orphan_image_blocks_before_paid_submission(tmp_path):
     artifacts.write_render(page_number=7, render_revision=1, image=b"valuable existing artwork")
     transport = _RecordingTransport(_provider_result())
     with pytest.raises(ValueError, match="Interrupted page persistence"):
-        asyncio.run(draw_complete_page(
+        asyncio.run(execute_draw(
             _compile(tmp_path), adapter=_vertex_adapter(transport),
             artifacts=artifacts, page=_page(),
         ))
@@ -1665,7 +1668,7 @@ def test_explicit_occupied_revision_is_rejected_before_paid_submission(tmp_path)
     transport = _RecordingTransport(_provider_result())
     adapter = _vertex_adapter(transport)
     compiled = _compile(tmp_path)
-    asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
+    asyncio.run(execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
     compiled = compile_page_generation_request(
         _page(), _edition(), _inventory(), _reference_files(tmp_path),
         retry=RetryProvenance(
@@ -1673,7 +1676,7 @@ def test_explicit_occupied_revision_is_rejected_before_paid_submission(tmp_path)
         ),
     )
     with pytest.raises(ValueError, match="occupied"):
-        asyncio.run(draw_complete_page(
+        asyncio.run(execute_draw(
             compiled, adapter=adapter, artifacts=artifacts, page=_page(), render_revision=1,
         ))
     assert len(transport.submitted) == 1
@@ -1783,7 +1786,7 @@ def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(t
         retry=RetryProvenance(attempt=1), depiction="less_graphic",
     )
     artifacts = TargetArtifacts(tmp_path / "project")
-    rendered = asyncio.run(draw_complete_page(
+    rendered = asyncio.run(execute_draw(
         producing, adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page,
     ))
@@ -1806,7 +1809,7 @@ def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(t
 
 def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
     from tests.test_page_corrections import _adaptation, _page as correction_page, _source
-    from novel_to_comic.page_drawing import correct_complete_page, prepare_page_correction
+    from novel_to_comic.page_drawing import prepare_page_correction
     from novel_to_comic.page_visual_review import visual_review_prompt
 
     artifacts = TargetArtifacts(tmp_path / "project")
@@ -1823,7 +1826,7 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
         depiction="less_graphic",
     )
     adapter = _vertex_adapter(_RecordingTransport(_provider_result()))
-    original = asyncio.run(draw_complete_page(
+    original = asyncio.run(execute_draw(
         producing, adapter=adapter, artifacts=artifacts, page=page,
     ))
     prepared = prepare_page_correction(
@@ -1834,7 +1837,7 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
     assert producing.request.prompt in prepared.correction.retained_instructions
     assert prepared.compiled.edit_source_bytes == artifacts.read_render(page.page_number, 1)
     assert not artifacts.issues_path(page.page_number).exists()
-    corrected = asyncio.run(correct_complete_page(
+    corrected = asyncio.run(execute_draw(
         prepared.compiled, issue=None, adapter=adapter, artifacts=artifacts, page=page,
     ))
     assert artifacts.resumable_generation_request(page.page_number) is None
@@ -1898,8 +1901,7 @@ def reviewed_story_precondition(monkeypatch):
     # This suite tests rendering/credit contracts with deliberately partial
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
-    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
-    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.draw_submission.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
 
 

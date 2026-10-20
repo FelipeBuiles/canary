@@ -1,12 +1,13 @@
+import { useGenerationTracking } from "../../hooks/useGenerationTracking";
+import { isGenerationActive, isGenerationTerminal } from "../../lib/generationTracking";
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { useCallback, useEffect, useId, useRef, startTransition, useState } from "react";
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, isInsufficientCreditsError } from "../../api/client";
 import { getStoredLetteringLanguages, getLetteringTranslationEstimate, switchStoredLetteringLocale, translateProjectLettering, type StoredLetteringLanguage, type LetteringTranslationEstimate, type LetteringTranslationRequest } from "../../api/lettering";
-import { useCreditBalance, useGenerationJobs } from "../../api/queries";
+import { useCreditBalance } from "../../api/queries";
 import type { GenerationJob } from "../../types/api";
 import { LANGUAGES, useI18n, type LanguageCode } from "../../i18n";
-import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { ConfirmDrawer } from "../composites/ConfirmDrawer";
 import { Button } from "../ui/Button";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -38,11 +39,11 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
   const [confirmation, setConfirmation] = useState<LetteringTranslationEstimate | null>(null);
   const [refresh, setRefresh] = useState<{ id: string; status: "pending" | "complete" | "failed" } | null>(null);
   const observedTerminal = useRef<string | null>(null);
-  const jobs = useGenerationJobs(project, [], true);
+  const jobs = useGenerationTracking(project);
   const balance = useCreditBalance();
   const mutation = useMutation({
     mutationKey: ["lettering-translation", project],
-    mutationFn: (request: LetteringTranslationRequest) => translateProjectLettering(project, request),
+    mutationFn: (request: LetteringTranslationRequest) => jobs.start({ kind: "lettering_translation" }, () => translateProjectLettering(project, request), { actionLabel: t("Translate project") }),
     retry: false,
     onSettled: () => {
       void invalidateProject(qc, project, "generation-jobs");
@@ -50,7 +51,6 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       void qc.invalidateQueries({ queryKey: ["credits"] });
     },
     onError: (error) => {
-      maybeShowInsufficientCredits(error, { actionLabel: t("Translate project") });
       if (!isUnknownSubmission(error)) {
         void invalidateProject(qc, project, "lettering-translation-estimate");
       }
@@ -69,12 +69,8 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
     }),
   });
   const submission = submissions.at(-1);
-  let latest = submission?.data?.job ?? null;
-  for (const job of jobs.data?.jobs ?? []) {
-    if (job.kind !== "lettering_translation") continue;
-    if (!latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at)) latest = job;
-  }
-  const active = latest?.status === "queued" || latest?.status === "running";
+  const latest = jobs.status({ kind: "lettering_translation" }, submission?.data?.job);
+  const active = isGenerationActive(latest);
   const submissionIsLatest = !!submission && (!latest || submission.submittedAt > Date.parse(latest.queued_at));
   const submitting = mutation.isPending || (submissionIsLatest && submission?.status === "pending");
   const submissionError = submissionIsLatest && submission?.status === "error" ? submission.error : null;
@@ -131,7 +127,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
     }
   }, [onApplied, project, qc]);
   useEffect(() => {
-    if (!latest || (latest.status !== "complete" && latest.status !== "failed") || observedTerminal.current === latest.id) return;
+    if (!latest || !isGenerationTerminal(latest) || observedTerminal.current === latest.id) return;
     observedTerminal.current = latest.id;
     startTransition(() => { void refreshProject(latest); });
   }, [latest, refreshProject]);

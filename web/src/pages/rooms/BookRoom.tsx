@@ -13,8 +13,8 @@ import {
   useRunFinishPreflight,
   useStoryBible,
 } from "../../api/queries";
-import { pageCompositePreviewUrl } from "../../api/lettering";
-import { getPageReplanEstimate, pageRenderPreviewUrl, replanPage } from "../../api/pages";
+import { pageDisplayImage } from "../../lib/pageState";
+import { getPageReplanEstimate, replanPage } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
 import { CreditHistoryLedger } from "../../components/credits/CreditHistoryLedger";
 import { CreditSpendSummary } from "../../components/credits/CreditSpendSummary";
@@ -179,7 +179,7 @@ export function BookRoom() {
         {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[11rem] overflow-hidden @min-[40rem]:max-w-[15rem] bg-surface-container text-ink-black shadow-[6px_6px_0_0_var(--color-narrator-gold)] transition-transform hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold motion-reduce:transition-none">
           {status?.has_cover
             ? <img src={`/api${projectPath(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
-            : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={(bookPages[0].hybrid ? pageCompositePreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader", bookPages[0].letteringRevision) : pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader"))} alt={t("First page of the book")} />}
+            : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageDisplayImage(id, bookPages[0])} alt={t("First page of the book")} />}
         </button>}
         <div className="min-w-0">
           <h2 className="text-balance break-words font-display text-3xl font-black leading-tight tracking-[-0.03em] @min-[56rem]:text-5xl">{title}</h2>

@@ -3,48 +3,14 @@
 from __future__ import annotations
 import asyncio
 from fastapi import Request
-from novel_to_comic.models.draw import RetryProvenance
-from novel_to_comic.page_drawing import (
-    complete_page_adapter,
-    initial_page_profile,
-    select_book_edition,
-    compile_page_generation_request,
-    ensure_current_page_edition,
-)
-from novel_to_comic.narrative_review import require_draw_narrative_reviews
+from novel_to_comic.page_draw_preparation import resolve_draw_edition
 from novel_to_comic.lettering.page_read import page_read_adapter
-from novel_to_comic.stages.s5_plan import (
-    approved_reference_files,
-    approved_visual_inventory,
-)
 from novel_to_comic.state import StageStatus, complete_stage, load_state, save_state
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
-from novel_to_comic.codex_dev import classify_operations
-from .codex_admission import draw_operations
 from .deps import event_key, project_key
-from .page_admission import enqueue_complete_page_draw
+from .draw_submission import enqueue_complete_page_draw, prepare_undrawn_pages, require_batch_not_busy
 
 
-def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvenance:
-    """Resume an incomplete durable paid result before allocating a retry."""
-    resumable = target.resumable_generation_request(page_number)
-    if resumable is not None and resumable.correction is None:
-        return resumable.retry
-
-    prior_requests = [
-        target.read_request(page_number, revision)
-        for revision in target.request_revisions(page_number)
-    ]
-    prior_attempts = [
-        request for request in prior_requests if request.correction is None
-    ]
-    if not prior_attempts:
-        return RetryProvenance(attempt=1)
-    prior = max(prior_attempts, key=lambda request: request.retry.attempt)
-    return RetryProvenance(
-        attempt=prior.retry.attempt + 1,
-        retries_request_sha256=prior.request_sha256,
-    )
 
 
 def _sync_draw_progress(project_dir, app=None) -> None:
@@ -195,50 +161,6 @@ def _draw_success_callback(
     return callback
 
 
-def prepare_undrawn_pages(
-    *, project_dir, config, rerun: bool = False, pages: frozenset[int] | None = None
-):
-    """Preflight every selected page without writing an edition or placing holds.
-
-    ``pages`` limits the batch to an explicit set (out-of-date drawn pages),
-    drawn or not.
-    """
-    classify_operations(draw_operations(config))
-    target = TargetArtifacts(project_dir)
-    require_draw_narrative_reviews(target)
-    edition = (
-        ensure_current_page_edition(
-            target, target.read_book_edition(), config, persist=False
-        )
-        if target.book_edition_path.exists()
-        else select_book_edition(
-            edition_id="book-edition-001",
-            profile=initial_page_profile(project_dir, config),
-        )
-    )
-    inventory = approved_visual_inventory(project_dir)
-    reference_files = approved_reference_files(project_dir)
-    adapter = complete_page_adapter(config, edition.capability_profile)
-    prepared = []
-    for selected in target.read_plan().pages:
-        page_number = selected.page_number
-        if pages is not None:
-            if page_number not in pages:
-                continue
-        elif target.provenance_revisions(page_number) and not rerun:
-            continue
-        page = target.read_page(page_number)
-        compiled = compile_page_generation_request(
-            page,
-            edition,
-            inventory,
-            reference_files,
-            retry=_generation_retry(target, page_number),
-            style_template=config.style_template,
-        )
-        adapter.prepare(compiled)
-        prepared.append((page_number, page, compiled))
-    return target, adapter, prepared
 
 
 async def enqueue_all_undrawn_pages(
@@ -259,11 +181,12 @@ async def enqueue_all_undrawn_pages(
         rerun=rerun,
         pages=pages,
     )
+    pkey = project_key(user_id, project_id)
+    require_batch_not_busy(request.app, project_name=pkey, project_dir=project_dir, prepared=prepared)
     # Estimation can select an ephemeral first edition; submission requires
     # Draw initialization to have durably pinned it first.
-    ensure_current_page_edition(target, target.read_book_edition(), config)
+    resolve_draw_edition(target, config, persist=True)
     # No reservation or publication occurs until the entire batch is prepared.
-    pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
     jobs = []
 

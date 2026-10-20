@@ -8,6 +8,8 @@ because LiteLLM 1.101 drops reasoning_effort when output_config is present.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -166,8 +168,53 @@ def reasoning_stage(feature: str) -> str | None:
     return owner if owner in TEXT_REASONING_STAGES else None
 
 
+@dataclass(frozen=True)
+class TextModelJob:
+    """Explicit model and reasoning owner, independent of telemetry labels."""
+
+    name: str
+    model: str
+
+    @classmethod
+    def from_config(cls, config: Config, name: str) -> TextModelJob:
+        getters = {
+            "extract": config.effective_extraction_model,
+            "brief": config.effective_brief_model,
+            "prompt": config.effective_prompt_model,
+            "adapt": config.effective_adapt_model,
+            "plan": config.effective_plan_model,
+            "ocr": config.effective_page_ocr_model,
+            "visual_review": config.effective_visual_review_model,
+            "correction": config.effective_correction_model,
+        }
+        return cls(name, getters[name]())
+
+    @classmethod
+    def for_feature(cls, feature: str, model: str) -> TextModelJob:
+        """The job a stage-scoped feature label already names; never a guessed owner."""
+        owner = reasoning_stage(feature)
+        if owner is None:
+            raise ValueError(f"Feature {feature!r} names no model job; pass an explicit TextModelJob")
+        return cls(owner, model)
+
+    @contextmanager
+    def bind(self):
+        token = _bound_text_job.set(self)
+        try:
+            yield self
+        finally:
+            _bound_text_job.reset(token)
+
+
+_bound_text_job: ContextVar[TextModelJob | None] = ContextVar("text_model_job", default=None)
+
+
 def request_reasoning(config: Config, model: str, feature: str) -> str:
-    effort = config.text_reasoning_efforts.get(reasoning_stage(feature), default_reasoning(model, config.text_reasoning_effort))
+    job = _bound_text_job.get()
+    if job is not None and job.model != model:
+        raise ValueError(f"Model job {job.name} is bound to {job.model}, not {model}")
+    owner = job.name if job is not None else reasoning_stage(feature)
+    effort = config.text_reasoning_efforts.get(owner, default_reasoning(model, config.text_reasoning_effort))
     if effort not in reasoning_options(model):
         raise ValueError(f"Unsupported reasoning setting for {model}: {effort}")
     return effort

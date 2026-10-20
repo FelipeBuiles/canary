@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { seedGenerationJob } from "./generationTracking";
+import { useGenerationTracking } from "../hooks/useGenerationTracking";
+import { invalidatePageReview } from "./pageCache";
 import { accountIdentity } from "../lib/accountEpoch";
-import { getGenerationJobs } from "./pipeline";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { invalidateProject } from "./projectScope";
 import {
   getPageRenderCorrection,
   getPageVisualReview,
@@ -30,31 +30,11 @@ export type {
 };
 
 export function useSubmittedCorrectionJob(project: string, jobId: string | null) {
-  const qc = useQueryClient();
-  const result = useQuery({
-    queryKey: ["project", project, "generation-jobs", jobId ? [jobId] : []],
-    queryFn: () => getGenerationJobs(project, [jobId!]),
-    enabled: !!jobId,
-    refetchInterval: (query) => query.state.data?.jobs.some((job) => job.status === "failed" || job.status === "complete" || job.status === "cancelled") ? false : 1000,
-  });
-  const job = result.data?.jobs.find((item) => item.id === jobId);
-  const terminal = job?.status === "complete" || job?.status === "failed" || job?.status === "cancelled";
-  useEffect(() => {
-    if (terminal) invalidatePageReview(qc, project);
-  }, [qc, project, jobId, terminal]);
-  return result;
+  const tracking = useGenerationTracking(project, !!jobId);
+  const job = jobId ? tracking.status({ id: jobId }) : null;
+  return { ...tracking, data: tracking.data ? { ...tracking.data, jobs: job ? [job] : [] } : undefined };
 }
 
-function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
-  invalidateProject(qc, project, "complete-pages");
-  if (pageNumber != null) {
-    invalidateProject(qc, project, "complete-pages", pageNumber);
-    invalidateProject(qc, project, "page-visual-review", pageNumber);
-  }
-  invalidateProject(qc, project, "status");
-  invalidateProject(qc, project, "generation-jobs");
-  qc.invalidateQueries({ queryKey: ["credits", "history"] });
-}
 
 /** Explicit paid visual review. Findings persist as page issues. */
 export function useReviewPageVisuals() {
@@ -128,6 +108,7 @@ export function useSubmitCorrections() {
       pageNumber: number;
       body: PageCorrectionBody;
     }) => submitPageCorrections(project, pageNumber, body),
+    onSuccess: (data, { project }) => seedGenerationJob(qc, project, data.job),
     onSettled: (_data, _error, { project, pageNumber }) =>
       invalidatePageReview(qc, project, pageNumber),
   });

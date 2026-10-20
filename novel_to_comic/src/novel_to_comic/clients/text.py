@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from novel_to_comic.config import Config
-from novel_to_comic.text_models import TEXT_MODELS
+from novel_to_comic.text_models import TEXT_MODELS, TextModelJob
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.ai import (
     generate_structured_object,
@@ -81,3 +81,9 @@ async def generate_text(
         max_output_tokens=max_output_tokens,
         feature=feature,
     )
+
+
+async def generate_job_json(config: Config, job: TextModelJob, **request) -> ApiResult[dict]:
+    """Submit a structured request using the job's model and reasoning policy."""
+    with job.bind():
+        return await generate_json(config=config, model=job.model, **request)

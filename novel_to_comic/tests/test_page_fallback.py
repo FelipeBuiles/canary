@@ -31,6 +31,7 @@ from novel_to_comic.server import credits
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import UsageRecord
 from tests.test_complete_page_draw import _inventory, _page, _reference_files
+from .page_draw_support import execute_draw
 
 JOB = "ledger-job"
 OPENAI = "image-sunburst-openai"
@@ -157,7 +158,7 @@ def test_fallback_pages_share_parallel_page_lanes():
     from types import SimpleNamespace
     from novel_to_comic.server.generation_jobs import is_parallel_page_draw
 
-    job = SimpleNamespace(kind="complete_page_draw", command=SimpleNamespace(
+    job = SimpleNamespace(kind="complete_page_draw", status="queued", started_at=None, command=SimpleNamespace(
         operation="page_draw", arguments={"request": {"provider": "openai-fal"}}))
     assert is_parallel_page_draw(job)
 
@@ -278,7 +279,6 @@ def test_a_success_resets_the_failure_count(tmp_path):
 
 
 def test_fallback_provenance_persists_the_absorbed_attempt(tmp_path):
-    from novel_to_comic.page_drawing import draw_complete_page
 
     adapter = complete_page_adapter(Config(draw_model="image-sunburst"))
     compiled = _compiled(tmp_path)
@@ -293,7 +293,7 @@ def test_fallback_provenance_persists_the_absorbed_attempt(tmp_path):
 
     async def run():
         with ai_request_context(job_id=JOB):
-            return await draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page())
+            return await execute_draw(compiled, adapter=adapter, artifacts=artifacts, page=_page())
 
     usage = UsageRecord(provider="litellm", model="m", operation="image", image_count=1,
                         cost_usd=0.05, cost_source="provider")

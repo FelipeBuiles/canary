@@ -1,7 +1,6 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { pageCompositePreviewUrl } from "../api/lettering";
-import { pageRenderPreviewUrl } from "../api/pages";
+import { pageDisplayImage } from "../lib/pageState";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { useDialogFocus } from "../hooks/useDialogFocus";
@@ -49,9 +48,7 @@ function useRoomForSpreads() {
 }
 
 function readerPageUrl(project: string, page: ReaderPage) {
-  return page.imageUrl ?? (page.hybrid
-    ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision)
-    : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader"));
+  return page.imageUrl ?? (pageDisplayImage(project, page));
 }
 
 interface BookReaderProps {

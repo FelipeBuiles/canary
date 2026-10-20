@@ -15,7 +15,6 @@ from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
 from novel_to_comic.state import load_state
 from novel_to_comic.target_artifacts import TargetArtifacts
-from .job_commands import read_blob
 from .async_credits import ledger_call, release_unstarted_hold
 
 
@@ -83,36 +82,8 @@ async def _operate(app, job, directory, config):
     args = spec.arguments
     target = TargetArtifacts(directory)
     if spec.operation == "page_draw":
-        from novel_to_comic.page_drawing import (
-            CompiledPageGeneration, complete_page_adapter, page_draw_execution, page_visual_check,
-        )
-        from novel_to_comic.models.draw import FrozenPageGenerationRequest
-        from novel_to_comic.models.page import ComicPage
-        from novel_to_comic.models.draw import PageIssue
-        from .page_operations import _draw_success_callback
-
-        frozen = FrozenPageGenerationRequest.model_validate(args["request"])
-        page = ComicPage.model_validate(args["page"])
-        selected = next((p for p in target.read_plan().pages if p.page_number == page.page_number), None)
-        current = target.read_page(page.page_number)
-        if (selected is None or selected.revision != current.revision
-                or selected.content_sha256 != current.content_sha256 or frozen.is_stale_for(current)):
-            raise ValueError("Queued page input changed; explicitly prepare a new draw")
-        compiled = CompiledPageGeneration(frozen,
-            tuple(read_blob(directory, digest) for digest in args["references"]),
-            read_blob(directory, args.get("edit_source")))
-        from novel_to_comic.lettering.page_read import page_read_adapter
-        ocr = page_read_adapter(config, target, page) if args.get("ocr") else None
-        work, settled = page_draw_execution(
-            project_dir=directory, compiled=compiled, adapter=complete_page_adapter(config, request=frozen),
-            artifacts=target, page=page, ocr=ocr,
-            visual_review=page_visual_check(config, directory, target, page) if ocr is not None else None,
-            request_revision=args.get("request_revision"), render_revision=args.get("render_revision"),
-            parent_render_revision=args.get("parent_render_revision"),
-            issue=PageIssue.model_validate(args["issue"]) if args.get("issue") else None,
-            on_success=_draw_success_callback(SimpleNamespace(app=app), pkey=job.project_name, project_dir=directory),
-        )
-        return await work(), settled
+        from .draw_submission import execute_page_draw
+        return await execute_page_draw(app, job, directory, config)
     if spec.operation == "cover":
         from .cover_operations import _generate_project_cover
         return await _generate_project_cover(config, directory, spec.user_id, spec.project_id), None

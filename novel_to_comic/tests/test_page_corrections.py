@@ -1,6 +1,7 @@
 """Explicit page-correction requests: editable changes, notes, annotations, context."""
 
 from __future__ import annotations
+from novel_to_comic.server import draw_submission
 
 from .plan_detail_support import with_reservations
 
@@ -1162,7 +1163,7 @@ def test_validated_saved_review_matches_current_inputs_only(tmp_path: Path) -> N
 
 
 def test_render_correction_summary_projects_exact_submitted_text(tmp_path: Path) -> None:
-    from novel_to_comic.server.routers.pages import _render_correction_summary
+    from novel_to_comic.server.page_draw_views import render_correction_summary as _render_correction_summary
 
     artifacts, page, render = _setup(tmp_path, issues=(_issue("issue-dark"),))
     prepared = _prepare(
@@ -1249,7 +1250,7 @@ def test_finding_links_mark_missing_issues_unavailable(tmp_path: Path) -> None:
 
 
 def test_reference_entries_fall_back_without_approved_bytes(tmp_path: Path) -> None:
-    from novel_to_comic.server.routers.pages import _reference_entries
+    from novel_to_comic.server.page_draw_views import reference_entries as _reference_entries
 
     entries = _reference_entries(
         tmp_path / "project",
@@ -1262,7 +1263,7 @@ def test_reference_entries_fall_back_without_approved_bytes(tmp_path: Path) -> N
 
 def test_reference_entries_show_the_style_proof_image_not_its_instruction(tmp_path: Path, monkeypatch) -> None:
     from novel_to_comic import style_reference
-    from novel_to_comic.server.routers.pages import _reference_entries
+    from novel_to_comic.server.page_draw_views import reference_entries as _reference_entries
 
     project = tmp_path / "project"
     proof = project / "samples" / "style_2.png"
@@ -1284,7 +1285,7 @@ def test_reference_entries_show_the_style_proof_image_not_its_instruction(tmp_pa
 
 
 def test_identical_request_shares_job_but_changed_instructions_are_busy(tmp_path: Path) -> None:
-    from novel_to_comic.server.routers.pages import _select_active_correction_job
+    from novel_to_comic.server.draw_submission import select_active_draw as _select_active_correction_job
 
     def _job(sha: str, page: int = 1, status: str = "queued"):
         return SimpleNamespace(
@@ -1414,7 +1415,7 @@ def test_preview_with_two_linked_issues_and_manual_change_keeps_full_identity(tm
     body order, keep the manual pending ID stable across repeats, and leave
     the stored issue history untouched.
     """
-    from novel_to_comic.server.routers.pages import _aggregated_correction_retry
+    from novel_to_comic.server.draw_submission import correction_retry as _aggregated_correction_retry
 
     artifacts, page, render = _setup(
         tmp_path,
@@ -1535,9 +1536,9 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
     from novel_to_comic.server.routers import pages
 
     artifacts, page, _render = _setup(tmp_path, issues=(_issue("issue-dark"),))
-    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args, **kwargs: _edition())
-    monkeypatch.setattr(pages, "approved_visual_inventory", lambda *args: ApprovedVisualReferenceInventory(references=()))
-    monkeypatch.setattr(pages, "approved_reference_files", lambda *args: {})
+    monkeypatch.setattr("novel_to_comic.page_draw_preparation.ensure_current_page_edition", lambda *args, **kwargs: _edition())
+    monkeypatch.setattr("novel_to_comic.page_draw_preparation.approved_visual_inventory", lambda *args: ApprovedVisualReferenceInventory(references=()))
+    monkeypatch.setattr("novel_to_comic.page_draw_preparation.approved_reference_files", lambda *args: {})
     body = pages.PageCorrectionCreate(
         changes=(_change("dark", "Darken the chamber.", issue_id="issue-dark"),),
         parent_render_revision=1, comic_page_revision=page.revision,
@@ -1545,7 +1546,7 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
     config = Config(style_template="")
     from .style_reference_support import write_style_proof
     write_style_proof(artifacts.project_dir, config.style_template)
-    prepared = pages._prepare_explicit_correction(
+    prepared = draw_submission.prepare_explicit_correction(
         target=artifacts, page_number=1, body=body, config=config,
     )
 
@@ -1569,7 +1570,7 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
             artifacts=artifacts, page=page, ocr=UnavailableOCR(),
         ))
     assert artifacts.provenance_revisions(1) == (1, 2)
-    resumed = pages._prepare_explicit_correction(
+    resumed = draw_submission.prepare_explicit_correction(
         target=artifacts, page_number=1, body=body, config=config,
     )
     result = asyncio.run(correct_complete_page(
@@ -1586,14 +1587,13 @@ def reviewed_story_precondition(monkeypatch):
     # This suite tests rendering/credit contracts with deliberately partial
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
-    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.draw_submission.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
 
 
 def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Path, monkeypatch) -> None:
     # A retained edition whose model left the catalog can no longer draw, but
     # its finished pages must stay reviewable under their own frozen profile.
-    from novel_to_comic.server.routers import pages
 
     _setup(tmp_path)
     project_dir = tmp_path / "project"
@@ -1604,7 +1604,7 @@ def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Pat
         def prepare(self, _compiled):
             raise ValueError("Frozen complete-page request does not match the selected profile")
 
-    monkeypatch.setattr(pages, "complete_page_adapter", lambda _config, *_args, **_kwargs: RetiredDrawProfile())
+    monkeypatch.setattr(draw_submission, "complete_page_adapter", lambda _config, *_args, **_kwargs: RetiredDrawProfile())
 
     assert client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review/estimate").status_code == 200
     saved = client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review")

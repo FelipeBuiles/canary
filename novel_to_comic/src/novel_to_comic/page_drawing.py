@@ -1883,7 +1883,6 @@ async def draw_complete_page(
     request_revision: int | None = None,
     render_revision: int | None = None,
     parent_render_revision: int | None = None,
-    defer_completion: bool = False,
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
 
@@ -1911,8 +1910,6 @@ async def draw_complete_page(
                 raise ValueError("saved paid render bytes do not match provenance")
             if ocr is not None:
                 await _read_back(page=page, render=saved.render, image=image, ocr=ocr, artifacts=artifacts)
-            if not defer_completion and calculate_cost_breakdown(saved.usage).source != "unknown_provider_usage":
-                artifacts.mark_generation_complete(saved)
             return saved
     occupied_images = set(artifacts.render_revisions(page.page_number))
     occupied_provenance = set(artifacts.provenance_revisions(page.page_number))
@@ -1984,8 +1981,6 @@ async def draw_complete_page(
     await asyncio.to_thread(artifacts.persist_generated_page, provenance, provider_result.image_bytes)
     if ocr is not None:
         await _read_back(page=page, render=render, image=provider_result.image_bytes, ocr=ocr, artifacts=artifacts)
-    if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
-        artifacts.mark_generation_complete(provenance)
     return provenance
 
 
@@ -2111,7 +2106,6 @@ async def correct_complete_page(
     ocr: "OCRAdapter | None" = None,
     request_revision: int | None = None,
     render_revision: int | None = None,
-    defer_completion: bool = False,
 ) -> PageGenerationProvenance:
     """Produce one complete revised page for an explicit correction set.
 
@@ -2143,7 +2137,6 @@ async def correct_complete_page(
         request_revision=request_revision,
         render_revision=render_revision,
         parent_render_revision=correction.parent_render_revision,
-        defer_completion=True,
     )
     from novel_to_comic.page_review import resolve_page_issue
 
@@ -2163,8 +2156,6 @@ async def correct_complete_page(
             artifacts, issue_id=corrected.id, page_number=page.page_number,
             resolution_revision=provenance.render.revision, verified=verified,
         )
-    if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
-        artifacts.mark_generation_complete(provenance)
     return provenance
 
 
@@ -2200,7 +2191,6 @@ def page_draw_execution(
                     request_revision=request_revision,
                     render_revision=render_revision,
                     parent_render_revision=parent_render_revision,
-                    defer_completion=True,
                 )
             else:
                 provenance = await correct_complete_page(
@@ -2212,7 +2202,6 @@ def page_draw_execution(
                     ocr=ocr,
                     request_revision=request_revision,
                     render_revision=render_revision,
-                    defer_completion=True,
                 )
         except BaseException as exc:
             from novel_to_comic.image_failure import (

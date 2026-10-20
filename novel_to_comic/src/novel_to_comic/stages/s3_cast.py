@@ -23,7 +23,7 @@ from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import (
     Character, MissingVisualAnchor, Prop, StoryBible, blank_visual_anchors,
 )
-from novel_to_comic.asset_versions import record_asset_version
+from novel_to_comic.look_assets import produce_look_asset, produce_stage_look_asset
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.workspace import series_root
 from novel_to_comic.style_reference import find_style_reference as _find_style_ref
@@ -32,7 +32,6 @@ from novel_to_comic.state_assets import (
     StateAssetGenerationSpec,
     build_character_state_spec,
     build_location_state_spec,
-    mark_dependent_states_stale,
 )
 from novel_to_comic.asset_generation import (
     CanonicalCharacterReferenceInput,
@@ -43,14 +42,12 @@ from novel_to_comic.asset_generation import (
     StyleCalibrationInput,
     asset_matches_request,
     compile_non_panel_request,
-    held_asset_failure,
     style_reference_plan,
-    submit_non_panel_request,
 )
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.cast_design import (
     CastDesignPlan, character_fingerprint, current_designs, design_notes, ensure_design, estimate_design_review,
-    read_design, review_cast, review_ready, review_status, run_cast_review,
+    read_design, review_cast, review_status,
 )
 
 console = Console()
@@ -62,14 +59,6 @@ _CAST_RENDERING_CONSISTENCY = (
     "photographically and another as animation. Identity and age differences change "
     "the subject, not the artistic treatment."
 )
-
-
-
-
-
-
-
-
 
 
 _SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
@@ -197,8 +186,6 @@ def _prop_ref_meta(
     return meta
 
 
-
-
 def _asset_style_text(config: Config, form: ReferenceForm | None = None) -> str:
     """Selected style text for a Cast asset; only figures receive the
     character proportion system (``form=None`` is a plate or prop)."""
@@ -233,18 +220,6 @@ def require_character_inputs(config: Config, project_dir: Path, char_id: str, *,
             raise ValueError("The canonical character reference is stale; run Cast before regenerating its appearance states.")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
     return RefStrategy.for_config(config).location_plate_dimensions()
 
@@ -254,23 +229,6 @@ CAST_BLOCKED_MESSAGE = (
     "explicit wording such as nudity or gore. Make a less graphic version, or reword the "
     "description; resuming Cast does not resend the same request."
 )
-
-HELD_FAILURE_GUIDANCE = (
-    "Resume Cast will not resubmit the unchanged request. Change this reference's "
-    "direction, or regenerate it from its card."
-)
-
-
-def _skip_held_failure(ctx: StageRuntime, output_path: Path, request, item_id: str, label: str) -> bool:
-    """Record a known-failing unchanged request as failed without resubmitting it."""
-    failure = held_asset_failure(output_path, request)
-    if failure is None:
-        return False
-    ctx.record_item_failed(item_id)
-    ctx.log(f"Skipped {label}: {failure.get('user_message') or 'the last attempt failed.'} "
-            f"{HELD_FAILURE_GUIDANCE}", level="error")
-    return True
-
 
 def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
     """(plate_stem, anchor, state_id) tuples with entity-scoped state paths."""
@@ -297,8 +255,6 @@ def _character_state_jobs(char: Character) -> list[tuple[str, str]]:
 
 def _cast_semaphore(config: Config) -> asyncio.Semaphore:
     return asyncio.Semaphore(config.effective_image_concurrency())
-
-
 
 
 def _character_generation_input(
@@ -461,35 +417,12 @@ async def _ensure_location_style_board(config: Config, project_dir: Path, ctx: S
     output_path = _location_style_board_path(project_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     request = _location_style_board_request(config, project_dir, proof)
-    if asset_matches_request(output_path, request):
-        ctx.record_item_done(cost=0.0)
-        ctx.log("Using existing location style board", level="dim")
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-        return output_path
-    if _skip_held_failure(ctx, output_path, request, "location_style_board", "location style board"):
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-        return None
-    ctx.log("Preparing the location style board from the selected Style proof")
-    try:
-        async with _cast_semaphore(config):
-            record_asset_version(output_path, project_dir, reason="before_regenerate")
-            submission = await submit_non_panel_request(
-                config=config, project_dir=project_dir, request=request,
-                output_path=output_path, feature="cast.location_style_board",
-                kind="location_style_board",
-            )
-        result = submission.result
-        assert result is not None
-        ctx.record_item_done(usage=result.usage)
-        return output_path
-    except Exception as error:
-        cause = error.last_attempt.exception() if hasattr(error, "last_attempt") else error
-        console.print(f"[red]Failed location style board: {cause}[/red]")
-        ctx.record_item_failed("location_style_board")
-        ctx.log(f"Failed location style board: {cause}", level="error")
-        return None
-    finally:
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+    outcome = await produce_stage_look_asset(
+        ctx=ctx, item_id="location_style_board", label="location style board",
+        config=config, project_dir=project_dir, request=request, output_path=output_path,
+        feature="cast.location_style_board", semaphore=_cast_semaphore(config),
+    )
+    return output_path if outcome and outcome.status != "held" else None
 
 
 def _location_generation_input(
@@ -673,9 +606,9 @@ async def _generate_state_asset_wire(
     """
     if request is None:
         request = _compile_state_asset_wire(config, spec, project_dir)
-    submission = await submit_non_panel_request(
+    submission = await produce_look_asset(force=True,
         config=config, project_dir=project_dir, request=request,
-        output_path=output_path, feature=feature, kind="state_asset_regen",
+        output_path=output_path, feature=feature,
     )
     return submission.result
 
@@ -707,36 +640,15 @@ async def regenerate_character_ref(
     request = _compile_cast_request(
         config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
     )
-
-    record_asset_version(output_path, project_dir, reason="before_regenerate")
     async with sem:
-        submission = await submit_non_panel_request(
+        submission = await produce_look_asset(force=True,
             config=config, project_dir=project_dir, request=request,
             output_path=output_path, feature="cast.character_ref",
-            kind="character_ref_regen",
+            refresh_review=True, on_generated=_crop_generated_sheet,
         )
     result = submission.result
     assert result is not None
-    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-    mark_dependent_states_stale(project_dir, "character", char.id)
-    return await _refresh_cast_review(config, project_dir, result)
-
-
-async def _refresh_cast_review(config: Config, project_dir: Path, result: ApiResult[Path]) -> ApiResult[Path]:
-    """Re-run the Character Check after a sheet changes, in the same job.
-
-    Its usage settles with the redraw. A failed or skipped review never fails
-    the redraw; the check stays out of date and Resume Cast runs it.
-    """
-    usage: list = []
-    try:
-        bible = read_cast_story_bible(project_dir)
-        if review_ready(config, project_dir, bible):
-            await run_cast_review(config, project_dir, bible, log=lambda _message: None, usage_sink=usage.append)
-    except Exception as exc:  # noqa: BLE001 — advisory follow-up only
-        console.print(f"[yellow]Character check after redraw skipped: {exc}[/yellow]")
-    # Settle any review call that ran, even when its answer was rejected.
-    return replace(result, additional_usage=(*result.additional_usage, *usage)) if usage else result
+    return result
 
 
 async def regenerate_character_state_ref(
@@ -770,8 +682,6 @@ async def regenerate_character_state_ref(
     style_ref = _character_style_reference(config, project_dir, approved_style_ref)
     _require_shared_character_style(config, style_ref)
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
-
-    record_asset_version(output_path, project_dir, reason="before_regenerate")
     async with sem:
         result = await _generate_state_asset_wire(
             config, spec, output_path, project_dir,
@@ -803,9 +713,9 @@ async def regenerate_prop_ref(
     )
 
     async with sem:
-        submission = await submit_non_panel_request(
+        submission = await produce_look_asset(force=True,
             config=config, project_dir=project_dir, request=request,
-            output_path=output_path, feature="cast.prop_ref", kind="prop_ref_regen",
+            output_path=output_path, feature="cast.prop_ref",
         )
     result = submission.result
     assert result is not None
@@ -846,21 +756,23 @@ async def regenerate_location_plate(
             config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config, board)
         )
         spec = None
-
-    record_asset_version(output_path, project_dir, reason="before_regenerate")
     async with sem:
-        submission = await submit_non_panel_request(
+        submission = await produce_look_asset(force=True,
             config=config, project_dir=project_dir, request=request,
             output_path=output_path,
             feature=("cast.location_state_plate" if state_id else "cast.location_plate"),
-            kind="location_plate_regen",
+            refresh_review=state_id is None,
         )
     result = submission.result
     assert result is not None
     if state_id:
         return result
-    mark_dependent_states_stale(project_dir, "location", loc.id)
-    return await _refresh_cast_review(config, project_dir, result)
+    return result
+
+
+async def _crop_generated_sheet(result):
+    await asyncio.to_thread(_crop_sheet_to_poses, result.value)
+    return result
 
 
 async def _generate_character_refs(
@@ -911,42 +823,18 @@ async def _generate_character_refs(
                 config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
             )
 
-            if asset_matches_request(output_path, request):
-                # Migrate older sheets that pre-date cropped-pose references.
-                if not (char_dir / "portrait.png").exists():
+            outcome = await produce_stage_look_asset(
+                ctx=ctx, item_id=char.id, label=f"ref sheet for {char.name}",
+                config=config, project_dir=project_dir, request=request,
+                output_path=output_path, feature="cast.character_ref", semaphore=semaphore,
+                on_generated=_crop_generated_sheet,
+            )
+            if outcome and outcome.status != "held":
+                if outcome.status == "reused" and not (char_dir / "portrait.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
                         pass
-                ctx.record_item_done(cost=0.0)
-                ctx.log(f"Using existing ref sheet for {char.name}", level="dim")
-            elif _skip_held_failure(ctx, output_path, request, char.id, f"ref sheet for {char.name}"):
-                pass
-            else:
-                try:
-                    ctx.log(f"Generating ref sheet for {char.name}")
-                    # The shared turnaround sheet provides both facial identity
-                    # and body proportions for framing-aware conditioning.
-                    # Every character uses the same shared rendering authority;
-                    # no character-specific style selection happens here.
-                    async with semaphore:
-                        record_asset_version(output_path, project_dir, reason="before_regenerate")
-                        submission = await submit_non_panel_request(
-                            config=config, project_dir=project_dir, request=request,
-                            output_path=output_path, feature="cast.character_ref",
-                            kind="character_ref",
-                        )
-                    flux_result = submission.result
-                    assert flux_result is not None
-                    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                    mark_dependent_states_stale(project_dir, "character", char.id)
-                    ctx.record_item_done(usage=flux_result.usage)
-                except Exception as e:
-                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                    console.print(f"[red]Failed ref sheet for {char.name}: {cause}[/red]")
-                    ctx.record_item_failed(char.id)
-                    ctx.log(f"Failed ref sheet for {char.name}: {cause}", level="error")
-            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             if task is not None:
                 progress.advance(task)
 
@@ -1007,34 +895,18 @@ async def _generate_character_state_refs(
             # Canonical-first scheduling guarantees the parent exists here.
             wire = _compile_state_asset_wire(config, spec, project_dir)
 
-            if asset_matches_request(output_path, wire):
-                if not (out_dir / "portrait.png").exists():
+            outcome = await produce_stage_look_asset(
+                ctx=ctx, item_id=f"{char.id}:{state_id}", label=f"{state_id} ref for {char.name}",
+                config=config, project_dir=project_dir, request=wire,
+                output_path=output_path, feature="cast.character_state_ref", semaphore=semaphore,
+                on_generated=_crop_generated_sheet,
+            )
+            if outcome and outcome.status != "held":
+                if outcome.status == "reused" and not (out_dir / "portrait.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
                     except Exception:
                         pass
-                ctx.record_item_done(cost=0.0)
-                ctx.log(f"Using existing {state_id} ref for {char.name}", level="dim")
-            elif _skip_held_failure(ctx, output_path, wire, f"{char.id}:{state_id}",
-                                    f"{state_obj.label if state_obj else state_id} ref for {char.name}"):
-                pass
-            else:
-                try:
-                    ctx.log(f"Generating {state_id} ref for {char.name}")
-                    async with semaphore:
-                        record_asset_version(output_path, project_dir, reason="before_regenerate")
-                        flux_result = await _generate_state_asset_wire(
-                            config, spec, output_path, project_dir,
-                            feature="cast.character_state_ref", request=wire,
-                        )
-                    await asyncio.to_thread(_crop_sheet_to_poses, output_path)
-                    ctx.record_item_done(usage=flux_result.usage)
-                except Exception as e:
-                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                    console.print(f"[red]Failed {state_id} ref for {char.name}: {cause}[/red]")
-                    ctx.record_item_failed(f"{char.id}:{state_id}")
-                    ctx.log(f"Failed {state_id} ref for {char.name}: {cause}", level="error")
-            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
             if task is not None:
                 progress.advance(task)
 
@@ -1094,37 +966,13 @@ async def _generate_location_plates(
                     config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config, board)
                 )
                 spec = None
-            if asset_matches_request(output_path, wire):
-                ctx.record_item_done(cost=0.0)
-                ctx.log(f"Using existing location plate for {label}", level="dim")
-            elif _skip_held_failure(ctx, output_path, wire, stem, f"location plate for {label}"):
-                pass
-            else:
-                try:
-                    ctx.log(f"Generating location plate for {label}")
-                    async with semaphore:
-                        if state_id:
-                            flux_result = await _generate_state_asset_wire(
-                                config, spec, output_path, project_dir,
-                                feature="cast.location_state_plate", request=wire,
-                            )
-                        else:
-                            submission = await submit_non_panel_request(
-                                config=config, project_dir=project_dir, request=wire,
-                                output_path=output_path, feature="cast.location_plate",
-                                kind="location_plate",
-                            )
-                            flux_result = submission.result
-                            assert flux_result is not None
-                    if state_id is None:
-                        mark_dependent_states_stale(project_dir, "location", loc.id)
-                    ctx.record_item_done(usage=flux_result.usage)
-                except Exception as e:
-                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                    console.print(f"[red]Failed plate for {label}: {cause}[/red]")
-                    ctx.record_item_failed(stem)
-                    ctx.log(f"Failed plate for {label}: {cause}", level="error")
-            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+            await produce_stage_look_asset(
+                ctx=ctx, item_id=stem, label=f"location plate for {label}",
+                config=config, project_dir=project_dir, request=wire,
+                output_path=output_path,
+                feature="cast.location_state_plate" if state_id else "cast.location_plate",
+                semaphore=semaphore,
+            )
             if task is not None:
                 progress.advance(task)
 
@@ -1167,29 +1015,11 @@ async def _generate_prop_refs(
                 config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
             )
 
-            if asset_matches_request(output_path, request):
-                ctx.record_item_done(cost=0.0)
-                ctx.log(f"Using existing prop ref for {prop.name}", level="dim")
-            elif _skip_held_failure(ctx, output_path, request, prop.id, f"prop ref for {prop.name}"):
-                pass
-            else:
-                try:
-                    ctx.log(f"Generating prop ref for {prop.name}")
-                    async with semaphore:
-                        submission = await submit_non_panel_request(
-                            config=config, project_dir=project_dir, request=request,
-                            output_path=output_path, feature="cast.prop_ref",
-                            kind="prop_ref",
-                        )
-                    flux_result = submission.result
-                    assert flux_result is not None
-                    ctx.record_item_done(usage=flux_result.usage)
-                except Exception as e:
-                    cause = e.last_attempt.exception() if hasattr(e, "last_attempt") else e
-                    console.print(f"[red]Failed prop ref for {prop.name}: {cause}[/red]")
-                    ctx.record_item_failed(prop.id)
-                    ctx.log(f"Failed prop ref for {prop.name}: {cause}", level="error")
-            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
+            await produce_stage_look_asset(
+                ctx=ctx, item_id=prop.id, label=f"prop ref for {prop.name}",
+                config=config, project_dir=project_dir, request=request,
+                output_path=output_path, feature="cast.prop_ref", semaphore=semaphore,
+            )
             if task is not None:
                 progress.advance(task)
 
@@ -1203,20 +1033,15 @@ async def _generate_prop_refs(
                 try:
                     spec = build_prop_state_spec(config, project_dir, prop, state, style_path=style_ref)
                     wire = _compile_state_asset_wire(config, spec, project_dir)
-                    if asset_matches_request(output_path, wire):
-                        ctx.record_item_done(cost=0.0)
-                    elif _skip_held_failure(ctx, output_path, wire, f"{prop.id}:{state.id}",
-                                            f"prop state {prop.name}/{state.label}"):
-                        pass
-                    else:
-                        async with semaphore:
-                            result = await _generate_state_asset_wire(config, spec, output_path, project_dir, feature="cast.prop_state_ref", request=wire)
-                        ctx.record_item_done(usage=result.usage)
+                    await produce_stage_look_asset(
+                        ctx=ctx, item_id=f"{prop.id}:{state.id}", label=f"prop state {prop.name}/{state.label}",
+                        config=config, project_dir=project_dir, request=wire,
+                        output_path=output_path, feature="cast.prop_state_ref", semaphore=semaphore,
+                    )
                 except Exception as exc:
                     ctx.record_item_failed(f"{prop.id}:{state.id}")
                     ctx.log(f"Failed prop state {prop.name}/{state.label}: {exc}", level="error")
                 ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-
 
 
 async def run(
