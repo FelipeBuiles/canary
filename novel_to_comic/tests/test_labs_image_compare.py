@@ -256,11 +256,13 @@ def test_a_failed_cell_is_recorded_and_never_retried(root, monkeypatch, target):
     ("sunburst-fal", "sunburst_fal_page_transport"),
     ("flare-openai", "complete_page_adapter"),
     ("nano-banana-2.1-vertex", "complete_page_adapter"),
+    ("sunburst-runware", "runware_page_transport"),
+    ("flare-runware", "runware_page_transport"),
 ])
 def test_page_arms_use_only_their_own_route(root, tmp_path, monkeypatch, target, factory):
     if target == "nano-banana-2.1-vertex":
         profile = page_drawing.nano_banana_21_page_capability_profile()
-    elif target == "flare-openai":
+    elif target.startswith("flare"):
         profile = openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
     else:
         profile = sunburst_fallback_page_capability_profile()
@@ -284,7 +286,8 @@ def test_page_arms_use_only_their_own_route(root, tmp_path, monkeypatch, target,
             )
 
     monkeypatch.setattr(page_drawing, factory, lambda config, profile: Transport())
-    for other in {"sunburst_openai_page_transport", "sunburst_fal_page_transport", "complete_page_adapter"} - {factory}:
+    for other in {"sunburst_openai_page_transport", "sunburst_fal_page_transport", "complete_page_adapter",
+                  "runware_page_transport"} - {factory}:
         monkeypatch.setattr(page_drawing, other, lambda *a: pytest.fail("used the other route"))
 
     _, cell = _run(root, "page:1", {"target": target, "prompt": "restructured"})
@@ -359,6 +362,93 @@ def test_flare_page_submits_its_model_quality_and_references_once(root, tmp_path
     assert [file[1][1] for file in sent[0]["files"]] == list(compiled.reference_bytes)
     assert json.loads(fields["canary_wire_request"])["controls"][0] == ["quality", "medium"]
     assert cell["cost_usd"] == pytest.approx(200 * 5e-6 + 1000 * 8e-6 + 901 * 3e-5)
+
+
+@pytest.mark.parametrize("target,alias,model", [
+    ("sunburst-runware", "image-sunburst-runware", "gpt-image-2.5-sunburst"),
+    ("flare-runware", "image-flare-runware", "openai/gpt-image-2.5-flare"),
+])
+def test_runware_asset_arms_send_the_same_request_through_the_runware_manifest(root, target, alias, model):
+    item = image_compare.AssetItem(root / "story", "new")
+    runware = image_compare.get_target(target)
+    direct = item.prepare(None, image_compare.get_target(target.replace("runware", "openai")), "production")
+    prepared = item.prepare(None, runware, "production")
+    wire = item._wire_for(runware, PROMPT, restructured=False)
+    params, files = serialize_wire_request(wire)
+
+    assert runware.provider == "Runware" and runware.funding == "api"
+    assert (wire.provider_key, wire.requested_alias, wire.configured_provider_model) == ("runware", alias, model)
+    assert prepared.prompt == direct.prompt and prepared.reference_sha256 == direct.reference_sha256
+    assert (prepared.width, prepared.height) == (direct.width, direct.height)
+    manifest = json.loads(params["canary_wire_request"])
+    assert (manifest["width"], manifest["height"]) == (1024, 1024)
+    assert manifest["controls"] == [["quality", "medium"]] and params["model"] == alias
+    assert [part[1][1] for part in files] == [b"\x89PNG new"]
+    assert prepared.estimate_usd(runware, "medium") > 0
+
+
+def test_runware_page_submits_once_and_settles_on_the_reported_cost(root, tmp_path, monkeypatch):
+    import base64
+    import io
+
+    from PIL import Image
+
+    profile = sunburst_fallback_page_capability_profile()
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    output = io.BytesIO()
+    Image.new("RGB", (1024, 1536)).save(output, format="PNG")
+    sent = []
+
+    async def post(url, **kwargs):
+        sent.append(kwargs)
+        return httpx.Response(200, request=httpx.Request("POST", url), json={
+            "model": "runware/gpt-image-2.5-sunburst",
+            "data": [{"b64_json": base64.b64encode(output.getvalue()).decode()}],
+            "provider_cost_usd": 0.05647, "provider_cost_source": "runware_cost",
+        })
+
+    monkeypatch.setattr(client, "_post_with_retry", post)
+    _, cell = _run(root, "page:1", {"target": "sunburst-runware", "prompt": "production"})
+
+    assert cell["status"] == "ok" and len(sent) == 1 and sent[0]["retry_ambiguous"] is False
+    fields = sent[0]["data"]
+    assert fields["model"] == "image-sunburst-runware" and fields["prompt"] == compiled.request.prompt
+    assert json.loads(fields["canary_wire_request"]) == {
+        "width": 1024, "height": 1536, "controls": [["quality", "medium"], ["output_format", "png"], ["n", 1]],
+    }
+    assert [file[1][1] for file in sent[0]["files"]] == list(compiled.reference_bytes)
+    assert (cell["cost_usd"], cell["cost_source"]) == (pytest.approx(0.05647), "runware_cost")
+
+
+def test_a_runware_page_rejects_a_different_upstream_model(root, tmp_path, monkeypatch):
+    import base64
+    import io
+
+    from PIL import Image
+
+    profile = sunburst_fallback_page_capability_profile()
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    output = io.BytesIO()
+    Image.new("RGB", (1024, 1536)).save(output, format="PNG")
+
+    async def post(url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("POST", url), json={
+            "model": "runware/gpt-image-2.5-flare",
+            "data": [{"b64_json": base64.b64encode(output.getvalue()).decode()}],
+        })
+
+    monkeypatch.setattr(client, "_post_with_retry", post)
+    _, cell = _run(root, "page:1", {"target": "sunburst-runware", "prompt": "production"})
+
+    assert cell["status"] == "failed" and "Runware response model" in cell["error"]
 
 
 @pytest.mark.parametrize("arms,message", [

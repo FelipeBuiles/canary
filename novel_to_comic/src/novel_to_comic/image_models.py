@@ -12,6 +12,9 @@ GATEWAY_IMAGE_QUALITY = "image-gpt-2"
 GATEWAY_IMAGE_SUNBURST = "image-sunburst"
 GATEWAY_IMAGE_SUNBURST_OPENAI = "image-sunburst-openai"
 GATEWAY_IMAGE_FLARE = "image-flare"
+#: GPT Image 2.5 through Runware (startup grant). No partial previews.
+GATEWAY_IMAGE_SUNBURST_RUNWARE = "image-sunburst-runware"
+GATEWAY_IMAGE_FLARE_RUNWARE = "image-flare-runware"
 GATEWAY_IMAGE_NANO_BANANA_21 = "image-nano-banana-2.1"
 GATEWAY_IMAGE_MUSE = "image-muse"
 GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
@@ -48,6 +51,8 @@ IMAGE_PROVIDER_VERTEX_MULTIMODAL = "vertex-multimodal"
 IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
 #: Sunburst: OpenAI first, one FAL attempt as backup (``image_route_fallback``).
 IMAGE_PROVIDER_OPENAI_FAL = "openai-fal"
+#: Runware's REST API; references go by uploaded media UUID.
+IMAGE_PROVIDER_RUNWARE = "runware"
 IMAGE_PROVIDER_UNKNOWN = "unknown"
 
 

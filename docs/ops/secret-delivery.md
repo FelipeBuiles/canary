@@ -121,7 +121,8 @@ python3 scripts/canary_secrets.py export-fly \
 
 Adjust optional names to the reconciled inventory. Include `FAL_ADMIN_KEY` when
 it is set on Fly: without it the gateway cannot look up FAL's billed cost and
-falls back to estimates. Omit `--with-adc` only
+falls back to estimates. Include `RUNWARE_API_KEY` when the Runware image
+routes are in use. Omit `--with-adc` only
 when Vertex is not configured. This copies active credentials without rotation
 or restart. The reviewed exporter source is sent in the SSH command and selects
 only the requested names from the **running supervisor's** environment

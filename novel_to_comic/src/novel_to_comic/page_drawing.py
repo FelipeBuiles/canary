@@ -36,7 +36,11 @@ from novel_to_comic.config import (
     MUSE_PAGE_ESTIMATED_COST_USD,
     Config,
 )
-from novel_to_comic.image_models import GATEWAY_IMAGE_NANO_BANANA_21
+from novel_to_comic.image_models import (
+    GATEWAY_IMAGE_FLARE_RUNWARE,
+    GATEWAY_IMAGE_NANO_BANANA_21,
+    GATEWAY_IMAGE_SUNBURST_RUNWARE,
+)
 from novel_to_comic.image_route_fallback import (
     FAL_SUNBURST_GATEWAY_MODEL,
     OPENAI_SUNBURST_GATEWAY_MODEL,
@@ -1517,7 +1521,7 @@ class GoogleVertexCompletePageTransport:
             "canary_requested_aspect": str(request.width / request.height),
             "canary_idempotency_key": request.idempotency_key,
         }
-        if self._route_provider in {"openai", "openrouter", "fal-queue"}:
+        if self._route_provider in {"openai", "openrouter", "fal-queue", "runware"}:
             # GPT Image 2.5 rejects input_fidelity, including on image edits.
             # Reference images are still sent unchanged in the multipart files.
             request_data = {
@@ -1525,7 +1529,7 @@ class GoogleVertexCompletePageTransport:
                 "size": f"{request.width}x{request.height}", "n": 1,
             }
             quality = page_image_quality(self._profile.id, self._profile.provider)
-            if self._route_provider in {"openai", "fal-queue"}:
+            if self._route_provider in {"openai", "fal-queue", "runware"}:
                 request_data.update({"quality": quality, "output_format": "png"})
                 # Both routes run through custom gateway handlers, which lose
                 # standard Images fields. Preserve dimensions and controls
@@ -1661,6 +1665,8 @@ class GoogleVertexCompletePageTransport:
                     route_model + "/edit",
                 }:
                     raise ValueError("FAL response model does not match frozen page profile")
+            if self._route_provider == "runware" and actual_provider_model.removeprefix("runware/") != route_model:
+                raise ValueError("Runware response model does not match frozen page profile")
             if self._route_provider == "openrouter" and actual_provider_model.removeprefix("openrouter/") != route_model:
                 raise ValueError("OpenRouter response model does not match frozen page profile")
             usage = usage.model_copy(
@@ -1796,6 +1802,20 @@ def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) 
     return _PageRouteTransport(
         config, profile, provider="fal-queue",
         gateway_model=FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
+    )
+
+
+def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+    """The profile's GPT Image 2.5 model through Runware alone, with no fallback."""
+    gateway_models = {
+        "gpt-image-2.5-sunburst": GATEWAY_IMAGE_SUNBURST_RUNWARE,
+        "gpt-image-2.5-flare": GATEWAY_IMAGE_FLARE_RUNWARE,
+    }
+    if profile.model not in gateway_models:
+        raise ValueError(f"Runware has no route for {profile.model}")
+    return _PageRouteTransport(
+        config, profile, provider="runware",
+        gateway_model=gateway_models[profile.model], provider_model=profile.model,
     )
 
 

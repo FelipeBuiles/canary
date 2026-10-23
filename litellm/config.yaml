@@ -345,6 +345,16 @@ model_list:
   litellm_params:
     model: openai-stream/gpt-image-2.5-flare
     api_key: os.environ/OPENAI_API_KEY
+# GPT Image 2.5 through Runware (startup grant). References go by uploaded
+# media UUID; Runware reports each task's charged cost. No partial previews.
+- model_name: image-sunburst-runware
+  litellm_params:
+    model: runware/gpt-image-2.5-sunburst
+    api_key: os.environ/RUNWARE_API_KEY
+- model_name: image-flare-runware
+  litellm_params:
+    model: runware/gpt-image-2.5-flare
+    api_key: os.environ/RUNWARE_API_KEY
 # Style/Cast, Draw, and Labs image generation, using the existing Vertex ADC.
 - model_name: image-nano-banana-2.1
   litellm_params:
@@ -381,5 +391,7 @@ litellm_settings:
     custom_handler: litellm_handlers.openai_image_stream.openai_image_stream_llm
   - provider: textract
     custom_handler: litellm_handlers.textract.textract_llm
+  - provider: runware
+    custom_handler: litellm_handlers.runware_provider.runware_image_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

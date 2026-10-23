@@ -1653,6 +1653,16 @@ the FAL request ID. If that charge is unavailable, a completed Sunburst image
 (`expected_*` consumption), labelled `request_estimate`. All-zero token usage
 is treated as unknown, never as a free image.
 
+The gateway also serves GPT Image 2.5 through Runware (`image-sunburst-runware`,
+`image-flare-runware`; `RUNWARE_API_KEY`). No profile or wire selects these
+routes yet. The handler uploads references once to Runware media storage and
+sends them by UUID, requests PNG output with `moderation: low`, and reports
+Runware's per-task charge as `runware_cost` with the task UUID as the request
+ID. It submits each task once; a lost answer is recovered with
+`getTaskDetails`, and only an unresolved recovery is reported as an unknown
+outcome. Runware returns no partial images. Uploaded references and generated
+images are served at public, unauthenticated URLs.
+
 Every new Sunburst image uses the `openai-fal` route pair: new Draw editions
 through their `openai-fal` profile, and Style/Cast images (samples, references,
 covers) through their frozen `openai-fal` wire. Each image goes to

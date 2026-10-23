@@ -21,6 +21,8 @@ aliases:
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
   image-flare: openai/gpt-image-2.5-flare
+  image-sunburst-runware: runware/gpt-image-2.5-sunburst
+  image-flare-runware: runware/gpt-image-2.5-flare
 model_overrides:
   # N. Virginia DetectDocumentText, first 1M monthly images; verified 2026-10-07.
   # Conservative list-price accounting; discounts/credits are separate offsets.
@@ -244,6 +246,52 @@ model_overrides:
         1024x1024: 439
         1344x768: 255
         1536x1024: 255
+
+  # Runware reports each task's charged cost, which settles the call; these
+  # estimates reserve credits and cover a result without a reported cost.
+  # The 2026-10-23 probe page (5 refs, medium 1024x1536) cost $0.05647, below
+  # these expectations, so the FAL-measured fields stay conservative.
+  runware/gpt-image-2.5-sunburst:
+    input_cost_per_token: 5.0e-06
+    image_input_cost_per_token: 8.0e-06
+    cached_text_input_cost_per_token: 1.25e-06
+    cached_image_input_cost_per_token: 2.0e-06
+    output_cost_per_token: 3.0e-05
+    mode: image_generation
+    estimated_output_cost_per_image: 0.25
+    estimated_input_cost_per_reference: 0.01
+    estimated_input_tokens_per_reference: 2000
+    estimated_image_tokens_by_quality_and_size:
+      high:
+        1024x1536: 1750
+      medium:
+        1024x1536: 430
+        768x1024: 380
+        1024x1280: 480
+        1024x1024: 550
+        1344x768: 320
+        1536x1024: 320
+    expected_input_tokens_per_reference: 1200
+    expected_image_tokens_by_quality_and_size:
+      high:
+        1024x1536: 1372
+      medium:
+        1024x1536: 343
+        768x1024: 301
+        1024x1280: 378
+        1024x1024: 439
+        1344x768: 255
+        1536x1024: 255
+
+  runware/gpt-image-2.5-flare:
+    input_cost_per_token: 5.0e-06
+    image_input_cost_per_token: 8.0e-06
+    cached_text_input_cost_per_token: 1.25e-06
+    cached_image_input_cost_per_token: 2.0e-06
+    output_cost_per_token: 3.0e-05
+    mode: image_generation
+    estimated_output_cost_per_image: 0.25
+    estimated_input_cost_per_reference: 0.01
 
   # https://platform.claude.com/docs/en/models/haiku-5-5/overview (2026-10-07).
   claude-haiku-5-5: &haiku_5_5

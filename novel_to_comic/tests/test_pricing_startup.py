@@ -101,4 +101,5 @@ def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
             if value["mode"] == "image_generation"} == {
         "gpt-image-2.5-sunburst", "openai/gpt-image-2.5/sunburst",
         "gpt-image-2.5-flare", "gemini-nano-banana-2.1",
+        "runware/gpt-image-2.5-sunburst", "runware/gpt-image-2.5-flare",
     }
