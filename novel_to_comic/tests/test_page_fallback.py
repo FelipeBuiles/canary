@@ -23,6 +23,7 @@ from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
     fal_sunburst_page_capability_profile,
     muse_page_capability_profile,
+    runware_first_page_capability_profile,
     select_book_edition,
     spendable_page_profiles,
     sunburst_fallback_page_capability_profile,
@@ -123,8 +124,9 @@ def test_new_editions_get_openai_first_and_existing_fal_editions_keep_drawing():
     fallback = sunburst_fallback_page_capability_profile()
     fal = fal_sunburst_page_capability_profile()
     assert current_page_capability_profile(config) == fallback
-    assert spendable_page_profiles(config) == (fallback, fal)
-    for profile in (fallback, fal):
+    runware = runware_first_page_capability_profile()
+    assert spendable_page_profiles(config) == (fallback, fal, runware)
+    for profile in (fallback, fal, runware):
         edition = BookEdition(revision=1, id="e", capability_profile=profile)
         assert ensure_current_page_edition(None, edition, config) is edition
     stranded = BookEdition(revision=1, id="e", capability_profile=muse_page_capability_profile())

@@ -53,7 +53,20 @@ IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
 IMAGE_PROVIDER_OPENAI_FAL = "openai-fal"
 #: Runware's REST API; references go by uploaded media UUID.
 IMAGE_PROVIDER_RUNWARE = "runware"
+#: Sunburst while the Runware grant lasts: Runware first, then OpenAI with
+#: one FAL attempt (``image_route_fallback.run_runware_first``).
+IMAGE_PROVIDER_RUNWARE_OPENAI_FAL = "runware-openai-fal"
 IMAGE_PROVIDER_UNKNOWN = "unknown"
+
+
+def runware_first_enabled() -> bool:
+    """Operator switch: new Sunburst work starts on Runware.
+
+    Frozen editions and wires keep the identity they were created with.
+    """
+    import os
+
+    return os.environ.get("CANARY_RUNWARE_FIRST_ENABLED", "").strip().lower() in {"1", "true"}
 
 
 class ImageRoute(str, Enum):
@@ -133,6 +146,10 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
 def describe_image_model(model: str) -> ImageModelDescription:
     """Classify an effective model string and return truthful display metadata."""
     normalized = (model or "").strip().lower()
+    if normalized == GATEWAY_IMAGE_SUNBURST and runware_first_enabled():
+        from dataclasses import replace
+
+        return replace(_ALIAS_DESCRIPTIONS[normalized], provider_key=IMAGE_PROVIDER_RUNWARE_OPENAI_FAL)
     if normalized in _ALIAS_DESCRIPTIONS:
         return _ALIAS_DESCRIPTIONS[normalized]
     if normalized.removeprefix("openai/") in {

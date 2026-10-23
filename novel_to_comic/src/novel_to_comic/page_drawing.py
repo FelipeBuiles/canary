@@ -40,12 +40,15 @@ from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FLARE_RUNWARE,
     GATEWAY_IMAGE_NANO_BANANA_21,
     GATEWAY_IMAGE_SUNBURST_RUNWARE,
+    runware_first_enabled,
 )
 from novel_to_comic.image_route_fallback import (
     FAL_SUNBURST_GATEWAY_MODEL,
     OPENAI_SUNBURST_GATEWAY_MODEL,
+    RUNWARE_FIRST_PROVIDER,
     SUNBURST_FALLBACK_PROVIDER,
     run_openai_first,
+    run_runware_first,
 )
 from novel_to_comic.models.draw import (
     BookEdition,
@@ -224,8 +227,25 @@ def sunburst_fallback_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+_RUNWARE_FIRST_PAGE_PROFILE_ID = "gpt-image-2.5-sunburst-runware-openai-fal-complete-page-medium-hybrid-v1"
+
+
+def runware_first_page_capability_profile() -> PageCapabilityProfile:
+    """Sunburst at medium quality: Runware first, then the OpenAI-first chain.
+
+    Selected for new work only while ``CANARY_RUNWARE_FIRST_ENABLED`` is set;
+    editions created with it stay drawable after the switch is turned off.
+    Every route accepts the same references, size, and quality.
+    """
+    return sunburst_fallback_page_capability_profile().model_copy(update={
+        "id": _RUNWARE_FIRST_PAGE_PROFILE_ID, "provider": RUNWARE_FIRST_PROVIDER, "max_attempts": 3,
+    })
+
+
 # Providers whose corrections upload the parent page beside the references.
-_EDIT_SOURCE_COUNTS_AS_REFERENCE = frozenset({"openai", "openrouter", "fal-queue", SUNBURST_FALLBACK_PROVIDER})
+_EDIT_SOURCE_COUNTS_AS_REFERENCE = frozenset({
+    "openai", "openrouter", "fal-queue", SUNBURST_FALLBACK_PROVIDER, RUNWARE_FIRST_PROVIDER,
+})
 
 
 def _edit_source_counts_as_reference(profile: PageCapabilityProfile) -> bool:
@@ -240,7 +260,9 @@ def page_image_quality(profile_id: str, provider: str) -> str | None:
     """The image quality an edition's profile submits, fixed by its identity."""
     if provider == "vertex-multimodal" and profile_id.removesuffix("-integrated-v1") == _NANO_BANANA_21_PAGE_PROFILE_ID:
         return "low"
-    if profile_id.removesuffix("-integrated-v1") in {_FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID}:
+    if profile_id.removesuffix("-integrated-v1") in {
+        _FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID, _RUNWARE_FIRST_PAGE_PROFILE_ID,
+    }:
         return "medium"
     if provider == "openai" and profile_id.removesuffix("-integrated-v1") in {
         f"{model}-complete-page-medium-hybrid-v1"
@@ -274,6 +296,8 @@ def estimate_page_request_cost_usd(
 
 def production_page_capability_profile() -> PageCapabilityProfile:
     """Return the default complete-page profile for new API work."""
+    if runware_first_enabled():
+        return runware_first_page_capability_profile()
     return sunburst_fallback_page_capability_profile()
 
 
@@ -306,7 +330,9 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
         for quality in ("high", "medium")
     ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile()),
                      sunburst_fallback_page_capability_profile(),
-                     _integrated_page_profile(sunburst_fallback_page_capability_profile())) or profile == muse_page_capability_profile():
+                     _integrated_page_profile(sunburst_fallback_page_capability_profile()),
+                     runware_first_page_capability_profile(),
+                     _integrated_page_profile(runware_first_page_capability_profile())) or profile == muse_page_capability_profile():
         return True
     return selector_available() and any(
         profile == current_page_capability_profile(Config(draw_model=f"codex-dev/image/{model}"))
@@ -339,7 +365,7 @@ def _editable_page_capability_profile(config: Config | None = None) -> PageCapab
     if selected == GATEWAY_IMAGE_NANO_BANANA_21:
         return nano_banana_21_page_capability_profile()
     if selected == "image-sunburst":
-        return sunburst_fallback_page_capability_profile()
+        return production_page_capability_profile()
     if selected != COMPLETE_PAGE_GATEWAY_MODEL and not selected.startswith("codex-dev/image/"):
         raise ValueError("Unsupported complete-page model selection")
     route = route_for("complete_page", selected)
@@ -383,14 +409,20 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
 
 def spendable_page_profiles(config: Config | None = None) -> tuple[PageCapabilityProfile, ...]:
     """Profiles this project may still spend on: the current one for new
-    editions, plus the FAL Sunburst profile its existing editions were bound to.
-    Existing editions never change profile; they keep drawing on their route.
+    editions, plus the Sunburst profiles its existing editions were bound to
+    (FAL, and whichever multi-route identity ``CANARY_RUNWARE_FIRST_ENABLED``
+    does not select now). Existing editions never change profile; they keep
+    drawing on their route.
     """
     current = current_page_capability_profile(config)
     if getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL) != "image-sunburst":
         return (current,)
-    retained = fal_sunburst_page_capability_profile()
-    return (current, _integrated_page_profile(retained) if current.exact_visible_lettering else retained)
+    retained = [fal_sunburst_page_capability_profile()] + [
+        profile for profile in (sunburst_fallback_page_capability_profile(), runware_first_page_capability_profile())
+        if profile.id != current.id.removesuffix("-integrated-v1")
+    ]
+    return (current, *(_integrated_page_profile(profile) if current.exact_visible_lettering else profile
+                       for profile in retained))
 
 
 def initial_page_profile(project_dir, config: Config | None = None) -> PageCapabilityProfile:
@@ -439,6 +471,8 @@ def complete_page_adapter(
     if request is not None:
         profile = request_page_profile(config, request)
     profile = profile or current_page_capability_profile(config)
+    if profile.provider == RUNWARE_FIRST_PROVIDER:
+        return RunwareFirstPageAdapter(config, profile)
     if profile.provider == SUNBURST_FALLBACK_PROVIDER:
         return SunburstFallbackPageAdapter(config, profile)
     if profile.provider in {"fal-queue", "openai"}:
@@ -1726,6 +1760,7 @@ class GoogleVertexCompletePageTransport:
                 operation=ctx.operation,
                 metadata=ctx.metadata,
                 estimated_cost_usd=ctx.estimated_cost_usd,
+                expected_cost_usd=ctx.settlement_estimate_usd,
 
 
                 started_at=ctx.started_at,
@@ -1845,8 +1880,10 @@ class SunburstFallbackPageAdapter:
     attempt that produced the page. Everything else keeps today's behaviour.
     """
 
+    _base = staticmethod(sunburst_fallback_page_capability_profile)
+
     def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        base = sunburst_fallback_page_capability_profile()
+        base = self._base()
         if profile not in (base, _integrated_page_profile(base)):
             raise ValueError("Unsupported Sunburst fallback page profile")
         self._config = config
@@ -1859,13 +1896,15 @@ class SunburstFallbackPageAdapter:
 
     async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
         _validate_prepared_page(prepared, self._profile)
-        result, route, fallback = await run_openai_first(
+        return _with_route(*await self._openai_first(prepared))
+
+    def _openai_first(self, prepared: PreparedCompletePageRequest):
+        return run_openai_first(
             primary=lambda: self._primary.generate(prepared),
             backup=lambda: self._backup.generate(prepared),
             surface="draw", request_key=prepared.request_sha256,
             estimate_openai_usd=lambda: self._openai_attempt_estimate_usd(prepared),
         )
-        return _with_route(result, route, fallback)
 
     def _openai_attempt_estimate_usd(self, prepared: PreparedCompletePageRequest) -> float:
         from novel_to_comic.usage import estimate_image_cost
@@ -1876,6 +1915,26 @@ class SunburstFallbackPageAdapter:
             ref_count=len(prepared.references) + int(prepared.edit_source_bytes is not None),
             prompt_text=prepared.prompt, width=prepared.width, height=prepared.height, basis="expected",
         )
+
+
+class RunwareFirstPageAdapter(SunburstFallbackPageAdapter):
+    """Runware Sunburst first; the OpenAI-first chain only when Runware
+    definitely did not run the page (``run_runware_first``). Runware sends no
+    partial previews."""
+
+    _base = staticmethod(runware_first_page_capability_profile)
+
+    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
+        super().__init__(config, profile)
+        self._runware = runware_page_transport(config, profile)
+
+    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
+        _validate_prepared_page(prepared, self._profile)
+        return _with_route(*await run_runware_first(
+            primary=lambda: self._runware.generate(prepared),
+            backup=lambda: self._openai_first(prepared),
+            surface="draw", request_key=prepared.request_sha256,
+        ))
 
 
 class OpenRouterCompletePageAdapter(GoogleVertexCompletePageTransport):

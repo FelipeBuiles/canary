@@ -2,6 +2,8 @@ import copy
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from novel_to_comic.ai import client
 from novel_to_comic.ai.usage_payloads import compact_metadata, compact_params
 from novel_to_comic.usage import UsageRecord
@@ -79,3 +81,22 @@ def test_database_writes_compact_metadata_and_preserve_usage(monkeypatch):
     assert row['metadata_json']['page_number'] == 2
     assert 'private story' not in json.dumps(row)
     assert metadata['codex_runtime']['revised_prompt'] == 'private story'
+
+
+def test_finalized_image_drift_is_measured_against_the_expected_estimate(monkeypatch):
+    db = MagicMock()
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: db)
+    monkeypatch.setattr("novel_to_comic.server.telemetry.observe_generation", lambda **kw: None)
+    usage = UsageRecord(
+        provider="runware", model="image-sunburst-runware", provider_model="runware/gpt-image-2.5-sunburst",
+        operation="image", image_count=1, cost_usd=0.055, cost_source="runware_cost",
+    )
+    client._finalize_event(
+        event_id="call", status="succeeded", feature="draw", model_alias="image-sunburst-runware",
+        latency_ms=1, usage=usage, operation="image", metadata={},
+        estimated_cost_usd=0.11, expected_cost_usd=0.05,
+    )
+    row = db.table.return_value.update.call_args.args[0]
+    # The reservation keeps its headroom; drift compares the expected estimate.
+    assert row["estimated_cost_usd"] == 0.11
+    assert row["metadata_json"]["pricing_estimate_drift_pct"] == pytest.approx(10.0)

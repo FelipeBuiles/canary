@@ -10,7 +10,7 @@ from datetime import datetime
 
 from .job_commands import JobCommand, PageArguments
 
-PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal", "vertex-multimodal"})
+PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal", "runware-openai-fal", "vertex-multimodal"})
 PARALLEL_PAGES_PER_ACCOUNT = 12
 
 

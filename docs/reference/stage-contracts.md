@@ -1654,8 +1654,7 @@ the FAL request ID. If that charge is unavailable, a completed Sunburst image
 is treated as unknown, never as a free image.
 
 The gateway also serves GPT Image 2.5 through Runware (`image-sunburst-runware`,
-`image-flare-runware`; `RUNWARE_API_KEY`). No profile or wire selects these
-routes yet. The handler uploads references once to Runware media storage and
+`image-flare-runware`; `RUNWARE_API_KEY`). The handler uploads references once to Runware media storage and
 sends them by UUID, requests PNG output with `moderation: low`, and reports
 Runware's per-task charge as `runware_cost` with the task UUID as the request
 ID. It submits each task once; a lost answer is recovered with
@@ -1687,6 +1686,24 @@ Editions bound to the earlier FAL-only profile keep drawing on FAL; the adapter
 always follows the edition's or frozen request's profile, never mutable
 settings. Render provenance keeps the profile's provider and records the route
 that drew the page (`response_metadata.route`, `usage.provider`).
+
+While the Runware grant lasts, the operator switch `CANARY_RUNWARE_FIRST_ENABLED`
+makes new Sunburst work use the `runware-openai-fal` identity instead: new Draw
+editions bind its profile (`gpt-image-2.5-sunburst-runware-openai-fal-complete-page-medium-hybrid-v1`)
+and new Style/Cast wires carry it. Each image goes to Runware first and, only
+when Runware definitely did not run it, through the unchanged `openai-fal`
+chain above. Definite outcomes are a gateway or Runware connection that was never
+made, a failed reference upload, and an explicit Runware task error (402 spent
+credits, 401/403, 429/503, 5xx; Runware does not bill failed tasks). The
+Runware attempt's call guarantee is released before OpenAI authorizes its own.
+An unknown Runware outcome, an invalid request, a 4xx refusal, or a completed
+result without a usable image stops and keeps today's hold; the OpenAI
+absorbed-attempt exception does not apply to Runware. After three consecutive definite
+Runware failures (a spent grant) a worker skips Runware for 15 minutes.
+Provenance records `{"from_route": "runware", "reason": ...}` with any OpenAI
+fallback under `then`. Pages drawn on Runware have no partial previews.
+Turning the switch off changes only new editions and wires: both Sunburst
+identities stay spendable, so every existing edition keeps its route.
 
 Read-only immediate quotes are distinct from the full-stage rerun estimate:
 

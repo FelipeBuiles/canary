@@ -249,9 +249,13 @@ model_overrides:
 
   # Runware reports each task's charged cost, which settles the call; these
   # estimates reserve credits and cover a result without a reported cost.
-  # The 2026-10-23 probe page (5 refs, medium 1024x1536) cost $0.05647, below
-  # these expectations, so the FAL-measured fields stay conservative.
-  runware/gpt-image-2.5-sunburst:
+  # Runware returns no token usage. Its charges (2026-10-23 Labs runs) imply
+  # ~630-670 input tokens per page reference and ~1,000-1,270 for a lone
+  # Style/Cast reference, so the expected figure sits between them. The
+  # reservation keeps 2,000: a lone reference already costs up to its hold. Output tables are FAL's measurements.
+  # Runware charged Flare exactly what it charged Sunburst on every item, so
+  # both share this rate card.
+  runware/gpt-image-2.5-sunburst: &runware_gpt_image_2_5
     input_cost_per_token: 5.0e-06
     image_input_cost_per_token: 8.0e-06
     cached_text_input_cost_per_token: 1.25e-06
@@ -271,7 +275,7 @@ model_overrides:
         1024x1024: 550
         1344x768: 320
         1536x1024: 320
-    expected_input_tokens_per_reference: 1200
+    expected_input_tokens_per_reference: 900
     expected_image_tokens_by_quality_and_size:
       high:
         1024x1536: 1372
@@ -282,16 +286,7 @@ model_overrides:
         1024x1024: 439
         1344x768: 255
         1536x1024: 255
-
-  runware/gpt-image-2.5-flare:
-    input_cost_per_token: 5.0e-06
-    image_input_cost_per_token: 8.0e-06
-    cached_text_input_cost_per_token: 1.25e-06
-    cached_image_input_cost_per_token: 2.0e-06
-    output_cost_per_token: 3.0e-05
-    mode: image_generation
-    estimated_output_cost_per_image: 0.25
-    estimated_input_cost_per_reference: 0.01
+  runware/gpt-image-2.5-flare: *runware_gpt_image_2_5
 
   # https://platform.claude.com/docs/en/models/haiku-5-5/overview (2026-10-07).
   claude-haiku-5-5: &haiku_5_5

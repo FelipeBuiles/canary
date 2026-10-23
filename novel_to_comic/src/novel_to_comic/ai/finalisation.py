@@ -333,6 +333,7 @@ async def finalise_image_success(
             operation=ctx.operation,
             metadata=ctx.metadata,
             estimated_cost_usd=ctx.estimated_cost_usd,
+            expected_cost_usd=ctx.settlement_estimate_usd,
 
             started_at=ctx.started_at,
         )
@@ -349,6 +350,7 @@ async def finalise_image_success(
         operation=ctx.operation,
         metadata=ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
+        expected_cost_usd=ctx.settlement_estimate_usd,
 
 
         started_at=ctx.started_at,
@@ -389,6 +391,7 @@ async def finalise_image_cancelled(
         operation=ctx.operation,
         metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
+        expected_cost_usd=ctx.settlement_estimate_usd,
 
         started_at=ctx.started_at,
     )
@@ -424,6 +427,7 @@ async def finalise_image_refusal(
         operation=ctx.operation,
         metadata=ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
+        expected_cost_usd=ctx.settlement_estimate_usd,
 
         started_at=ctx.started_at,
     )
@@ -464,6 +468,7 @@ async def finalise_image_failure(
         operation=ctx.operation,
         metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
+        expected_cost_usd=ctx.settlement_estimate_usd,
 
         started_at=ctx.started_at,
     )
