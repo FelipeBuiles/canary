@@ -174,6 +174,22 @@ def test_runware_sunburst_prices_no_preview_tokens(basis):
         assert runware.cost_usd == pytest.approx(fal.cost_usd)
 
 
+def test_runware_flare_shares_the_sunburst_rate_card_with_fewer_expected_reference_tokens():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    kwargs = dict(quality="medium", width=1024, height=1536, ref_count=5)
+    for basis in ("reservation", "expected"):
+        sunburst = resolver.estimate_image_cost("image-sunburst-runware", 1, basis=basis, **kwargs)
+        flare = resolver.estimate_image_cost("image-flare-runware", 1, basis=basis, **kwargs)
+        assert flare.cost_usd == pytest.approx(sunburst.cost_usd)
+    pricing = resolver._overrides["model_overrides"]["runware/gpt-image-2.5-sunburst"]
+    assert (pricing["expected_input_tokens_per_reference"], pricing["estimated_input_tokens_per_reference"]) == (900, 2000)
+    fal = resolver.estimate_image_cost("image-sunburst", 1, basis="expected", **kwargs)
+    runware = resolver.estimate_image_cost("image-sunburst-runware", 1, basis="expected", **kwargs)
+    assert runware.cost_usd < fal.cost_usd
+
+
 def test_runware_reported_cost_settles_the_call():
     record = _extract_usage({"provider_cost_usd": 0.05647, "provider_cost_source": "runware_cost"},
                             "call", "image-sunburst-runware", "image")

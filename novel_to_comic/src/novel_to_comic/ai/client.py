@@ -1092,6 +1092,7 @@ def _finalize_event(
     operation: str = "text",
     metadata: dict[str, Any] | None = None,
     estimated_cost_usd: float | None = None,
+    expected_cost_usd: float | None = None,
     started_at: datetime.datetime | None = None,
     charge_user: bool = True,
 ) -> None:
@@ -1187,9 +1188,11 @@ def _finalize_event(
     }
     if metadata is not None:
         update["metadata_json"] = metadata
+    # Drift measures the best guess (expected basis), not the reservation,
+    # whose deliberate headroom would read as a systematic overestimate.
     drift_pct = _pricing_estimate_drift_pct(
         operation=operation,
-        estimated_cost_usd=estimated_cost_usd,
+        estimated_cost_usd=expected_cost_usd,
         usage=usage,
     )
     if drift_pct is not None:
@@ -1198,11 +1201,11 @@ def _finalize_event(
             "pricing_estimate_drift_pct": drift_pct,
         }
         logger.info(
-            "pricing_estimate_drift_pct model_alias=%s provider_model=%s drift_pct=%.2f estimated_cost_usd=%.6f actual_cost_usd=%.6f",
+            "pricing_estimate_drift_pct model_alias=%s provider_model=%s drift_pct=%.2f expected_cost_usd=%.6f actual_cost_usd=%.6f",
             model_alias,
             provider_model,
             drift_pct,
-            estimated_cost_usd,
+            expected_cost_usd,
             usage.cost_usd if usage else 0.0,
         )
     try:
@@ -1701,13 +1704,14 @@ async def generate_wire_image(
     """Submit an immutable exact-wire request through the isolated adapter.
 
     A multi-route Sunburst wire runs OpenAI first with one FAL attempt as
-    backup (``image_route_fallback``); each route is its own usage event.
+    backup (``image_route_fallback``), after Runware when its identity starts
+    there; each route is its own usage event.
     """
-    from novel_to_comic.image_route_fallback import SUNBURST_FALLBACK_PROVIDER
+    from novel_to_comic.image_route_fallback import RUNWARE_FIRST_PROVIDER, SUNBURST_FALLBACK_PROVIDER
 
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
         raise ValueError("ProviderWireRequest execution fingerprint mismatch")
-    if wire.provider_key == SUNBURST_FALLBACK_PROVIDER:
+    if wire.provider_key in {SUNBURST_FALLBACK_PROVIDER, RUNWARE_FIRST_PROVIDER}:
         return await _generate_sunburst_wire_image(
             config=config, wire=wire, output_path=output_path, feature=feature,
         )
@@ -1724,7 +1728,10 @@ async def _generate_sunburst_wire_image(
     from novel_to_comic.image_route_fallback import (
         FAL_SUNBURST_GATEWAY_MODEL,
         OPENAI_SUNBURST_GATEWAY_MODEL,
+        RUNWARE_FIRST_PROVIDER,
+        RUNWARE_SUNBURST_GATEWAY_MODEL,
         run_openai_first,
+        run_runware_first,
     )
     from novel_to_comic.usage import estimate_image_cost
 
@@ -1734,16 +1741,25 @@ async def _generate_sunburst_wire_image(
             output_path=output_path, feature=feature,
         )
 
-    result, route, fallback = await run_openai_first(
-        primary=lambda: attempt(OPENAI_SUNBURST_GATEWAY_MODEL),
-        backup=lambda: attempt(FAL_SUNBURST_GATEWAY_MODEL),
-        surface="asset", request_key=wire.execution_fingerprint,
-        estimate_openai_usd=lambda: estimate_image_cost(
-            OPENAI_SUNBURST_GATEWAY_MODEL, 1, quality=dict(wire.controls).get("quality"),
-            ref_count=len(wire.references), prompt_text=wire.prompt_parts[0],
-            width=wire.width, height=wire.height, basis="expected",
-        ),
-    )
+    def openai_first():
+        return run_openai_first(
+            primary=lambda: attempt(OPENAI_SUNBURST_GATEWAY_MODEL),
+            backup=lambda: attempt(FAL_SUNBURST_GATEWAY_MODEL),
+            surface="asset", request_key=wire.execution_fingerprint,
+            estimate_openai_usd=lambda: estimate_image_cost(
+                OPENAI_SUNBURST_GATEWAY_MODEL, 1, quality=dict(wire.controls).get("quality"),
+                ref_count=len(wire.references), prompt_text=wire.prompt_parts[0],
+                width=wire.width, height=wire.height, basis="expected",
+            ),
+        )
+
+    if wire.provider_key == RUNWARE_FIRST_PROVIDER:
+        result, route, fallback = await run_runware_first(
+            primary=lambda: attempt(RUNWARE_SUNBURST_GATEWAY_MODEL),
+            backup=openai_first, surface="asset", request_key=wire.execution_fingerprint,
+        )
+    else:
+        result, route, fallback = await openai_first()
     metadata: dict[str, Any] = {**(result.response_metadata or {}), "route": route}
     if fallback is not None:
         metadata["fallback"] = fallback

@@ -87,6 +87,8 @@ def subscription_models() -> list[dict]:
 _IMAGE_PROVIDER_LABELS = {
     "openai": "OpenAI",
     "openai-fal": "OpenAI, FAL backup",
+    "runware-openai-fal": "Runware, OpenAI and FAL backup",
+    "runware": "Runware",
     "fal-queue": "FAL",
     "openrouter": "OpenRouter",
     "vertex-multimodal": "Google Vertex AI",

@@ -23,9 +23,14 @@ from novel_to_comic.image_models import (
     IMAGE_PROVIDER_OPENAI_FAL,
     IMAGE_PROVIDER_OPENROUTER,
     IMAGE_PROVIDER_RUNWARE,
+    IMAGE_PROVIDER_RUNWARE_OPENAI_FAL,
     IMAGE_PROVIDER_VERTEX_MULTIMODAL,
 )
-from novel_to_comic.image_route_fallback import openai_image_block_code, openai_image_failure_marker
+from novel_to_comic.image_route_fallback import (
+    openai_image_block_code,
+    openai_image_failure_marker,
+    runware_image_failure_marker,
+)
 from novel_to_comic.provider_wire import (
     ProviderWireError,
     ProviderWireRequest,
@@ -234,6 +239,7 @@ _PROVIDER_SERIALIZERS: dict[str, Callable[[ProviderWireRequest], dict[str, Any]]
     # Both Sunburst routes' gateway handlers consume the frozen manifest.
     IMAGE_PROVIDER_OPENAI_FAL: _serialize_canary_wire,
     IMAGE_PROVIDER_RUNWARE: _serialize_canary_wire,
+    IMAGE_PROVIDER_RUNWARE_OPENAI_FAL: _serialize_canary_wire,
 }
 
 
@@ -339,6 +345,10 @@ def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
                     block = openai_image_block_code(message)
                     if block:
                         descriptor["openai_block"] = block
+                # Runware's marker carries its phase and upstream status only.
+                runware_marker = runware_image_failure_marker(message)
+                if runware_marker:
+                    descriptor["runware_failure"] = runware_marker
                 if fal:
                     descriptor["fal_phase"] = fal.group("phase")
                     descriptor["fal_endpoint"] = fal.group("endpoint")
