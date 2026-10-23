@@ -24,6 +24,8 @@ _MODELS = frozenset({
     "image-sunburst",
     "image-sunburst-openai",
     "image-flare",
+    "image-sunburst-runware",
+    "image-flare-runware",
     "image-nano-banana-2.1",
     "ocr-textract",
 })
@@ -37,6 +39,7 @@ _PROVIDERS = frozenset({
     "vertex_ai",
     "vertex-multimodal",
     "fal-queue",
+    "runware",
     "openai-stream",
     "textract",
 })

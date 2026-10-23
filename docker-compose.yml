@@ -72,6 +72,7 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       FAL_KEY: ${FAL_KEY:-}
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
+      RUNWARE_API_KEY: ${RUNWARE_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
@@ -135,6 +136,7 @@ services:
       VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
       FAL_KEY: ${FAL_KEY:-}
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
+      RUNWARE_API_KEY: ${RUNWARE_API_KEY:-}
       # Gateway metrics share the app's PostHog project; unset disables them.
       POSTHOG_PROJECT_TOKEN: ${POSTHOG_PROJECT_TOKEN:-}
       POSTHOG_HOST: ${POSTHOG_HOST:-}

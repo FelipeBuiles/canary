@@ -149,11 +149,13 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
 
     from litellm_handlers.fal_provider import FalQueueLLM
     from litellm_handlers.openai_image_stream import OpenAIImageStreamLLM
+    from litellm_handlers.runware_provider import RunwareImageLLM
     from litellm_handlers.vertex_multimodal import VertexMultimodalLLM
 
     assert version("litellm") == "1.101.0"
     assert issubclass(FalQueueLLM, CustomLLM)
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
+    assert issubclass(RunwareImageLLM, CustomLLM)
     assert issubclass(VertexMultimodalLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     aliases = [route["model_name"] for route in config["model_list"]]
@@ -161,7 +163,8 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "claude-haiku-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-argon",
+        "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware",
+        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-argon",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract",
     }
@@ -177,10 +180,13 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     }, {
         "provider": "textract",
         "custom_handler": "litellm_handlers.textract.textract_llm",
+    }, {
+        "provider": "runware",
+        "custom_handler": "litellm_handlers.runware_provider.runware_image_llm",
     }]
     for dockerfile in ("Dockerfile", "litellm/Dockerfile"):
         source = (ROOT / dockerfile).read_text()
-        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal", "textract"):
+        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal", "textract", "runware_provider"):
             assert f"litellm_handlers/{handler}.py" in source
 
 

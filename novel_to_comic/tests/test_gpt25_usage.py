@@ -157,3 +157,25 @@ def test_openai_expected_charge_includes_preview_tokens_once():
     pricing = resolver._overrides["model_overrides"]["gpt-image-2.5-sunburst"]
     assert quote.cost_usd == pytest.approx((pricing["estimated_image_tokens_by_quality_and_size"]["medium"]["1024x1536"] + 300) * 3e-5)
     assert expected.cost_usd == pytest.approx((pricing["expected_image_tokens_by_quality_and_size"]["medium"]["1024x1536"] + 300) * 3e-5)
+
+
+@pytest.mark.parametrize("basis", ["estimated", "expected"])
+def test_runware_sunburst_prices_no_preview_tokens(basis):
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    kwargs = dict(quality="medium", width=1024, height=1536, basis=basis)
+    runware = resolver.estimate_image_cost("image-sunburst-runware", 1, **kwargs)
+    fal = resolver.estimate_image_cost("image-sunburst", 1, **kwargs)
+    pricing = resolver._overrides["model_overrides"]["runware/gpt-image-2.5-sunburst"]
+    tokens = pricing[f"{basis}_image_tokens_by_quality_and_size"]["medium"]["1024x1536"]
+    assert runware.cost_usd == pytest.approx(tokens * 3e-5)
+    if basis == "expected":
+        assert runware.cost_usd == pytest.approx(fal.cost_usd)
+
+
+def test_runware_reported_cost_settles_the_call():
+    record = _extract_usage({"provider_cost_usd": 0.05647, "provider_cost_source": "runware_cost"},
+                            "call", "image-sunburst-runware", "image")
+    breakdown = calculate_cost_breakdown(record)
+    assert breakdown.cost_usd == pytest.approx(0.05647)

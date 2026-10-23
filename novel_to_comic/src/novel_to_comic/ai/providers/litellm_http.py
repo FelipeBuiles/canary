@@ -22,6 +22,7 @@ from novel_to_comic.image_models import (
     IMAGE_PROVIDER_OPENAI,
     IMAGE_PROVIDER_OPENAI_FAL,
     IMAGE_PROVIDER_OPENROUTER,
+    IMAGE_PROVIDER_RUNWARE,
     IMAGE_PROVIDER_VERTEX_MULTIMODAL,
 )
 from novel_to_comic.image_route_fallback import openai_image_block_code, openai_image_failure_marker
@@ -232,6 +233,7 @@ _PROVIDER_SERIALIZERS: dict[str, Callable[[ProviderWireRequest], dict[str, Any]]
     IMAGE_PROVIDER_FAL_QUEUE: _serialize_canary_wire,
     # Both Sunburst routes' gateway handlers consume the frozen manifest.
     IMAGE_PROVIDER_OPENAI_FAL: _serialize_canary_wire,
+    IMAGE_PROVIDER_RUNWARE: _serialize_canary_wire,
 }
 
 

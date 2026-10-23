@@ -315,6 +315,8 @@ def test_buffered_and_streamed_calls_share_capacity_and_usage(monkeypatch):
 
 @pytest.mark.parametrize("url,params,pool,limit", [
     (GEN, image("image-nano-banana-2.1"), "images", 12),
+    # Runware recommends a few concurrent requests per model; its routes keep their own pool.
+    (EDIT, image("image-sunburst-runware"), "runware_images", 4),
     (CHAT, {"model": "gemini-3.8-flash", "messages": [{"role": "user", "content": "review"}],
             "metadata": {"metadata": {"feature": "plan.narrative_review"}}}, "vertex_text", 16),
 ])

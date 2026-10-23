@@ -12,7 +12,9 @@ page. An arm is an image target (model and route) plus a prompt variant:
 Every arm of an item uses the same references in the same order. Nano Banana
 uses its native 1K tier; other asset arms retain recorded quality. Each cell is
 one submission to exactly one route: no
-fallback and no retry. Calls run without a user in the AI request context, so
+fallback and no retry. (Runware arms may resubmit once after Runware rejects a
+stored reference UUID before running the task; nothing is charged for it.
+Runware sends no partial previews and settles on the cost it reports.) Calls run without a user in the AI request context, so
 they are operator-funded (API) or use the local Codex subscription allowance.
 
 A failed cell can be retried by hand. Each cell records an input fingerprint
@@ -39,6 +41,9 @@ from novel_to_comic.server.telemetry import ai_span
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_FLARE_RUNWARE,
+    GATEWAY_IMAGE_SUNBURST_RUNWARE,
+    IMAGE_PROVIDER_RUNWARE,
     GATEWAY_IMAGE_SUNBURST,
     GATEWAY_IMAGE_NANO_BANANA_21,
     image_quality_for_model,
@@ -68,6 +73,8 @@ class ImageTarget:
     gateway_model: str | None = None
     codex_selector: str | None = None
     model_alias: str = GATEWAY_IMAGE_SUNBURST
+    # A route that serves the model through another provider (Runware).
+    provider_key: str | None = None
 
 
 def image_targets() -> list[ImageTarget]:
@@ -80,6 +87,11 @@ def image_targets() -> list[ImageTarget]:
                     gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE),
         ImageTarget("sunburst-fal", "GPT Image 2.5 Sunburst", "FAL API", "api", True,
                     gateway_model=FAL_SUNBURST_GATEWAY_MODEL),
+        ImageTarget("sunburst-runware", "GPT Image 2.5 Sunburst", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_SUNBURST_RUNWARE, provider_key=IMAGE_PROVIDER_RUNWARE),
+        ImageTarget("flare-runware", "GPT Image 2.5 Flare", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_FLARE_RUNWARE, model_alias=GATEWAY_IMAGE_FLARE,
+                    provider_key=IMAGE_PROVIDER_RUNWARE),
         ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1 (1K)", "Vertex AI", "api", True,
                     gateway_model=GATEWAY_IMAGE_NANO_BANANA_21, model_alias=GATEWAY_IMAGE_NANO_BANANA_21),
     ]
@@ -132,7 +144,7 @@ class Prepared:
         allowances instead of Sunburst's measurements.
         """
         quality = self.quality or quality
-        if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
+        if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_FLARE_RUNWARE, GATEWAY_IMAGE_NANO_BANANA_21}:
             return estimate_image_cost(
                 self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
                 ref_count=self.references, prompt_text=self.prompt, basis="expected",
@@ -254,7 +266,8 @@ class AssetItem:
             if len(references) > profile.max_references:
                 raise ValueError(f"{target.label} accepts at most {profile.max_references} references; "
                                  f"this request has {len(references)}")
-            wire = replace(wire, provider_key=description.provider_key, requested_alias=target.gateway_model,
+            wire = replace(wire, provider_key=target.provider_key or description.provider_key,
+                           requested_alias=target.gateway_model,
                            configured_provider_model=description.provider_model, expected_route=description.route.value,
                            controls=(("quality", image_quality_for_model(target.model_alias, self.quality)),))
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
@@ -324,7 +337,11 @@ class PageItem:
         async def submit(output_path: Path) -> UsageRecord:
             from novel_to_comic import page_drawing
 
-            if target.codex_selector or target.model_alias in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
+            if target.provider_key == IMAGE_PROVIDER_RUNWARE:
+                result = await page_drawing.runware_page_transport(config, profile).generate(
+                    page_drawing.prepare_frozen_page_request(request, compiled.reference_bytes, profile),
+                )
+            elif target.codex_selector or target.model_alias in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
                 adapter = page_drawing.complete_page_adapter(config, profile)
                 result = await adapter.generate(adapter.prepare(compiled))
             else:
