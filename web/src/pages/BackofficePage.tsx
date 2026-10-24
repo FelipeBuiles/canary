@@ -75,8 +75,8 @@ const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; s
   { key: "support", label: "Support queue", icon: LifeBuoy, shortcut: "⌘ 3" },
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "⌘ 4" },
   { key: "testers", label: "Tester sessions", icon: UserCheck, shortcut: "⌘ 6" },
-  { key: "host", label: "Host maintenance", icon: Activity, shortcut: "⌘ 7" },
   { key: "models", label: "Stage models", icon: Settings2, shortcut: "⌘ 5" },
+  { key: "host", label: "Host maintenance", icon: Activity, shortcut: "⌘ 7" },
 ];
 
 const VIEW_META: Record<BackofficeView, { kicker: string; title: string; description: string }> = {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1030,7 +1030,7 @@ def write_tester_tracker(collection: str, record_id: str, body: TesterRecordWrit
 
 class HostMaintenanceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: str = Field(pattern=r"^(check|update|reboot)$")
+    action: Literal["check", "update", "reboot"]
     request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
     plan_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 

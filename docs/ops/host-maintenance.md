@@ -99,9 +99,11 @@ IDs, phases, package previews and the expected release SHA, never runtime secret
 4. It starts the same application release, checks its exact SHA and persisted
    drain, then uses the existing public verifier to check readiness, dependencies
    and security headers before resuming generation. A failure leaves a maintenance
-   hold and stops Canary once replacement has begun. If draining fails, the
-   existing process stays running with admission paused so in-flight work can
-   finish. There is no automatic rollback or retry.
+   hold and stops Canary once replacement has begun. If draining fails before
+   Canary stops, the worker attempts to reopen generation on the existing process
+   and removes its own hold only after the API confirms admission is open. If
+   that response is uncertain, the hold remains and the process keeps running so
+   in-flight work can finish. There is no automatic package retry or rollback.
 5. If needed, choose **Review host reboot → Reboot host** separately. This drains
    and stops Canary, records the release SHA and boot ID, then requests a reboot.
    The enabled recovery unit removes its hold, starts Canary and verifies before
@@ -111,7 +113,7 @@ Requests launch a transient `canary-host-maintenance` systemd unit, independent
 of the HTTP connection. Repeating the last request ID returns its recorded result.
 A different request is refused while an operation is active. Closing the browser
 or losing an HTTP response is not cancellation; refresh status before acting.
-The worker has a 90-minute maximum lifetime; termination may leave its last phase
+The worker has a two-hour maximum lifetime; termination may leave its last phase
 and hold intact. The tool does not silently retry an uncertain operation.
 
 ## Failed or uncertain maintenance
@@ -129,7 +131,9 @@ sudo dpkg --audit
 A daemon/transport error can coexist with a running or completed worker. Do not
 clear an operation or repeat upgrades while `canary-host-maintenance` is active.
 A timeout/SIGKILL may leave `queued`, `updating`, or another active phase even
-though the unit exited; inspect systemd and APT/dpkg before resetting state.
+though the unit exited. A new request reconciles a positively inactive worker
+to failed; it preserves any maintenance hold. An uncertain systemd query does
+not permit replacement. Inspect systemd and APT/dpkg before resetting held state.
 Check `/var/log/apt/history.log`, `/var/log/apt/term.log` and the existing release
 journal. Repair incomplete dpkg configuration under the existing maintenance hold.
 Never delete a hold belonging to another maintenance task.
