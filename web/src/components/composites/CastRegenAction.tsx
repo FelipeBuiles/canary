@@ -14,7 +14,7 @@ type Props = Omit<ComponentProps<typeof RegenAction>, "onRegenerateWithInstructi
   assetType: CastAssetReference["asset_type"];
   assetId: string;
   stateId?: string;
-  onRegenerateWithInstruction: (instruction: string, references: CastReferenceInput[]) => void;
+  onRegenerateWithInstruction: (instruction: string, references: CastReferenceInput[], withLooks: boolean) => void;
 };
 const referenceKey = (item: CastReferenceInput) => "upload_id" in item
   ? JSON.stringify(["upload", item.upload_id])
@@ -136,6 +136,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
       <p>{t("Attached references")}</p>
       <ul className="mt-1 list-disc space-y-1 pl-5">{selected.map((item) => <li key={referenceKey(item)}>{labelFor(item)}</li>)}</ul>
     </div> : undefined}
-    onRegenerateWithInstruction={(instruction) => onRegenerateWithInstruction(instruction, selected)}
+    looks={stateId ? null : capabilities?.looks}
+    onRegenerateWithInstruction={(instruction, withLooks) => onRegenerateWithInstruction(instruction, selected, withLooks)}
   />;
 }

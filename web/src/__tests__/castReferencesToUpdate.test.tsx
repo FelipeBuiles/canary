@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -22,6 +22,12 @@ vi.mock("../api/client", async (original) => ({
     if (path.endsWith("/cast/freshness")) return { references: server.references };
     if (method === "POST" && path.endsWith("/cast/reopen")) return { reopened: true, references: server.references };
     if (method === "POST" && path.endsWith("/cast/references/keep")) return { references: server.references };
+    if (path.includes("/asset-regen-estimate")) {
+      return { estimate_credits: 4, reserved_credits: null, reservation_multiplier: 1, confidence: "low_variance" };
+    }
+    if (method === "POST" && path.includes("/regen-state-ref")) {
+      return { status: "queued", char_id: "ines", job: { id: `job-${server.calls.length}`, kind: "character_ref_regen", status: "queued", payload: {} } };
+    }
     throw new Error(`Unexpected fixture API: ${method} ${path}`);
   },
 }));
@@ -29,7 +35,9 @@ vi.mock("../api/client", async (original) => ({
 afterEach(() => { server.calls = []; server.references = []; });
 
 const bible = {
-  characters: [{ id: "ines", name: "Ines", appearance_states: [] }],
+  characters: [{ id: "ines", name: "Ines", appearance_states: [
+    { id: "storm", label: "Storm gear" }, { id: "wed", label: "Wedding dress" },
+  ] }],
   locations: [],
   props: [{ id: "sphinx", name: "Wooden sphinx", appearance_states: [] }],
 } as unknown as StoryBible;
@@ -56,8 +64,8 @@ it("lists new and changed references, offering to keep only the changed ones", a
   server.references = edited;
   renderReferences("/project/p1/cast", "complete");
   await screen.findByRole("heading", { name: "References to update" });
-  expect(screen.getByText("Wooden sphinx").parentElement!.textContent).toContain("New, no image yet");
-  expect(screen.getByText("Ines").parentElement!.textContent).toContain("Changed since its image");
+  expect(screen.getByRole("listitem", { name: "Wooden sphinx" }).textContent).toContain("New, no image yet");
+  expect(screen.getByRole("listitem", { name: "Ines" }).textContent).toContain("Changed since its image");
   expect(screen.getAllByRole("button", { name: "Keep current image" })).toHaveLength(1);
   expect(server.calls.some((call) => call.method === "POST")).toBe(false);
 });
@@ -86,4 +94,45 @@ it("resumes a pending Cast directly from the update button", async () => {
   await user.click(await screen.findByRole("button", { name: "Update images" }));
   expect(onResume).toHaveBeenCalledTimes(1);
   expect(server.calls.some((call) => call.path.endsWith("/cast/reopen"))).toBe(false);
+});
+
+const redrawnLooks: ReferenceFreshness[] = [
+  { kind: "characters", entity_id: "ines", state_id: null, status: "current" },
+  { kind: "characters", entity_id: "ines", state_id: "storm", status: "outdated", reason: "parent_redrawn" },
+  { kind: "characters", entity_id: "ines", state_id: "wed", status: "outdated", reason: "parent_redrawn" },
+];
+
+it("groups looks drawn from a redrawn main image and never sends them to the Story Bible", async () => {
+  server.references = redrawnLooks;
+  renderReferences("/project/p1/cast", "awaiting_review");
+  const group = await screen.findByRole("listitem", { name: "Ines" });
+  expect(group.textContent).toContain("Its main image was redrawn, so these 2 looks were drawn from the previous one:");
+  expect(group.textContent).toContain("Storm gear · Wedding dress");
+  expect(screen.queryByRole("link", { name: "Edit details" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Keep current image" })).toBeNull();
+  expect(await screen.findByRole("button", { name: /Redraw looks/ })).toBeTruthy();
+});
+
+it("redraws a group's looks one job each, only after a priced confirmation", async () => {
+  server.references = redrawnLooks;
+  const user = userEvent.setup();
+  renderReferences("/project/p1/cast", "awaiting_review");
+  const redraw = await screen.findByRole("button", { name: /Redraw looks.*8 credits/ });
+  await user.click(redraw);
+  expect(server.calls.some((call) => call.method === "POST")).toBe(false);
+  const drawer = screen.getByRole("alertdialog");
+  expect(within(drawer).getByText("~8 credits")).toBeTruthy();
+  await user.click(within(drawer).getByRole("button", { name: "Redraw looks" }));
+  await waitFor(() => expect(server.calls.filter((call) => call.method === "POST").map((call) => call.path)).toEqual([
+    expect.stringContaining("char_id=ines&state_id=storm"),
+    expect.stringContaining("char_id=ines&state_id=wed"),
+  ]));
+});
+
+it("keeps every redrawn look of a group at once", async () => {
+  server.references = redrawnLooks;
+  const user = userEvent.setup();
+  renderReferences("/project/p1/cast", "awaiting_review");
+  await user.click(await screen.findByRole("button", { name: "Keep looks as they are" }));
+  await waitFor(() => expect(server.calls.filter((call) => call.path.endsWith("/cast/references/keep"))).toHaveLength(2));
 });

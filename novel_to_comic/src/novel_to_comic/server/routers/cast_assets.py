@@ -40,7 +40,7 @@ from ..generation_jobs import (
 )
 from ..ratelimit import cost_limit, limiter
 
-from ..cast_admission import apply_asset_instruction
+from ..cast_admission import apply_asset_instruction, looks_admission
 
 router = APIRouter()
 
@@ -178,10 +178,13 @@ class CastInstructionRequest(BaseModel):
 
 class InstructedRefRegenRequest(CastInstructionRequest):
     char_id: str = Field(min_length=1)
+    # Redraw the character's looks from the new sheet in the same job.
+    with_looks: bool = False
 
 
 class InstructedPlateRegenRequest(CastInstructionRequest):
     loc_id: str = Field(min_length=1)
+    with_looks: bool = False
 
 
 class InstructedPropRegenRequest(CastInstructionRequest):
@@ -227,6 +230,7 @@ async def _enqueue_cast_asset_regen(
     label: str,
     work,
     debit_description: str,
+    with_looks: bool = False,
 ) -> dict:
     """One intake for cast asset regens — the ref, plate, and prop handlers
     differ only in kind, payload key, and work callable."""
@@ -247,6 +251,9 @@ async def _enqueue_cast_asset_regen(
     asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
         config, project_dir, kind, asset_id
     )
+    looks = looks_admission(config, project_dir, kind, asset_id) if with_looks and ":" not in asset_id else None
+    if looks is not None and not looks["look_ids"]:
+        looks = None
 
     from ..job_commands import command
     job, _created = await enqueue_credited_job(
@@ -258,13 +265,14 @@ async def _enqueue_cast_asset_regen(
         stage="cast",
         kind=kind,
         label=label,
-        payload={asset_id_key: asset_id},
+        payload={asset_id_key: asset_id, **({"with_looks": looks["look_ids"]} if looks else {})},
 
-        command=command("cast_asset", project_dir, config, kind=kind, asset_id=asset_id),
+        command=command("cast_asset", project_dir, config, kind=kind, asset_id=asset_id,
+                        with_looks=looks is not None),
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
-        estimate_credits=asset_estimate["estimate_credits"],
-        operations=cast_asset_operations(config, kind, asset_id),
+        estimate_credits=asset_estimate["estimate_credits"] + (looks["estimate_credits"] if looks else 0),
+        operations=(*cast_asset_operations(config, kind, asset_id), *(looks["operations"] if looks else ())),
     )
     return {
         "status": "queued",
@@ -306,10 +314,16 @@ async def asset_regen_estimate(
         )
     except CodexRoutingError as exc:
         instruction_estimate = {"supported": False, "error": str(exc)}
+    looks = None
+    if state_id is None and asset_type in {"character", "location"}:
+        admission = looks_admission(config, project_dir, regen_kind, asset_id)
+        if admission["look_ids"]:
+            looks = {"count": len(admission["look_ids"]), "estimate_credits": admission["estimate_credits"]}
     return {
         "asset_type": asset_type,
         "asset_id": asset_id,
         "state_id": state_id,
+        "looks": looks,
         "reference_assets_supported": True,
         **breakdown,
         "instruction_estimate": instruction_estimate,
@@ -322,6 +336,7 @@ async def regen_ref(
     request: Request,
     project_id: str,
     char_id: str = Query(...),
+    with_looks: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -341,6 +356,7 @@ async def regen_ref(
         label=asset_regen_label("character", char_id),
         work=lambda: s3_cast.regenerate_character_ref(config, project_dir, char_id),
         debit_description=f"Model call: regenerate character ref {char_id}",
+        with_looks=with_looks,
     )
 
 
@@ -384,6 +400,7 @@ async def regen_plate(
     request: Request,
     project_id: str,
     loc_id: str = Query(...),
+    with_looks: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -403,6 +420,7 @@ async def regen_plate(
         label=asset_regen_label("location", loc_id),
         work=lambda: s3_cast.regenerate_location_plate(config, project_dir, loc_id),
         debit_description=f"Model call: regenerate location plate {loc_id}",
+        with_looks=with_looks,
     )
 
 
@@ -488,6 +506,7 @@ async def regen_ref_with_instruction(
         instruction=body.instruction,
         reference_assets=body.reference_assets,
         app=request.app,
+        with_looks=body.with_looks,
     )
 
 
@@ -513,6 +532,7 @@ async def regen_plate_with_instruction(
         instruction=body.instruction,
         reference_assets=body.reference_assets,
         app=request.app,
+        with_looks=body.with_looks,
     )
 
 
@@ -613,7 +633,7 @@ def get_character_ref_versions(
     project=Depends(get_project),
 ):
     """Archived re-roll history for a character ref sheet (canonical or a state)."""
-    project_dir, _config, _state = project
+    project_dir, config, _state = project
     _require_path_safe_id(char_id, "char_id")
     if state_id is not None:
         _require_path_safe_id(state_id, "state_id")
@@ -640,7 +660,7 @@ def restore_character_ref_version(
         revalidate_state_asset_lineage,
     )
 
-    project_dir, _config, _state = project
+    project_dir, config, _state = project
     _require_path_safe_id(char_id, "char_id")
     if state_id is not None:
         _require_path_safe_id(state_id, "state_id")
@@ -649,7 +669,7 @@ def restore_character_ref_version(
         restore_asset_version(sheet, project_dir, version)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
-    restore_asset_instruction_direction(project_dir, "character", char_id, state_id, sheet, version)
+    restore_asset_instruction_direction(project_dir, "character", char_id, state_id, sheet, version, config)
     # The single-view crops (portrait/full_body) are derived from the sheet, so
     # re-crop after restoring so they match.
     s3_cast._crop_sheet_to_poses(sheet)

@@ -666,3 +666,36 @@ def keep_design(config, project_dir, bible, character_id: str) -> None:
     character = next(c for c in bible.characters if c.id == character_id)
     plan.fingerprints[character_id] = character_fingerprint(config, character)
     target.write_cast_design(plan)
+
+
+# The lasting look a correction may revise; ``contrast`` stays the ensemble's.
+DESIGN_FACETS = ("face", "hair", "silhouette", "posture", "wardrobe")
+
+
+def revise_design(config, project_dir, bible, character_id: str, changes: dict[str, str]) -> dict[str, str] | None:
+    """Fold an author's lasting correction into one character's current design.
+
+    The design is Cast's own record of what the Story Bible leaves open, so a
+    sheet correction that changes it ("make her hair red") lands here instead
+    of in the author's Story Bible. The design stays bound to the same facts,
+    so nothing is redesigned and no other reference turns outdated by it.
+    Returns the facets as they were before, or None when nothing changed (or
+    the design is not current, in which case Cast redesigns it anyway).
+    """
+    plan = _stored_plan(config, project_dir, bible)
+    current = current_designs(config, project_dir, bible) if plan is not None else {}
+    design = current.get(character_id)
+    if plan is None or design is None:
+        return None
+    updates = {key: str(value).strip()[:800] for key, value in changes.items()
+               if key in DESIGN_FACETS and str(value).strip()}
+    revised = CharacterDesign.model_validate({**design.model_dump(), **updates})
+    if revised == design:
+        return None
+    if any(_signature(other) == _signature(revised) for other in plan.characters
+           if other.character_id != character_id):
+        raise ValueError("That change would make this character's face, hair and silhouette "
+                         "match another character's.")
+    plan.characters = [revised if c.character_id == character_id else c for c in plan.characters]
+    TargetArtifacts(project_dir).write_cast_design(plan)
+    return {key: getattr(design, key) for key in updates}

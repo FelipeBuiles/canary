@@ -53,9 +53,10 @@ export function cancelQueuedPageJobs(project: string): Promise<{ cancelled_job_i
 export function regenRef(
   project: string,
   charId: string,
+  withLooks = false,
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
-    `${seriesPath(project)}/regen-ref?char_id=${encodeURIComponent(charId)}`,
+    `${seriesPath(project)}/regen-ref?char_id=${encodeURIComponent(charId)}${withLooks ? "&with_looks=true" : ""}`,
     { paidAction: true, method: "POST" },
   );
 }
@@ -134,9 +135,10 @@ export function restoreCastAssetVersion(
 export function regenPlate(
   project: string,
   locId: string,
+  withLooks = false,
 ): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
   return apiFetch(
-    `${seriesPath(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
+    `${seriesPath(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}${withLooks ? "&with_looks=true" : ""}`,
     { paidAction: true, method: "POST" },
   );
 }
@@ -154,12 +156,13 @@ export function regenRefWithInstruction(
   instruction: string,
   referenceAssets?: CastReferenceInput[],
   stateId?: string,
+  withLooks = false,
 ): Promise<InstructedRefRegenResponse> {
   return apiFetch(
     stateId ? `${seriesPath(project)}/characters/${encodeURIComponent(charId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-ref-instructed`,
     {
       paidAction: true, method: "POST",
-      body: JSON.stringify({ ...(stateId ? {} : { char_id: charId }), instruction, reference_assets: referenceAssets }),
+      body: JSON.stringify({ ...(stateId ? {} : { char_id: charId, ...(withLooks ? { with_looks: true } : {}) }), instruction, reference_assets: referenceAssets }),
     },
   );
 }
@@ -170,12 +173,13 @@ export function regenPlateWithInstruction(
   instruction: string,
   referenceAssets?: CastReferenceInput[],
   stateId?: string,
+  withLooks = false,
 ): Promise<InstructedPlateRegenResponse> {
   return apiFetch(
     stateId ? `${seriesPath(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-plate-instructed`,
     {
       paidAction: true, method: "POST",
-      body: JSON.stringify({ ...(stateId ? {} : { loc_id: locId }), instruction, reference_assets: referenceAssets }),
+      body: JSON.stringify({ ...(stateId ? {} : { loc_id: locId, ...(withLooks ? { with_looks: true } : {}) }), instruction, reference_assets: referenceAssets }),
     },
   );
 }

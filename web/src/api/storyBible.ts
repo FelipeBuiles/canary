@@ -10,6 +10,9 @@ export interface ReferenceFreshness {
   entity_id: string;
   state_id: string | null;
   status: "current" | "outdated" | "missing";
+  /** Why an outdated reference is out of date: its main image was redrawn
+   * (a look; redrawing it fixes this), or its entry or direction changed. */
+  reason?: "parent_redrawn" | "edited" | null;
 }
 
 /** One author edit, described by names so the editor can say what Undo reverses. */

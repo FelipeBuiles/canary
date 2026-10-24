@@ -22,8 +22,10 @@ interface RegenActionProps {
   lastInstruction?: string | null;
   instruction?: string;
   onInstructionChange?: (instruction: string) => void;
-  onRegenerate: () => void;
-  onRegenerateWithInstruction?: (instruction: string) => void;
+  /** A main image's looks: the confirmation offers to redraw them from the new image too. */
+  looks?: { count: number; estimate_credits: number } | null;
+  onRegenerate: (withLooks: boolean) => void;
+  onRegenerateWithInstruction?: (instruction: string, withLooks: boolean) => void;
 }
 
 type ConfirmMode = "same" | "instruction" | null;
@@ -49,6 +51,7 @@ export function RegenAction({
   lastInstruction,
   instruction: controlledInstruction,
   onInstructionChange,
+  looks,
   onRegenerate,
   onRegenerateWithInstruction,
 }: RegenActionProps) {
@@ -58,6 +61,10 @@ export function RegenAction({
   const setInstruction = onInstructionChange ?? setLocalInstruction;
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [confirmMode, setConfirmMode] = useState<ConfirmMode>(null);
+  // On by default: looks drawn from the old image would otherwise turn outdated.
+  const [includeLooks, setIncludeLooks] = useState(true);
+  const withLooks = !!looks && includeLooks;
+  const looksId = useId();
   const instructionId = useId();
   const instructionErrorId = useId();
   const unavailable = disabled || busy || !cost;
@@ -77,12 +84,27 @@ export function RegenAction({
     if (confirmMode === "instruction") {
       const trimmed = instruction.trim();
       if (!trimmed || !onRegenerateWithInstruction) return;
-      onRegenerateWithInstruction(trimmed);
+      onRegenerateWithInstruction(trimmed, withLooks);
     } else if (confirmMode === "same") {
-      onRegenerate();
+      onRegenerate(withLooks);
     }
     setConfirmMode(null);
   };
+
+  const withLooksCost = (estimate?: CostEstimate) => estimate && looks && withLooks
+    ? { ...estimate, estimate_credits: estimate.estimate_credits + looks.estimate_credits }
+    : estimate;
+  const looksChoice = looks && hasImage ? (
+    <div className="flex items-start gap-3 border-[2px] border-ink-black/10 bg-bristol px-3 py-2">
+      <input id={looksId} type="checkbox" checked={includeLooks} onChange={(event) => setIncludeLooks(event.target.checked)}
+        className="mt-1 h-5 w-5 shrink-0 accent-ink-black" />
+      <label htmlFor={looksId} className="font-body text-[0.8rem] leading-5 text-ink-black">
+        {t("{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}", { count: looks.count })}
+        {" · "}<CreditAmount value={looks.estimate_credits} approximate label={t("credits")} />
+        <span className="block text-ink-muted">{t("Looks drawn from the current image would otherwise be out of date.")}</span>
+      </label>
+    </div>
+  ) : null;
 
   return (
     <section aria-label={`${t("REGENERATE IMAGE")} · ${assetLabel}`}>
@@ -181,12 +203,15 @@ export function RegenAction({
           : hasImage
             ? t("Scenewright will create a new image from the same saved brief. The current version stays in history.")
             : t("Scenewright will create this image from its saved visual brief.")}
-        extraBody={confirmMode === "instruction" ? (
-          <div>{instructionSummary}<blockquote className="break-words border-[2px] border-ink-black/10 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
-            “{instruction.trim()}”
-          </blockquote></div>
+        extraBody={confirmMode === "instruction" || looksChoice ? (
+          <div className="space-y-3">
+            {confirmMode === "instruction" && <div>{instructionSummary}<blockquote className="break-words border-[2px] border-ink-black/10 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
+              “{instruction.trim()}”
+            </blockquote></div>}
+            {looksChoice}
+          </div>
         ) : undefined}
-        cost={confirmMode === "instruction" ? instructionCost : cost}
+        cost={withLooksCost(confirmMode === "instruction" ? instructionCost : cost)}
         confirmLabel={confirmMode === "instruction" ? t("REGENERATE WITH CHANGE") : hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")}
         onConfirm={confirm}
         onClose={() => setConfirmMode(null)}

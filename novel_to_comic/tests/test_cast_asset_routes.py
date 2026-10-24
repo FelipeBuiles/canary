@@ -1105,3 +1105,186 @@ def test_uploaded_reference_is_served_by_id_and_unknown_ids_are_not_found(tmp_pa
         with pytest.raises(HTTPException) as exc:
             get_cast_reference_upload(bad, project=project)
         assert exc.value.status_code == 404
+
+
+# --- Looks redrawn with their main image ---------------------------------------
+
+
+def _usage(model: str) -> UsageRecord:
+    return UsageRecord(provider="test", model=model, operation="image")
+
+
+def test_a_correction_with_looks_redraws_them_after_the_main_sheet_in_one_job(tmp_path: Path, image_work):
+    project_dir = _project(tmp_path)
+    app = _app()
+    order = []
+    image_work["regenerate_character_ref"].side_effect = (
+        lambda *args: order.append("main") or ApiResult(value=None, usage=_usage("main")))
+    image_work["regenerate_character_state_ref"].side_effect = (
+        lambda _config, _dir, char_id, state_id: order.append(state_id) or ApiResult(value=None, usage=_usage(state_id)))
+    with patch("novel_to_comic.clients.text.generate_json", return_value=_rewrite()), \
+            patch("novel_to_comic.server.credits.debit_model_usage"):
+        result = _apply(project_dir, app, with_looks=True)
+
+    assert order == ["main", "burned"]
+    job = app.state.generation_jobs[result["job"]["id"]]
+    assert job.payload["with_looks"] == ["burned"]
+    assert job.command.arguments["with_looks"] is True
+
+
+def test_a_look_correction_never_redraws_other_looks(tmp_path: Path, image_work):
+    project_dir = _project(tmp_path)
+    app = _app()
+    with patch("novel_to_comic.clients.text.generate_json", return_value=_rewrite()), \
+            patch("novel_to_comic.server.credits.debit_model_usage"):
+        result = _apply(project_dir, app, state_id="burned", with_looks=True)
+    assert image_work["regenerate_character_state_ref"].await_count == 1
+    assert "with_looks" not in app.state.generation_jobs[result["job"]["id"]].payload
+
+
+def test_redrawing_looks_bills_each_image_and_a_failed_look_does_not_stop_the_rest(tmp_path: Path, monkeypatch):
+    from novel_to_comic.stages import s3_cast
+
+    project_dir = _project(tmp_path)
+    bible = artifacts.read_story_bible(project_dir)
+    bible.characters[0].appearance_states.append(AppearanceState(
+        id="soaked", label="Soaked", visual_anchor="1woman, adult female, soaked coat", visually_significant=True))
+    artifacts.write_story_bible(project_dir, bible)
+
+    async def redraw(_config, _dir, _char_id, state_id):
+        if state_id == "burned":
+            raise RuntimeError("provider refused")
+        return ApiResult(value=None, usage=_usage(state_id))
+
+    monkeypatch.setattr(s3_cast, "regenerate_character_state_ref", redraw)
+    main = ApiResult(value=None, usage=_usage("main"), additional_usage=(_usage("review"),))
+    result = asyncio.run(s3_cast.redraw_looks(Config(), project_dir, "character", "char_001", main))
+    assert result.usage.model == "main"
+    assert [usage.model for usage in result.additional_usage] == ["review", "soaked"]
+
+
+def test_the_estimate_names_the_looks_a_main_redraw_can_bring_along(tmp_path: Path):
+    from novel_to_comic.server.routers.cast_assets import asset_regen_estimate
+
+    project_dir = _project(tmp_path)
+    project = (project_dir, Config(), None)
+    main = asyncio.run(asset_regen_estimate(project_id="p1", asset_type="character", asset_id="char_001",
+                                            state_id=None, reference_count=None, project=project, user_id="u1"))
+    look = asyncio.run(asset_regen_estimate(project_id="p1", asset_type="character", asset_id="char_001",
+                                            state_id="burned", reference_count=None, project=project, user_id="u1"))
+    prop = asyncio.run(asset_regen_estimate(project_id="p1", asset_type="prop", asset_id="prop_001",
+                                            state_id=None, reference_count=None, project=project, user_id="u1"))
+    assert main["looks"]["count"] == 1
+    assert main["looks"]["estimate_credits"] == look["estimate_credits"]
+    assert look["looks"] is None and prop["looks"] is None
+
+
+# --- Corrections that change the lasting design -------------------------------
+
+
+def _design_rewrite(design: dict) -> ApiResult:
+    return ApiResult(value={"status": "accepted", "message": "Red hair.",
+                            "addendum": "Give her short red hair.", "design": design})
+
+
+def test_a_lasting_sheet_correction_revises_the_cast_design_not_the_story_bible(tmp_path: Path, image_work):
+    from novel_to_comic.cast_design import current_designs
+
+    project_dir = _project(tmp_path)
+    bible_before = artifacts.read_story_bible(project_dir)
+    captured: dict = {}
+
+    async def rewrite(**kwargs):
+        captured.update(kwargs)
+        return _design_rewrite({"hair": "Short red hair, cut at the jaw.", "contrast": "ignored", "aura": "x"})
+
+    with patch("novel_to_comic.clients.text.generate_json", side_effect=rewrite), \
+            patch("novel_to_comic.server.credits.debit_model_usage"):
+        _apply(project_dir, _app())
+
+    assert json.loads(captured["user_content"])["asset_context"]["design"]["hair"] == "source hair"
+    design = current_designs(Config(), project_dir, artifacts.read_story_bible(project_dir))["char_001"]
+    assert design.hair == "Short red hair, cut at the jaw."
+    assert design.contrast == "Distinct from the rest of the cast"
+    assert artifacts.read_story_bible(project_dir).characters == bible_before.characters
+    entry = json.loads(artifacts.character_ref_instructions_path(project_dir, "char_001").read_text().splitlines()[-1])
+    assert entry["design_before"] == {"hair": "source hair"}
+    assert artifacts.read_active_addendum(artifacts.character_ref_instructions_path(project_dir, "char_001")) \
+        == "Give her short red hair."
+
+
+def test_a_look_correction_never_touches_the_design(tmp_path: Path, image_work):
+    from novel_to_comic.cast_design import current_designs
+
+    project_dir = _project(tmp_path)
+    captured: dict = {}
+
+    async def rewrite(**kwargs):
+        captured.update(kwargs)
+        return _design_rewrite({"hair": "Short red hair."})
+
+    with patch("novel_to_comic.clients.text.generate_json", side_effect=rewrite), \
+            patch("novel_to_comic.server.credits.debit_model_usage"):
+        _apply(project_dir, _app(), state_id="burned")
+
+    assert "design" not in json.loads(captured["user_content"])["asset_context"]
+    assert current_designs(Config(), project_dir, artifacts.read_story_bible(project_dir))["char_001"].hair \
+        == "source hair"
+
+
+def test_restoring_a_sheet_restores_the_design_it_was_drawn_from(tmp_path: Path):
+    from novel_to_comic.cast_design import current_designs, revise_design
+    from novel_to_comic.cast_instructions import restore_asset_instruction_direction
+
+    project_dir = _project(tmp_path)
+    config = Config()
+    sheet = artifacts.character_ref_sheet_path(project_dir, "char_001")
+    meta = artifacts.read_asset_meta(sheet)
+    artifacts.write_asset_meta(sheet, {**meta, "cast_design": {"hair": "source hair"}})
+    bible = artifacts.read_story_bible(project_dir)
+    assert revise_design(config, project_dir, bible, "char_001", {"hair": "Short red hair."}) == {"hair": "source hair"}
+
+    restore_asset_instruction_direction(project_dir, "character", "char_001", None, sheet, 1, config)
+    assert current_designs(config, project_dir, bible)["char_001"].hair == "source hair"
+
+
+def test_parsed_design_changes_keep_only_lasting_facets():
+    patch_ = parse_asset_instruction_patch({
+        "status": "accepted", "addendum": "Red hair.",
+        "design": {"hair": "  Red\nhair. ", "contrast": "x", "face": 3, "wardrobe": ""},
+    })
+    assert patch_.design == {"hair": "Red hair."}
+    assert parse_asset_instruction_patch({"status": "accepted", "addendum": "Red hair."}).design == {}
+
+
+def test_another_version_with_looks_reserves_and_queues_them_in_one_job(tmp_path, image_work):
+    import httpx
+    from tests.test_server_admission import app_at
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.cast_assets import router
+
+    async def scenario():
+        project_dir = _project(tmp_path)
+        app = app_at(tmp_path)
+        app.include_router(router, prefix="/api/projects/{project_id}")
+        app.dependency_overrides[get_project] = lambda: (project_dir, Config(), None)
+        app.state.generation_semaphore = asyncio.Semaphore(1)
+        admitted = []
+        app.state.durable_queue_required = True
+        app.state.durable_queue = SimpleNamespace(healthy=True, publish=admitted.append)
+        with (
+            patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+            patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
+            patch("novel_to_comic.server.credited_job.reserve_credits"),
+        ):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post("/api/projects/book/regen-ref?char_id=char_001&with_looks=true",
+                                             headers={"Idempotency-Key": "with-looks"})
+                assert response.status_code == 200, response.text
+        return admitted
+
+    admitted = asyncio.run(scenario())
+    assert len(admitted) == 1
+    job = admitted[0]
+    assert job.command.operation == "cast_asset" and job.command.arguments["with_looks"] is True
+    assert job.payload["with_looks"] == ["burned"]

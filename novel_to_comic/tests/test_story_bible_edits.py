@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -486,6 +487,26 @@ def test_a_changed_description_flags_only_that_entitys_references_until_kept(tmp
     assert "char_002" in current_designs(config, tmp_path, artifacts.read_story_bible(tmp_path))
     with pytest.raises(KeyError):
         s3_cast.keep_current_reference(config, tmp_path, "characters", "char_404")
+
+
+def test_looks_drawn_from_a_replaced_main_sheet_say_so(tmp_path) -> None:
+    config, bible = _cast_project(tmp_path)
+    sheet = artifacts.character_ref_sheet_path(tmp_path, "char_001")
+    look = artifacts.character_state_ref_sheet_path(tmp_path, "char_001", "storm")
+    artifacts.write_asset_meta(look, {**artifacts.read_asset_meta(look),
+                                      "canonical_parent_sha256": hashlib.sha256(sheet.read_bytes()).hexdigest()})
+    meta = artifacts.read_asset_meta(sheet)
+    Image.new("RGB", (16, 16), "white").save(sheet)  # the main sheet is redrawn
+    artifacts.write_asset_meta(sheet, meta)
+
+    report = {(item["entity_id"], item["state_id"]): item for item in s3_cast.reference_freshness(config, tmp_path)}
+    assert report[("char_001", None)]["status"] == "current" and report[("char_001", None)]["reason"] is None
+    assert report[("char_001", "storm")]["status"] == "outdated"
+    assert report[("char_001", "storm")]["reason"] == "parent_redrawn"
+
+    artifacts.write_story_bible(tmp_path, edit_entity(bible, "characters", "char_002", {"visual_anchor": "auburn hair"}))
+    report = {(item["entity_id"], item["state_id"]): item for item in s3_cast.reference_freshness(config, tmp_path)}
+    assert report[("char_002", None)]["reason"] == "edited"
 
 
 def test_a_rename_carries_current_references_over(tmp_path) -> None:

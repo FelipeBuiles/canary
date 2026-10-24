@@ -72,6 +72,35 @@ describe("RegenAction", () => {
     expect(within(drawer).getByText("~9 credits")).toBeTruthy();
     await user.click(within(drawer).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
 
-    expect(onRegenerateWithInstruction).toHaveBeenCalledWith("Make the rain heavier");
+    expect(onRegenerateWithInstruction).toHaveBeenCalledWith("Make the rain heavier", false);
+  });
+
+  it("offers to redraw a main image's looks with it, priced in the confirmation", async () => {
+    const user = userEvent.setup();
+    const { onRegenerate } = renderAction({ looks: { count: 3, estimate_credits: 12 } });
+
+    await user.click(screen.getByRole("button", { name: /TRY ANOTHER VERSION about 7 credits/i }));
+    const drawer = screen.getByRole("alertdialog");
+    const looks = within(drawer).getByRole("checkbox", { name: /Also redraw its 3 looks from the new image/ });
+    expect(looks).toHaveProperty("checked", true);
+    expect(within(drawer).getByText("~19 credits")).toBeTruthy();
+
+    await user.click(looks);
+    expect(within(drawer).getByText("~7 credits")).toBeTruthy();
+    await user.click(within(drawer).getByRole("button", { name: "TRY ANOTHER VERSION" }));
+    expect(onRegenerate).toHaveBeenCalledWith(false);
+  });
+
+  it("redraws the looks with a confirmed change by default", async () => {
+    const user = userEvent.setup();
+    const { onRegenerateWithInstruction } = renderAction({ looks: { count: 1, estimate_credits: 4 } });
+
+    await user.type(screen.getByLabelText("WHAT SHOULD CHANGE?"), "Red hair");
+    await user.click(screen.getByRole("button", { name: /REGENERATE WITH CHANGE about 9 credits/i }));
+    const drawer = screen.getByRole("alertdialog");
+    expect(within(drawer).getByRole("checkbox", { name: /Also redraw its look from the new image/ })).toBeTruthy();
+    expect(within(drawer).getByText("~13 credits")).toBeTruthy();
+    await user.click(within(drawer).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+    expect(onRegenerateWithInstruction).toHaveBeenCalledWith("Red hair", true);
   });
 });

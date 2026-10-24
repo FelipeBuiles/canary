@@ -316,8 +316,8 @@ export function useResetStale() {
 export function useRegenRef() {
   return useMutation({
     mutationKey: ["character-regen"],
-    mutationFn: ({ project, charId }: { project: string; charId: string }) =>
-      regenRef(project, charId),
+    mutationFn: ({ project, charId, withLooks }: { project: string; charId: string; withLooks?: boolean }) =>
+      regenRef(project, charId, withLooks),
   });
 }
 
@@ -344,20 +344,22 @@ export function useRegenRefWithInstruction() {
       instruction,
       referenceAssets,
       stateId,
+      withLooks,
     }: {
       project: string;
       charId: string;
       instruction: string;
       referenceAssets?: CastReferenceInput[];
       stateId?: string;
-    }) => regenRefWithInstruction(project, charId, instruction, referenceAssets, stateId),
+      withLooks?: boolean;
+    }) => regenRefWithInstruction(project, charId, instruction, referenceAssets, stateId, withLooks),
   });
 }
 
 export function useRegenPlate() {
   return useMutation({
-    mutationFn: ({ project, locId }: { project: string; locId: string }) =>
-      regenPlate(project, locId),
+    mutationFn: ({ project, locId, withLooks }: { project: string; locId: string; withLooks?: boolean }) =>
+      regenPlate(project, locId, withLooks),
   });
 }
 
@@ -370,13 +372,15 @@ export function useRegenPlateWithInstruction() {
       instruction,
       referenceAssets,
       stateId,
+      withLooks,
     }: {
       project: string;
       locId: string;
       instruction: string;
       referenceAssets?: CastReferenceInput[];
       stateId?: string;
-    }) => regenPlateWithInstruction(project, locId, instruction, referenceAssets, stateId),
+      withLooks?: boolean;
+    }) => regenPlateWithInstruction(project, locId, instruction, referenceAssets, stateId, withLooks),
   });
 }
 

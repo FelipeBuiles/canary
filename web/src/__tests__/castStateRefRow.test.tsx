@@ -5,9 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { StateRefRow } from "../pages/rooms/CastRoom";
 
+const fixtures = vi.hoisted(() => ({ references: [] as unknown[] }));
+
 vi.mock("../api/client", () => ({
   isNotFoundError: () => false,
-  apiFetch: async () => ({ jobs: [], versions: [], characters: [], locations: [], props: [] }),
+  apiFetch: async (path: string) => path.endsWith("/cast/freshness")
+    ? { references: fixtures.references }
+    : { jobs: [], versions: [], characters: [], locations: [], props: [] },
 }));
 
 function TestProviders({ children }: { children: ReactNode }) {
@@ -90,4 +94,20 @@ it("keeps two locations with the same state id independent in thumbnail and full
     );
     fireEvent.keyDown(document, { key: "Escape" });
   });
+});
+
+it("marks a look drawn from an older main image as out of date", async () => {
+  fixtures.references = [
+    { kind: "characters", entity_id: "char_1", state_id: "after_fire", status: "outdated", reason: "parent_redrawn" },
+  ];
+  render(<TestProviders><StateRefRow projectName="demo" entityId="char_1" kind="character"
+    states={[alternateAppearance]} stageRegenerating={false} refreshToken="current" /></TestProviders>);
+  expect(await screen.findByText("Out of date · review & adjust")).toBeTruthy();
+  fixtures.references = [];
+});
+
+it("shows looks as updating while their main image's job redraws them", () => {
+  render(<TestProviders><StateRefRow projectName="demo" entityId="char_1" kind="character"
+    states={[alternateAppearance]} stageRegenerating={false} refreshToken="current" redrawing={["after_fire"]} /></TestProviders>);
+  expect(screen.getByText("Updating…")).toBeTruthy();
 });
