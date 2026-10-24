@@ -1,8 +1,8 @@
 [Unit]
 Description=Canary single-owner application with encrypted secrets
 Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
+After=docker.service network-online.target canary-host.service
+Wants=network-online.target canary-host.service
 StartLimitIntervalSec=300
 StartLimitBurst=3
 

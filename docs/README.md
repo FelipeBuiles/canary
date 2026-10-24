@@ -41,6 +41,8 @@ retained as current reference.
 - [Backup and restore](ops/backup-restore.md): application recovery contract for the container/infrastructure backup setup.
 - [Lightsail CI releases](ops/lightsail-ci.md): Depot builds, host-managed
   deployment, CI access setup, activation gates and failure recovery.
+- [Host maintenance](ops/host-maintenance.md): backoffice host status, APT previews,
+  drained package updates, explicit reboot and recovery setup.
 - [PostHog and launch learning](reference/observability.md): implemented telemetry,
   private feedback, deployment configuration, and weekly evidence review.
 - [Localization](reference/localization.md): ICU catalogs, UI preferences, and independent book translation provenance.

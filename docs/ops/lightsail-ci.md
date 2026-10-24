@@ -52,6 +52,10 @@ drained). Failures during replacement create a maintenance hold and stop the
 candidate. There is no automatic resume, image rollback, data rollback, secret
 rotation, schema migration, instance provisioning, or initial cutover.
 
+Host health, package previews, updates and deliberate reboots are available in
+the backoffice after the separate [host maintenance installation](host-maintenance.md).
+Install the host agent before using the updated Compose socket mount.
+
 ## One-time host installation
 
 Install these reviewed files root-owned, with mode `0755` for Python files and

@@ -1,0 +1,15 @@
+[Unit]
+Description=Verify and resume Canary after an operator-requested host reboot
+After=network-online.target docker.service nginx.service canary-host.service
+Wants=network-online.target docker.service nginx.service
+ConditionPathExists=/var/lib/canary-host/operation.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/canary/host_agent.py --recover
+TimeoutStartSec=600
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
