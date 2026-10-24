@@ -4,6 +4,15 @@
 Versions below describe the checked-in dependency refresh, not a production
 rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 
+Security refresh on October 23, 2026: the application now requires Pillow
+13.0.0, pypdf 6.21.2, and OpenTelemetry API/SDK/HTTP exporter 1.45.1 or newer
+within their declared major versions. Both Python environments lock certifi
+2026.10.23; the gateway also updates aiohttp to 3.14.5 and filelock to 4.2.4.
+The web lock updates DOMPurify to 3.4.17, Vite to 8.3.5, Vitest to 5.0.5,
+Undici to 8.12.3, and Zod to 4.6.7 within the existing manifest ranges.
+These updates address the vulnerabilities reported by the pre-push audit;
+the September table below records the earlier refresh.
+
 ## Dependency boundaries
 
 | Environment | Authority | Installation |
