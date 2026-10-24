@@ -134,6 +134,14 @@ Scenewright uses pretrained language models for manuscript understanding, adapta
 
 I plan to begin model evaluation and API integration once access is available. Scenewright already has a working adaptation workflow, so the initial work is to integrate Together and validate suitable models on representative stories. Production rollout would follow successful evaluation and an author pilot. I don't have a committed production deployment date yet.
 
+## Baseten Startup Program application
+
+### What are you hoping to achieve with the Baseten Startup Program?
+
+I'm building Scenewright, an AI comic studio that turns manuscripts into complete, lettered comic pages. I want to use the Baseten Startup Program to make that process faster, more reliable, and more affordable for authors. My initial focus would be benchmarking open-weight language models for story adaptation and page planning, followed by evaluating suitable image-generation models for character references and complete comic pages.
+
+Program credits would let me test these workloads on representative stories, while engineering support would help me choose appropriate deployment configurations and improve inference performance. I'd measure narrative fidelity, visual continuity, latency, and cost per reviewed page, including the corrections authors need. The outcome I'm aiming for is a validated Baseten integration that I can take into author pilots, with evidence of quality and operating cost before expanding usage.
+
 ## Other common application questions
 
 ### What problem are you solving?
@@ -195,6 +203,7 @@ For a short demo, show a source passage, the approved brief and cast, several co
 
 These notes inform tailoring; they are not part of the copy to paste into forms.
 
+- Baseten's Startup Program offers platform credits and technical support for model deployment. Baseten also documents image-generation workloads. The application answer proposes evaluation and integration; it does not claim an existing Baseten deployment, established volume, or measured performance gains. [Baseten Startup Program](https://www.baseten.co/startup-program/), [Baseten image generation](https://www.baseten.co/solutions/image-generation/).
 - Together's accelerator includes serverless inference credits, and its serverless offering does not require GPU provisioning. Starting with serverless is a recommendation based on Scenewright's current API workflow and unestablished volume; it is not a hardware benchmark. [Together Startup Accelerator](https://www.together.ai/startup-accelerator), [Together serverless models](https://docs.together.ai/docs/serverless/models).
 - Runware's grant form asks for current traction, intended product work, and generative AI usage. Its platform describes reference-driven image generation and prompt-based editing; suitability for complete comic pages still needs evaluation. [Runware grant program](https://runware.ai/grant-program), [Runware documentation](https://runware.ai/docs). The proposed integration is not a claim of existing Runware use; no volume forecast is asserted.
 - AgentGrown's published package describes an MCP connection for keyword research, Search Console, GA4, and before/after measurement. The answer proposes using it with the coding agent that maintains Scenewright's website. It does not assert that Search Console, GA4, or AgentGrown are already connected. [AgentGrown package documentation](https://www.npmjs.com/package/agentgrown).

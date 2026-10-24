@@ -99,6 +99,9 @@ async def _operate(app, job, directory, config):
             result = await s3_cast.regenerate_prop_ref(config, directory, asset_id)
         from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
         _clear_repaired_cast_failure(directory, args["asset_id"])
+        if args.get("with_looks") and not state_id:
+            kind = "character" if args["kind"] == "character_ref_regen" else "location"
+            result = await s3_cast.redraw_looks(config, directory, kind, asset_id, result)
         return result, None
     if spec.operation == "cast_instruction":
         from novel_to_comic.cast_instructions import instructed_asset_execution
@@ -106,7 +109,8 @@ async def _operate(app, job, directory, config):
         from .db import get_db
         work = instructed_asset_execution(config, directory, get_db(), spec.user_id, spec.project_id,
             args["asset_type"], args["asset_id"], args["instruction"], args.get("state_id"),
-            [parse_reference_input(item) for item in args["attachments"]])
+            [parse_reference_input(item) for item in args["attachments"]],
+            with_looks=args.get("with_looks", False))
         return await work(), None
     if spec.operation == "lettering_translation":
         from novel_to_comic.lettering.translation import PreparedTranslation, translate_project

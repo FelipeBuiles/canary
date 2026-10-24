@@ -2924,7 +2924,6 @@
   "You will receive": "Vous obtiendrez",
   "You'll need to confirm the new address via email.": "Vous devrez confirmer la nouvelle adresse par e-mail.",
   "You'll see exactly what changes before anything is saved, and you can undo it afterwards.": "Vous verrez exactement ce qui change avant tout enregistrement, et vous pourrez l’annuler ensuite.",
-  "Your Story Bible edits changed or added these entries. Changed ones keep their current images until you keep or regenerate them; new ones need an image before pages can draw them.": "Vos modifications de la Bible de l'histoire ont changé ou ajouté ces entrées. Celles qui ont changé gardent leurs images actuelles jusqu'à ce que vous les conserviez ou les régénériez ; les nouvelles ont besoin d'une image avant que les pages puissent les dessiner.",
   "Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.": "Vos dessins, sans interruption. Lisez en page simple ou double et regardez les détails en ajustant à la largeur.",
   "Your balance could not be loaded. Retry before resuming.": "Votre solde n’a pas pu être chargé. Réessayez avant de reprendre.",
   "Your balance now covers this action. Resume only when you are ready.": "Votre solde couvre désormais cette action. Reprenez seulement quand vous êtes prêt.",
@@ -3528,5 +3527,16 @@
   "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Réécrit les cases de cette page pour faire cette modification. Ses temps forts et le texte de chaque ligne restent identiques. L’illustration actuelle est conservée jusqu’à ce que vous redessiniez la page.",
   "SUGGESTED WORDING": "FORMULATION PROPOSÉE",
   "The draft is not ready to check.": "Le brouillon n’est pas prêt à être vérifié.",
-  "USE THIS WORDING": "UTILISER CETTE FORMULATION"
+  "USE THIS WORDING": "UTILISER CETTE FORMULATION",
+  "Keep look as it is": "Conserver l’aspect tel quel",
+  "Keep looks as they are": "Conserver les aspects tels quels",
+  "Looks drawn from the current image would otherwise be out of date.": "Sinon, les aspects dessinés à partir de l’image actuelle seraient obsolètes.",
+  "Main image": "Image principale",
+  "Out of date · review & adjust": "Obsolète · examiner et ajuster",
+  "Redraw look": "Redessiner l’aspect",
+  "Redraw looks": "Redessiner les aspects",
+  "These references no longer match what Cast would draw now. Out-of-date images keep serving pages until you update or keep them; new entries need an image before pages can draw them.": "Ces références ne correspondent plus à ce que la distribution dessinerait maintenant. Les images obsolètes continuent de servir les pages jusqu’à ce que vous les mettiez à jour ou les conserviez ; les nouvelles entrées ont besoin d’une image avant que les pages puissent les dessiner.",
+  "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}": "{count, plural, one {Redessiner aussi son aspect à partir de la nouvelle image} other {Redessiner aussi ses # aspects à partir de la nouvelle image}}",
+  "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}": "{count, plural, one {Son image principale a été redessinée : cet aspect a donc été dessiné à partir de la précédente :} other {Son image principale a été redessinée : ces # aspects ont donc été dessinés à partir de la précédente :}}",
+  "{count, plural, one {Scenewright will redraw {name}'s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}'s # looks from its current main image. The current versions stay in history.}}": "{count, plural, one {Scenewright redessinera l’aspect de {name} à partir de son image principale actuelle. La version actuelle reste dans l’historique.} other {Scenewright redessinera les # aspects de {name} à partir de son image principale actuelle. Les versions actuelles restent dans l’historique.}}"
 }

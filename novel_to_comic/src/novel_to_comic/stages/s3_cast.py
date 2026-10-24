@@ -633,10 +633,8 @@ async def regenerate_character_ref(
     style_ref = _character_style_reference(config, project_dir, approved_style_ref)
     _require_shared_character_style(config, style_ref)
     addendum = _read_character_ref_addendum(project_dir, char.id)
-    input_data = _character_generation_input(
-        config, story_bible, char, addendum,
-        design=read_design(config, project_dir, story_bible, character_ids=[char.id]),
-    )
+    design_plan = read_design(config, project_dir, story_bible, character_ids=[char.id])
+    input_data = _character_generation_input(config, story_bible, char, addendum, design=design_plan)
     request = _compile_cast_request(
         config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
     )
@@ -648,6 +646,7 @@ async def regenerate_character_ref(
         )
     result = submission.result
     assert result is not None
+    _record_design(output_path, design_plan, char.id)
     return result
 
 
@@ -770,6 +769,61 @@ async def regenerate_location_plate(
     return result
 
 
+def entity_look_ids(project_dir: Path, kind: str, entity_id: str) -> list[str]:
+    """The looks Cast draws from one character's sheet or one location's plate."""
+    plural = {"character": "characters", "location": "locations"}.get(kind)
+    if plural is None:
+        return []
+    bible = read_cast_story_bible(project_dir, safe=True)
+    if bible is None:
+        return []
+    return [look.id for item_kind, entity, look in _reference_items(bible)
+            if item_kind == plural and entity.id == entity_id and look is not None]
+
+
+async def redraw_looks(
+    config: Config, project_dir: Path, kind: str, entity_id: str, main: ApiResult[Path],
+) -> ApiResult[Path]:
+    """Redraw every look from the main image that just landed, one at a time.
+
+    The author chose this with the main redraw, so the looks never sit
+    outdated against it. A look that fails stays outdated and is reported by
+    Cast's freshness check; it is never retried here. Returns ``main`` with
+    the looks' usage attached, so the job bills every call exactly once.
+    """
+    from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
+
+    usage = list(main.additional_usage)
+    for look_id in entity_look_ids(project_dir, kind, entity_id):
+        try:
+            look = (await regenerate_character_state_ref(config, project_dir, entity_id, look_id)
+                    if kind == "character"
+                    else await regenerate_location_plate(config, project_dir, entity_id, state_id=look_id))
+        except Exception as exc:  # noqa: BLE001 — one look must not undo the main image or the others
+            console.print(f"[yellow]Could not redraw look {entity_id}/{look_id}: {exc}[/yellow]")
+            continue
+        usage.extend(item for item in (look.usage, *look.additional_usage) if item is not None)
+        _clear_repaired_cast_failure(project_dir, f"{entity_id}:{look_id}")
+    return replace(main, additional_usage=tuple(usage))
+
+
+def _record_design(output_path: Path, plan: CastDesignPlan, char_id: str) -> None:
+    """Keep the Cast design a sheet was drawn from beside it, so restoring the
+    sheet can restore the design too. Recorded only for the image this request made."""
+    from novel_to_comic.cast_design import DESIGN_FACETS
+
+    design = next((c for c in plan.characters if c.character_id == char_id), None)
+    try:
+        meta = artifacts.read_asset_meta(output_path)
+    except Exception:
+        return
+    if design is None or not isinstance(meta, dict) or not meta:
+        return
+    artifacts.write_asset_meta(output_path, {
+        **meta, "cast_design": {key: getattr(design, key) for key in DESIGN_FACETS},
+    })
+
+
 async def _crop_generated_sheet(result):
     await asyncio.to_thread(_crop_sheet_to_poses, result.value)
     return result
@@ -830,6 +884,7 @@ async def _generate_character_refs(
                 on_generated=_crop_generated_sheet,
             )
             if outcome and outcome.status != "held":
+                _record_design(output_path, design, char.id)
                 if outcome.status == "reused" and not (char_dir / "portrait.png").exists():
                     try:
                         await asyncio.to_thread(_crop_sheet_to_poses, output_path)
@@ -1435,12 +1490,23 @@ class _ReferenceRequests:
         return _compile_state_asset_wire(config, spec, d)
 
 
+def _drawn_from_another_main_image(path: Path, parent: Path) -> bool:
+    """A look whose main image was redrawn after the look was made."""
+    try:
+        recorded = artifacts.read_asset_meta(path).get("canonical_parent_sha256")
+    except Exception:
+        return False
+    return bool(recorded) and recorded != _file_sha256(parent)
+
+
 def reference_freshness(config: Config, project_dir: Path) -> list[dict]:
     """Each Cast reference: ``current``, ``outdated`` or ``missing``.
 
     An edited entity's existing images turn ``outdated``: they still serve
     drawing until the author regenerates them or keeps them as they are.
-    Reads only; nothing is generated.
+    An outdated look's ``reason`` is ``parent_redrawn`` when its main image
+    was redrawn since (redrawing the look fixes it; nothing was edited), and
+    ``edited`` otherwise. Reads only; nothing is generated.
     """
     bible = read_cast_story_bible(project_dir, safe=True)
     if bible is None:
@@ -1468,9 +1534,14 @@ def reference_freshness(config: Config, project_dir: Path) -> list[dict]:
                 status = "current" if asset_matches_request(path, builder.request(kind, entity, appearance)) else "outdated"
             except (OSError, ValueError):
                 status = "outdated"
+        reason = None
+        if status == "outdated":
+            reason = ("parent_redrawn" if appearance is not None and _drawn_from_another_main_image(
+                path, builder.path(kind, entity, None)) else "edited")
         report.append({
             "kind": kind, "entity_id": entity.id,
             "state_id": appearance.id if appearance is not None else None, "status": status,
+            "reason": reason,
         })
     return report
 

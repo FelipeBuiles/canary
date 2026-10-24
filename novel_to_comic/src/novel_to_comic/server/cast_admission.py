@@ -23,6 +23,26 @@ from novel_to_comic.server.codex_admission import (
 )
 
 
+def looks_admission(config: Config, project_dir: Path, job_kind: str, entity_id: str) -> dict[str, Any]:
+    """What redrawing an entity's looks with its main image adds to one job.
+
+    Returns the look ids, their summed credit estimate and their operations, so
+    the job reserves for every image it may make before anything is spent.
+    """
+    from novel_to_comic.server.credits import UnifiedCostResolver
+    from novel_to_comic.stages.s3_cast import entity_look_ids
+
+    kind = {"character_ref_regen": "character", "location_plate_regen": "location"}.get(job_kind)
+    look_ids = entity_look_ids(project_dir, kind, entity_id) if kind else []
+    credits, operations = 0, []
+    for look_id in look_ids:
+        scoped = f"{entity_id}:{look_id}"
+        credits += UnifiedCostResolver.estimate_asset_regen_cost(
+            config, project_dir, job_kind, scoped)["estimate_credits"]
+        operations.extend(cast_asset_operations(config, job_kind, scoped))
+    return {"look_ids": look_ids, "estimate_credits": credits, "operations": tuple(operations)}
+
+
 async def apply_asset_instruction(
     config: Config,
     project_dir: Path,
@@ -35,6 +55,7 @@ async def apply_asset_instruction(
     app: Any | None = None,
     state_id: str | None = None,
     reference_assets: list[CastReferenceInput] | None = None,
+    with_looks: bool = False,
 ) -> dict[str, Any]:
     """Admit one correction; the reserved job owns both rewrite and image work."""
     from fastapi import HTTPException
@@ -113,6 +134,10 @@ async def apply_asset_instruction(
     estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
         config, asset_estimate, "cast"
     )
+    looks = (looks_admission(config, project_dir, job_kind, asset_id)
+             if with_looks and not state_id else None)
+    if looks is not None and not looks["look_ids"]:
+        looks = None
 
     from novel_to_comic.server.job_commands import command
 
@@ -125,6 +150,7 @@ async def apply_asset_instruction(
         instruction=instruction,
         state_id=state_id,
         attachments=[item.model_dump(mode="json") for item in attachments],
+        with_looks=looks is not None,
     )
 
     job, _created = await enqueue_reserved_generation_job(
@@ -136,15 +162,17 @@ async def apply_asset_instruction(
             **identity,
             "instruction": instruction,
             "reference_assets": [item.model_dump() for item in attachments],
+            **({"with_looks": looks["look_ids"]} if looks else {}),
         },
         command=descriptor,
         project_id=project_id,
         project_dir=project_dir,
         stage="cast",
-        reservation_credits=estimate["estimate_credits"],
+        reservation_credits=estimate["estimate_credits"] + (looks["estimate_credits"] if looks else 0),
         operations=(
             ("text", config.effective_prompt_model()),
             *cast_asset_operations(config, job_kind, job_asset_id),
+            *(looks["operations"] if looks else ()),
         ),
         debit_description=f"Model call: regenerate instructed {asset_type} {asset_id}",
         user_id=user_id,

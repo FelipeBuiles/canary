@@ -2924,7 +2924,6 @@
   "You will receive": "Recibirás",
   "You'll need to confirm the new address via email.": "Tendrás que confirmar la nueva dirección por correo electrónico.",
   "You'll see exactly what changes before anything is saved, and you can undo it afterwards.": "Verás exactamente qué cambia antes de guardar nada, y podrás deshacerlo después.",
-  "Your Story Bible edits changed or added these entries. Changed ones keep their current images until you keep or regenerate them; new ones need an image before pages can draw them.": "Tus ediciones de la Biblia de la historia cambiaron o añadieron estas entradas. Las cambiadas conservan sus imágenes actuales hasta que las mantengas o las regeneres; las nuevas necesitan una imagen antes de que las páginas puedan dibujarlas.",
   "Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.": "Tu dibujo, sin interrupciones. Lee páginas individuales o dobles y mira los detalles ajustando al ancho.",
   "Your balance could not be loaded. Retry before resuming.": "No se pudo cargar tu saldo. Reinténtalo antes de reanudar.",
   "Your balance now covers this action. Resume only when you are ready.": "Tu saldo ya cubre esta acción. Reanuda solo cuando quieras.",
@@ -3528,5 +3527,16 @@
   "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Reescribe las viñetas de esta página para hacer este cambio. Sus momentos y el texto de cada línea no cambian. El arte actual se conserva hasta que redibujes la página.",
   "SUGGESTED WORDING": "REDACCIÓN SUGERIDA",
   "The draft is not ready to check.": "El borrador no está listo para revisar.",
-  "USE THIS WORDING": "USAR ESTA REDACCIÓN"
+  "USE THIS WORDING": "USAR ESTA REDACCIÓN",
+  "Keep look as it is": "Conservar el aspecto como está",
+  "Keep looks as they are": "Conservar los aspectos como están",
+  "Looks drawn from the current image would otherwise be out of date.": "De lo contrario, los aspectos dibujados a partir de la imagen actual quedarían desactualizados.",
+  "Main image": "Imagen principal",
+  "Out of date · review & adjust": "Desactualizado · revisar y ajustar",
+  "Redraw look": "Redibujar aspecto",
+  "Redraw looks": "Redibujar aspectos",
+  "These references no longer match what Cast would draw now. Out-of-date images keep serving pages until you update or keep them; new entries need an image before pages can draw them.": "Estas referencias ya no coinciden con lo que el reparto dibujaría ahora. Las imágenes desactualizadas siguen sirviendo a las páginas hasta que las actualices o las conserves; las entradas nuevas necesitan una imagen antes de que las páginas puedan dibujarlas.",
+  "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}": "{count, plural, one {Redibujar también su aspecto a partir de la nueva imagen} other {Redibujar también sus # aspectos a partir de la nueva imagen}}",
+  "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}": "{count, plural, one {Su imagen principal se redibujó, así que este aspecto se dibujó a partir de la anterior:} other {Su imagen principal se redibujó, así que estos # aspectos se dibujaron a partir de la anterior:}}",
+  "{count, plural, one {Scenewright will redraw {name}'s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}'s # looks from its current main image. The current versions stay in history.}}": "{count, plural, one {Scenewright redibujará el aspecto de {name} a partir de su imagen principal actual. La versión actual queda en el historial.} other {Scenewright redibujará los # aspectos de {name} a partir de su imagen principal actual. Las versiones actuales quedan en el historial.}}"
 }

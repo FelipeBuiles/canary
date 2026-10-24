@@ -2924,7 +2924,6 @@
   "You will receive": "You will receive",
   "You'll need to confirm the new address via email.": "You''ll need to confirm the new address via email.",
   "You'll see exactly what changes before anything is saved, and you can undo it afterwards.": "You''ll see exactly what changes before anything is saved, and you can undo it afterwards.",
-  "Your Story Bible edits changed or added these entries. Changed ones keep their current images until you keep or regenerate them; new ones need an image before pages can draw them.": "Your Story Bible edits changed or added these entries. Changed ones keep their current images until you keep or regenerate them; new ones need an image before pages can draw them.",
   "Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.": "Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.",
   "Your balance could not be loaded. Retry before resuming.": "Your balance could not be loaded. Retry before resuming.",
   "Your balance now covers this action. Resume only when you are ready.": "Your balance now covers this action. Resume only when you are ready.",
@@ -3528,5 +3527,16 @@
   "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.": "Rewrites this page’s panels to make this change. Its beats and the wording of every line stay the same. The current artwork is kept until you redraw the page.",
   "SUGGESTED WORDING": "SUGGESTED WORDING",
   "The draft is not ready to check.": "The draft is not ready to check.",
-  "USE THIS WORDING": "USE THIS WORDING"
+  "USE THIS WORDING": "USE THIS WORDING",
+  "Keep look as it is": "Keep look as it is",
+  "Keep looks as they are": "Keep looks as they are",
+  "Looks drawn from the current image would otherwise be out of date.": "Looks drawn from the current image would otherwise be out of date.",
+  "Main image": "Main image",
+  "Out of date · review & adjust": "Out of date · review & adjust",
+  "Redraw look": "Redraw look",
+  "Redraw looks": "Redraw looks",
+  "These references no longer match what Cast would draw now. Out-of-date images keep serving pages until you update or keep them; new entries need an image before pages can draw them.": "These references no longer match what Cast would draw now. Out-of-date images keep serving pages until you update or keep them; new entries need an image before pages can draw them.",
+  "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}": "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}",
+  "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}": "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}",
+  "{count, plural, one {Scenewright will redraw {name}'s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}'s # looks from its current main image. The current versions stay in history.}}": "{count, plural, one {Scenewright will redraw {name}''s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}''s # looks from its current main image. The current versions stay in history.}}"
 }

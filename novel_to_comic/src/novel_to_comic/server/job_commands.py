@@ -45,6 +45,8 @@ class PageArguments(Arguments):
 class CastArguments(Arguments):
     asset_id: str = Field(min_length=1, max_length=200)
     kind: Literal["character_ref_regen", "location_plate_regen", "prop_ref_regen"]
+    # Redraw the entity's looks from the new main image in the same job.
+    with_looks: bool = False
 
 
 class InstructionArguments(Arguments):
@@ -53,6 +55,7 @@ class InstructionArguments(Arguments):
     state_id: str | None = None
     instruction: str = Field(min_length=1, max_length=4000)
     attachments: list[dict[str, Any]] = Field(max_length=3)
+    with_looks: bool = False
 
 
 class TranslationArguments(Arguments):

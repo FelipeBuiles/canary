@@ -260,6 +260,8 @@ export interface AssetRegenCostEstimate extends CostEstimate {
   asset_id: string;
   state_id: string | null;
   instruction_estimate?: CostEstimate;
+  /** A main image's looks, which can be redrawn from it in the same job. */
+  looks?: { count: number; estimate_credits: number } | null;
 }
 
 export interface CreditTransaction {

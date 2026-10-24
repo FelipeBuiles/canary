@@ -111,6 +111,9 @@ class AssetInstructionPatch(BaseModel):
     status: Literal["accepted", "blocked", "ambiguous"] = "accepted"
     message: str = ""
     addendum: str = ""
+    # Lasting changes to a character's Cast design (face, hair, ...), whole
+    # revised values. Only a character's main sheet offers its design.
+    design: dict[str, str] = {}
 
 
 def _clean_patch_value(value: str) -> str:
@@ -137,6 +140,13 @@ def parse_asset_instruction_patch(raw: object) -> AssetInstructionPatch:
         normalized["message"] = ""
     if normalized.get("addendum") is None:
         normalized["addendum"] = ""
+    from novel_to_comic.cast_design import DESIGN_FACETS
+    design = normalized.get("design")
+    normalized["design"] = {
+        key: cleaned for key, value in (design.items() if isinstance(design, dict) else ())
+        if key in DESIGN_FACETS and isinstance(value, str)
+        and (cleaned := re.sub(r"\s+", " ", _CONTROL_CHARS_RE.sub("", value)).strip()[:800])
+    }
     try:
         patch = AssetInstructionPatch.model_validate(normalized)
     except Exception as exc:
@@ -158,13 +168,26 @@ def parse_asset_instruction_patch(raw: object) -> AssetInstructionPatch:
 
 def restore_asset_instruction_direction(
     project_dir: Path, asset_type: AssetType, asset_id: str,
-    state_id: str | None, image_path: Path, version: int,
+    state_id: str | None, image_path: Path, version: int, config=None,
 ) -> None:
-    """Restore the design draft too, so the next edit cannot revive a newer design."""
+    """Restore the design draft too, so the next edit cannot revive a newer design.
+
+    A character sheet also restores the Cast design it was drawn from, so the
+    restored image matches its request again.
+    """
     from novel_to_comic import artifacts
 
     meta_path = artifacts.asset_meta_path(image_path)
     metadata = artifacts.read_asset_meta(image_path) if meta_path.exists() else {}
+    if (config is not None and asset_type == "character" and state_id is None
+            and isinstance(metadata.get("cast_design"), dict)):
+        from novel_to_comic.cast_design import revise_design
+        from novel_to_comic.cast_roster import read_cast_story_bible
+        try:
+            revise_design(config, project_dir, read_cast_story_bible(project_dir), asset_id,
+                          metadata["cast_design"])
+        except ValueError:
+            logger.warning("Could not restore the Cast design of %s", asset_id)
     artifacts.append_instruction_log_entry(_instructions_path(project_dir, asset_type, asset_id, state_id), {
         "operation": "restore", "version": version,
         "created_at": datetime.now(UTC).isoformat(),
@@ -198,6 +221,11 @@ def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
         f'"addendum":"concise visual direction under {MAX_ASSET_ADDENDUM_CHARS} characters incorporating the request and prior addendum"}}'
         ". For accepted requests, addendum must be non-empty. Never report accepted when the core "
         "requested change has been omitted or replaced with a smaller cosmetic edit. "
+        "When asset_context includes design (a character's main sheet only) and the request lastingly "
+        "changes the character's face, hair, silhouette, posture or wardrobe, also return "
+        '"design": {facet: revised text} with only those facets, each the whole current design value '
+        "rewritten with the change applied; keep the change in addendum too. Omit design for one-off "
+        "fixes to this sheet's rendering, palette treatment, pose, framing or presentation. "
         "If a prior addendum is supplied, merge it with the new request; the latest request wins "
         "where they conflict. Describe the intended visible result, not permissions or prohibitions. "
         "Preserve unrequested details and the target entity/state association. Editing an alternate "
@@ -229,6 +257,8 @@ def asset_instruction_rewrite_user_content(
             "status": "accepted|blocked|ambiguous",
             "message": "short user-facing summary",
             "addendum": f"concise visual direction under {MAX_ASSET_ADDENDUM_CHARS} characters (will be appended to the prompt)",
+            **({"design": "optional {face|hair|silhouette|posture|wardrobe: whole revised value} for lasting changes only"}
+               if context.get("design") else {}),
         },
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -328,7 +358,8 @@ def resolve_cast_asset(project_dir: Path, asset_type: AssetType, asset_id: str, 
 
 
 def instructed_asset_execution(config, project_dir, db, user_id, project_id,
-                               asset_type, asset_id, instruction, state_id, attachments):
+                               asset_type, asset_id, instruction, state_id, attachments,
+                               *, with_looks: bool = False):
     from novel_to_comic import artifacts
     from novel_to_comic.clients import text
     from novel_to_comic.server.credits import debit_model_usage
@@ -357,6 +388,14 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
             changed_facets=list(state_obj.changed_facets) if state_obj else [],
             prior_addendum=artifacts.read_active_addendum(instructions_path),
         )
+        main_sheet = asset_type == "character" and not state_id
+        if main_sheet:
+            from novel_to_comic.cast_design import DESIGN_FACETS, current_designs
+            from novel_to_comic.cast_roster import read_cast_story_bible
+            bible = read_cast_story_bible(project_dir)
+            current = current_designs(config, project_dir, bible).get(asset_id)
+            if current is not None:
+                rewrite_context["design"] = {key: getattr(current, key) for key in DESIGN_FACETS}
         rewrite = await text.generate_json(
             config=config,
             model=config.effective_prompt_model(),
@@ -373,6 +412,14 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
                 job_id=current_ai_request_context().job_id,
             )
         patch = parse_asset_instruction_patch(rewrite.value)
+        design_before = None
+        if main_sheet and patch.design and "design" in rewrite_context:
+            from novel_to_comic.cast_design import revise_design
+            try:
+                design_before = revise_design(config, project_dir, bible, asset_id, patch.design)
+            except ValueError as exc:
+                # The addendum still carries the change; only the design keeps its old value.
+                logger.warning("Kept the Cast design of %s: %s", asset_id, exc)
         # Accepted direction must exist before the renderer reads it. This is
         # rewrite evidence, not a claim that an image has been successfully changed.
         artifacts.append_instruction_log_entry(
@@ -382,6 +429,7 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
                 "instruction": instruction,
                 "patch": patch.model_dump(),
                 "reference_assets": [item.model_dump() for item in attachments],
+                **({"design_before": design_before} if design_before else {}),
             },
         )
         if asset_type == "character":
@@ -397,6 +445,8 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
         _clear_repaired_cast_failure(
             project_dir, f"{asset_id}:{state_id}" if state_id else asset_id
         )
+        if with_looks and not state_id and asset_type in {"character", "location"}:
+            result = await s3_cast.redraw_looks(config, project_dir, asset_type, asset_id, result)
         return result
 
     return _runner

@@ -196,6 +196,11 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
   its provenance, never replacing it); `POST /cast/reopen` returns an approved
   Cast to pending so a resumed Cast regenerates every out-of-date or missing
   reference. Edits that change no appearance carry current references over.
+  Each out-of-date reference carries a `reason`: `parent_redrawn` for a look
+  whose main image was redrawn after it (its request binds the main image's
+  bytes), else `edited`. The Cast room groups references by entry and never
+  sends `parent_redrawn` looks to the Story Bible: an edit there would redesign
+  the main image and outdate the looks again.
 - The Pages list reports each drawn page whose frozen references or written
   identities differ from the current Story Bible or Cast (image, description,
   continuity note, or removed entry), alongside re-planned pages, in its
@@ -258,7 +263,16 @@ route contract, preserving one paid action per request.
 State corrections use the entity-scoped instructed regeneration routes; their
 instructions and images do not replace the main reference. Missing appearances
 can be generated individually. Each paid action remains explicitly estimated
-and confirmed.
+and confirmed. A character sheet or location plate redraw, plain or instructed,
+accepts `with_looks`: the same job then redraws that entity's looks one at a
+time from the new main image, reserving for every look up front
+(`asset-regen-estimate` reports `looks`). A look that fails stays out of date
+and is never retried. A main character sheet correction may also return
+lasting `design` facets (face, hair, silhouette, posture, wardrobe); they
+revise that character's Cast design in place, keeping its fingerprint, and the
+Story Bible is never written. The addendum still carries the change, because
+Draw reads it as approved art direction. Each sheet records the design it was
+drawn from (`cast_design` in its metadata), and restoring a version restores it.
 
 Cast instruction bodies optionally accept `reference_assets` (project-local
 `asset_type`, `asset_id`, optional `state_id`; up to three). **Add a reference**

@@ -110,6 +110,12 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
  * States whose ref hasn't been generated yet (or failed) show a compact status
  * rather than vanishing, so the gap is visible.
  */
+/** The looks a main-image job redraws after it (its ``with_looks`` payload). */
+function redrawnLooks(job: GenerationJob | null | undefined): readonly string[] | undefined {
+  const looks = job?.payload.with_looks;
+  return Array.isArray(looks) ? looks.filter((look): look is string => typeof look === "string") : undefined;
+}
+
 export function StateRefRow({
   projectName,
   entityId,
@@ -117,6 +123,7 @@ export function StateRefRow({
   states,
   stageRegenerating,
   refreshToken,
+  redrawing,
 }: {
   projectName: string;
   entityId: string;
@@ -124,6 +131,8 @@ export function StateRefRow({
   states: AppearanceState[] | undefined;
   stageRegenerating: boolean;
   refreshToken: string | null;
+  /** Looks the main image's running job redraws once its new image lands. */
+  redrawing?: readonly string[];
 }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
@@ -141,6 +150,11 @@ export function StateRefRow({
   const stateFailure = (stateId: string) => castFailureFor(status?.stages?.cast?.failures, entityId, stateId);
   const updating = useContext(CastUpdatingContext);
   const stateUpdating = (stateId: string) => updating.has(updatingKey(kind === "character" ? "characters" : "locations", entityId, stateId));
+  const { data: freshness } = useCastFreshness(projectName, significant.length > 0);
+  const outdated = new Set((freshness?.references ?? [])
+    .filter((ref) => ref.entity_id === entityId && ref.state_id && ref.status === "outdated"
+      && ref.kind === (kind === "character" ? "characters" : "locations"))
+    .map((ref) => ref.state_id));
   if (significant.length === 0) return null;
   const stateJob = (stateId: string) => tracking.status({
     identity: kind === "character" ? "char_id" : "loc_id", value: `${entityId}:${stateId}`, currentStyle: true,
@@ -171,7 +185,8 @@ export function StateRefRow({
           const src = thumbUrl(s.id);
           const job = stateJob(s.id);
           // A missing look is drawn by any Cast run; an existing one only while it is still pending update.
-          const generating = (stageRegenerating && (failed[src] || stateUpdating(s.id))) || job?.status === "queued" || job?.status === "running";
+          const generating = (stageRegenerating && (failed[src] || stateUpdating(s.id))) || job?.status === "queued" || job?.status === "running"
+            || !!redrawing?.includes(s.id);
           const failure = generating ? undefined : stateFailure(s.id);
           const frameClass = `${imgAspect} bg-surface-container`;
           const labelClass = "block min-w-0 break-words text-left font-body text-sm leading-snug text-ink-black";
@@ -224,7 +239,7 @@ export function StateRefRow({
                 />
                 {generating && <LoaderCircle size={18} aria-hidden="true" className="absolute inset-0 m-auto text-ink-black motion-safe:animate-spin" />}
               </div>
-              <span className={labelClass}><span className="line-clamp-2" title={s.label}>{s.label}</span><span role={generating ? "status" : undefined} className="mt-1 block text-xs text-ink-muted">{generating ? t("Updating…") : t("Review & adjust")}</span></span>
+              <span className={labelClass}><span className="line-clamp-2" title={s.label}>{s.label}</span><span role={generating ? "status" : undefined} className={`mt-1 block text-xs ${!generating && outdated.has(s.id) ? "text-hero-red" : "text-ink-muted"}`}>{generating ? t("Updating…") : outdated.has(s.id) ? t("Out of date · review & adjust") : t("Review & adjust")}</span></span>
             </button>
           );
         })}
@@ -573,12 +588,14 @@ function CharacterCastCard({
     }
   }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => regenerate();
-  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+  const startRegen = (withLooks: boolean) => regenerate(undefined, undefined, withLooks);
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[], withLooks: boolean) => {
     if (!text.trim()) return;
     setInstruction(text.trim());
-    regenerate(text, referenceAssets);
+    regenerate(text, referenceAssets, withLooks);
   };
+  // Looks this card's running job redraws after its main image.
+  const redrawingLooks = redrawnLooks(activeJob);
   const isInstructionBusy = isSubmitting;
 
   const { t } = useI18n();
@@ -619,6 +636,7 @@ function CharacterCastCard({
             states={character.appearance_states}
             stageRegenerating={stageRegenerating}
             refreshToken={timestamp.toString()}
+            redrawing={redrawingLooks}
           />
         )}
         error={regenError}
@@ -659,7 +677,7 @@ function CharacterCastCard({
                 refreshImage();
               }}
             />
-            <StateRefRow projectName={projectName} entityId={character.id} kind="character" states={character.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
+            <StateRefRow projectName={projectName} entityId={character.id} kind="character" states={character.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} redrawing={redrawingLooks} />
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">AGE</div>
@@ -746,12 +764,14 @@ function LocationPlateCard({
     }
   }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => regenerate();
-  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+  const startRegen = (withLooks: boolean) => regenerate(undefined, undefined, withLooks);
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[], withLooks: boolean) => {
     if (!text.trim()) return;
     setInstruction(text.trim());
-    regenerate(text, referenceAssets);
+    regenerate(text, referenceAssets, withLooks);
   };
+  // Looks this card's running job redraws after its main image.
+  const redrawingLooks = redrawnLooks(activeJob);
   const isInstructionBusy = isSubmitting;
 
   const { t } = useI18n();
@@ -791,6 +811,7 @@ function LocationPlateCard({
             states={location.appearance_states}
             stageRegenerating={stageRegenerating}
             refreshToken={timestamp.toString()}
+            redrawing={redrawingLooks}
           />
         )}
         error={regenError}
@@ -823,7 +844,7 @@ function LocationPlateCard({
             <RefVersionHistory projectName={projectName} assetType="location" assetId={location.id}
               refreshKey={timestamp} busy={stageRegenerating || isGenerating || isInstructionBusy}
               onRestored={() => { refreshImage(); }} />
-            <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
+            <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} redrawing={redrawingLooks} />
             <AnchorSection anchor={location.visual_anchor} />
             <div className="flex flex-wrap gap-3">
               {location.time_of_day && (
@@ -887,11 +908,11 @@ function PropRefCard({
     }
   }, [stageRegenerating, pendingUpdate, refreshImage]);
 
-  const startRegen = () => regenerate();
-  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[]) => {
+  const startRegen = (withLooks: boolean) => regenerate(undefined, undefined, withLooks);
+  const submitInstruction = (text: string, referenceAssets: CastReferenceInput[], withLooks: boolean) => {
     if (!text.trim()) return;
     setInstruction(text.trim());
-    regenerate(text, referenceAssets);
+    regenerate(text, referenceAssets, withLooks);
   };
   const isInstructionBusy = isSubmitting;
 
