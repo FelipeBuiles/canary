@@ -6,12 +6,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { OutdatedReferences } from "../components/story/OutdatedReferences";
 import type { ReferenceFreshness } from "../api/storyBible";
-import type { StageStatus, StoryBible } from "../types/api";
+import type { GenerationJob, StageStatus, StoryBible } from "../types/api";
 import type * as Client from "../api/client";
 
 const server = vi.hoisted(() => ({
   calls: [] as { path: string; method: string }[],
   references: [] as ReferenceFreshness[],
+  jobs: [] as GenerationJob[],
 }));
 
 vi.mock("../api/client", async (original) => ({
@@ -20,19 +21,25 @@ vi.mock("../api/client", async (original) => ({
     const method = options?.method ?? "GET";
     server.calls.push({ path, method });
     if (path.endsWith("/cast/freshness")) return { references: server.references };
+    if (path.endsWith("/jobs")) return { jobs: server.jobs, current_reference_style_hash: "" };
     if (method === "POST" && path.endsWith("/cast/reopen")) return { reopened: true, references: server.references };
     if (method === "POST" && path.endsWith("/cast/references/keep")) return { references: server.references };
     if (path.includes("/asset-regen-estimate")) {
       return { estimate_credits: 4, reserved_credits: null, reservation_multiplier: 1, confidence: "low_variance" };
     }
     if (method === "POST" && path.includes("/regen-state-ref")) {
-      return { status: "queued", char_id: "ines", job: { id: `job-${server.calls.length}`, kind: "character_ref_regen", status: "queued", payload: {} } };
+      const look = new URLSearchParams(path.split("?")[1]).get("state_id");
+      return { status: "queued", char_id: "ines", job: queued(`job-${look}`, { char_id: `ines:${look}` }) };
     }
     throw new Error(`Unexpected fixture API: ${method} ${path}`);
   },
 }));
 
-afterEach(() => { server.calls = []; server.references = []; });
+afterEach(() => { server.calls = []; server.references = []; server.jobs = []; });
+
+function queued(id: string, payload: Record<string, unknown>): GenerationJob {
+  return { id, kind: "character_ref_regen", status: "queued", payload, queued_at: new Date().toISOString() } as GenerationJob;
+}
 
 const bible = {
   characters: [{ id: "ines", name: "Ines", appearance_states: [
@@ -135,4 +142,28 @@ it("keeps every redrawn look of a group at once", async () => {
   renderReferences("/project/p1/cast", "awaiting_review");
   await user.click(await screen.findByRole("button", { name: "Keep looks as they are" }));
   await waitFor(() => expect(server.calls.filter((call) => call.path.endsWith("/cast/references/keep"))).toHaveLength(2));
+});
+
+it("stops offering looks once their redraw is queued, and shows them redrawing", async () => {
+  server.references = redrawnLooks;
+  const user = userEvent.setup();
+  renderReferences("/project/p1/cast", "awaiting_review");
+  await user.click(await screen.findByRole("button", { name: /Redraw looks.*8 credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw looks" }));
+
+  const status = await screen.findByRole("status");
+  expect(status.textContent).toContain("Redrawing: Storm gear · Wedding dress");
+  expect(screen.queryByRole("button", { name: /Redraw looks/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Keep looks as they are" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update images" })).toBeNull();
+});
+
+it("treats looks a main-image job brings along as already redrawing", async () => {
+  server.references = redrawnLooks;
+  server.jobs = [queued("main", { char_id: "ines", with_looks: ["storm"] })];
+  renderReferences("/project/p1/cast", "awaiting_review");
+  const status = await screen.findByRole("status");
+  expect(status.textContent).toContain("Redrawing: Storm gear");
+  const group = screen.getByRole("listitem", { name: "Ines" });
+  expect(group.textContent).toContain("this look was drawn from the previous one: Wedding dress");
 });

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -328,6 +329,9 @@ _CHARACTER_IDENTITY_FACETS: tuple[str, ...] = ("face", "hair", "build")
 _FORM_IDENTITY_FACETS: tuple[str, ...] = ("materials", "light", "color")
 
 
+#: Preserved by a look's main sheet when the sheet is also its style authority.
+SHEET_RENDERING_FACET = "rendering style"
+
 #: Facets that a character state anchor may override. When overridden, the
 #: canonical parent ignores them (it must not reassert the canonical version).
 _CHARACTER_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
@@ -338,7 +342,7 @@ _CHARACTER_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
     "anatomy": ("anatomy", "build", "proportions", "silhouette"),
     # A changed body shape (a cat splattered into a blob) need not keep a face;
     # the anchor says whether one remains.
-    "shape": ("anatomy", "build", "proportions", "silhouette", "face"),
+    "shape": ("anatomy", "build", "proportions", "silhouette", "face", "wardrobe"),
     "clothing": ("wardrobe",),
 }
 
@@ -455,7 +459,9 @@ def _build_character_conditioning_assets(
         return [], dropped, True
 
     ignore_facets = changed_mapped
-    identity_facets = (_CHARACTER_IDENTITY_FACETS if spec.canonical_reference_form == "figure"
+    # A figure keeps its sheet's clothes unless the look changes them; left
+    # unpreserved, a look's wardrobe came from whatever else was in the request.
+    identity_facets = ((*_CHARACTER_IDENTITY_FACETS, "wardrobe") if spec.canonical_reference_form == "figure"
                        else _FORM_IDENTITY_FACETS)
     # Identity facets not overridden are what the parent can still condition.
     preserve_facets = tuple(
@@ -682,6 +688,20 @@ def build_state_reference_plan(
     style_asset, style_drop = _maybe_style_asset(spec, project_dir)
     if style_drop is not None:
         dropped.append(style_drop)
+    # A character look drawn from its main sheet takes its style from that
+    # sheet. The proof depicts the book's own characters, so beside the sheet
+    # it is a second, competing identity (2026-10-24: a princess look took the
+    # proof's black hair, crown and gown over her sheet's). A look that
+    # replaces identity has no sheet pixels and keeps the proof.
+    if style_asset is not None and is_character and not is_total and any(a.role == "subject" for a in assets):
+        dropped.append(DroppedReference(
+            candidate=style_asset,
+            reason=DropReason.LOWER_PRIORITY,
+            detail="style dropped: the main sheet carries the style; the proof's characters would compete with it",
+        ))
+        style_asset = None
+        assets = [replace(a, preserve_facets=(*a.preserve_facets, SHEET_RENDERING_FACET)) if a.role == "subject" else a
+                  for a in assets]
 
     cap = route_profile.max_references
 

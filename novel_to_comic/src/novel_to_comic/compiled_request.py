@@ -267,7 +267,17 @@ def compile_reference_instruction(
         elif scope is AuthorityScope.IDENTITY_ONLY:
             ignore_phrase = _facet_phrase(asset.ignore_facets)
             conflict_note = " that conflict with the active appearance state" if state_id else ""
-            if state_id:
+            if state_id and "rendering style" in asset.preserve_facets:
+                # No style image accompanies the look: its main sheet is the
+                # rendering authority as well as the identity.
+                semantic = (
+                    f"canonical parent reference for {label} — preserve only {preserve_phrase}; "
+                    f"ignore {ignore_phrase}{conflict_note}; it is the rendering style authority: "
+                    "keep its medium, mark-making, palette and line weight exactly; "
+                    "the active-state anchor overrides changed anatomy, age, proportions, "
+                    "or wardrobe; do not copy its pose or background"
+                )
+            elif state_id:
                 semantic = (
                     f"canonical parent reference for {label} — preserve only {preserve_phrase}; "
                     f"ignore {ignore_phrase}{conflict_note}; also ignore its {style_ignore}; "

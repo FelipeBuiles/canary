@@ -92,6 +92,8 @@ describe("public homepage routing", () => {
   it("shows an unknown public URL without redirecting it to sign in", async () => {
     window.history.replaceState(null, "", "/not-a-real-page");
     render(<AccountApp />);
+    // Resolve the real lazy route before starting the heading query's timeout.
+    await act(async () => { await vi.dynamicImportSettled(); });
     expect(await screen.findByRole("heading", { name: "THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR" })).toBeTruthy();
     expect(window.location.pathname).toBe("/not-a-real-page");
     expect(document.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe("noindex, follow");
