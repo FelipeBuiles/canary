@@ -78,6 +78,14 @@ NOT_FOUND_GRACE_S = 60.0
 RECOVERY_POLL_S = (2.0, 5.0)
 UPLOAD_ATTEMPTS = 3
 MEDIA_CACHE_SIZE = 1024
+#: Balance lookups ride on Runware traffic, at most this often (a 402 forces one).
+BALANCE_REFRESH_S = 300.0
+BALANCE_TIMEOUT_S = 10.0
+#: Log an error when the balance drops below this many USD.
+DEFAULT_BALANCE_ALERT_USD = 25.0
+#: Upload-only requests (references stored ahead of Draw) and their parallelism.
+PREFETCH_PARAM = "canary_runware_prefetch"
+PREFETCH_CONCURRENCY = 4
 # Controls the frozen manifest may carry; anything else is rejected, never
 # forwarded or dropped silently.
 _ALLOWED_CONTROLS = frozenset({"quality", "output_format", "n", "background"})
@@ -191,6 +199,80 @@ class _MediaCache:
 MEDIA_CACHE = _MediaCache()
 
 
+def _record_metric(kind: str, name: str, value: float) -> None:
+    try:
+        from canary_metrics import record
+    except ImportError:  # Outside the gateway image (tests, tooling).
+        return
+    record(kind, name, value)
+
+
+def balance_alert_usd() -> float:
+    raw = os.environ.get("RUNWARE_BALANCE_ALERT_USD", "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_BALANCE_ALERT_USD
+    except ValueError:
+        return DEFAULT_BALANCE_ALERT_USD
+    return value if math.isfinite(value) and value >= 0 else DEFAULT_BALANCE_ALERT_USD
+
+
+class _BalanceMonitor:
+    """Watches the prepaid Runware balance (the startup grant).
+
+    A spent balance answers every task with 402, which Canary survives by
+    falling back to OpenAI; this makes the run-down visible before that. Each
+    lookup is free and runs in the background, never delaying an image.
+    Reports the ``runware.balance_usd`` gauge and logs an error once per
+    crossing below ``RUNWARE_BALANCE_ALERT_USD``.
+    """
+
+    def __init__(self, *, refresh_s: float = BALANCE_REFRESH_S, clock=time.monotonic) -> None:
+        self._refresh_s = refresh_s
+        self._clock = clock
+        self._next_at = 0.0
+        self._low = False
+        self._task: asyncio.Task[None] | None = None
+        self.balance_usd: float | None = None
+
+    def observe(self, headers: dict[str, str], *, force: bool = False) -> None:
+        now = self._clock()
+        if self._task is not None and not self._task.done():
+            return
+        if not force and now < self._next_at:
+            return
+        self._next_at = now + self._refresh_s
+        self._task = asyncio.get_running_loop().create_task(self.refresh(headers))
+
+    async def refresh(self, headers: dict[str, str]) -> float | None:
+        try:
+            async with httpx.AsyncClient(timeout=BALANCE_TIMEOUT_S) as http:
+                response = await http.post(RUNWARE_API, headers=headers, json=[{
+                    "taskType": "accountManagement", "taskUUID": str(uuid.uuid4()), "operation": "getDetails",
+                }])
+            entry = _first(_json(response), "data")
+            balance = float(entry["balance"]) if isinstance(entry, dict) else math.nan
+        except Exception as exc:  # noqa: BLE001 - monitoring never affects images.
+            logger.warning("Runware balance lookup failed error=%s", type(exc).__name__)
+            return None
+        if not math.isfinite(balance):
+            logger.warning("Runware balance lookup returned no balance status=%s", response.status_code)
+            return None
+        self.balance_usd = balance
+        _record_metric("gauge", "runware.balance_usd", balance)
+        threshold = balance_alert_usd()
+        if balance < threshold and not self._low:
+            self._low = True
+            logger.error("Runware balance low balance_usd=%.2f threshold_usd=%.2f; when it runs out, "
+                         "Runware-first images fall back to OpenAI", balance, threshold)
+        elif balance >= threshold and self._low:
+            self._low = False
+            logger.info("Runware balance restored balance_usd=%.2f threshold_usd=%.2f", balance, threshold)
+        return balance
+
+
+BALANCE = _BalanceMonitor()
+
+
 class RunwareImageLLM(CustomLLM):
     """Custom LiteLLM provider for GPT Image 2.5 generations and edits on Runware."""
 
@@ -262,13 +344,23 @@ class RunwareImageLLM(CustomLLM):
         timeout: float | httpx.Timeout | None,
     ) -> ImageResponse:
         upstream_model = upstream_model_name(model)
+        if str(optional_params.get(PREFETCH_PARAM) or "").strip().lower() in {"1", "true"}:
+            return await self._prefetch(model=upstream_model, image=image, model_response=model_response,
+                                        api_key=api_key)
         task = inference_task(upstream_model, prompt or "", optional_params)
         references = [reference_bytes(item, index, model=upstream_model) for index, item in enumerate(image)]
         read_timeout = float(timeout) if isinstance(timeout, (int, float)) else SUBMIT_TIMEOUT_S
         headers = _headers(api_key)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(read_timeout, connect=CONNECT_TIMEOUT_S)) as http:
-            result = await generate(http, headers, task, references, model=upstream_model)
-            image_bytes = await _image_bytes(http, result, model=upstream_model, task_uuid=task["taskUUID"])
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(read_timeout, connect=CONNECT_TIMEOUT_S)) as http:
+                result = await generate(http, headers, task, references, model=upstream_model)
+                image_bytes = await _image_bytes(http, result, model=upstream_model, task_uuid=task["taskUUID"])
+        except RunwareImageError as exc:
+            if exc.upstream_status == 402:
+                _record_metric("count", "runware.insufficient_credits", 1)
+                BALANCE.observe(headers, force=True)
+            raise
+        BALANCE.observe(headers)
         cost = _cost(result)
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=base64.b64encode(image_bytes).decode("ascii"))]
@@ -283,6 +375,36 @@ class RunwareImageLLM(CustomLLM):
         if cost is not None:
             model_response.provider_cost_usd = cost
             model_response.provider_cost_source = "runware_cost"
+        return model_response
+
+
+    async def _prefetch(self, *, model: str, image: list[Any], model_response: ImageResponse,
+                        api_key: str | None) -> ImageResponse:
+        """Store references in media storage without running a task.
+
+        Uploads are free and content-addressed, so this charges nothing; later
+        pages find the UUIDs in the cache. The response carries no image.
+        """
+        references = [reference_bytes(item, index, model=model) for index, item in enumerate(image)]
+        headers = _headers(api_key)
+        gate = asyncio.Semaphore(PREFETCH_CONCURRENCY)
+
+        async def store(http: httpx.AsyncClient, data: bytes) -> str:
+            async with gate:
+                return await _upload(http, headers, data, model=model)
+
+        started = time.monotonic()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(UPLOAD_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)) as http:
+            await asyncio.gather(*(MEDIA_CACHE.resolve(data, lambda d: store(http, d)) for data in references))
+        logger.info("Runware references stored ahead of Draw model=%s count=%d seconds=%.1f",
+                    model, len(references), time.monotonic() - started)
+        model_response.created = int(time.time())
+        model_response.data = []
+        model_response._hidden_params["model"] = model
+        model_response._hidden_params["custom_llm_provider"] = "runware"
+        model_response._hidden_params["response_cost"] = 0.0
+        model_response._hidden_params["runware_prefetched"] = len(references)
+        model_response.model = f"runware/{model}"
         return model_response
 
 

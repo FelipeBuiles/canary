@@ -567,6 +567,10 @@ async def approve(
     except (ArtifactMissing, ValueError, FileNotFoundError) as exc:
         raise HTTPException(409, str(exc)) from exc
     save_state(state, project_dir)
+    if stage == "cast":
+        from novel_to_comic import runware_prefetch
+
+        runware_prefetch.start(config, project_dir)
     capture_server_event(
         "stage_approved",
         user_id=user_id,
