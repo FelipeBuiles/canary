@@ -1705,6 +1705,17 @@ fallback under `then`. Pages drawn on Runware have no partial previews.
 Turning the switch off changes only new editions and wires: both Sunburst
 identities stay spendable, so every existing edition keeps its route.
 
+While the switch is on, approving Cast (directly, or when a "Continue" run
+passes review) sends each distinct approved reference file Draw may use to the
+gateway's Runware route, flagged upload-only (`runware_prefetch.py`). The
+gateway stores them in Runware media storage and keeps their UUIDs in its
+process-local cache; no image task runs and nothing is billed. It is best
+effort: a failure is logged and Draw uploads on demand. The gateway also reads
+the Runware account balance at most every five minutes while Runware is in use
+(immediately after a 402), reports it as the `runware.balance_usd` gauge, and
+logs an error once each time it falls below `RUNWARE_BALANCE_ALERT_USD`
+(default 25).
+
 Read-only immediate quotes are distinct from the full-stage rerun estimate:
 
 | GET route | Quoted work |

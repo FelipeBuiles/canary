@@ -539,6 +539,9 @@ def _approve_cast_after_run(
         )
         return None
     save_state(state, series_dir)
+    from novel_to_comic import runware_prefetch
+
+    runware_prefetch.start(config, series_dir)
     return adapt_part
 
 

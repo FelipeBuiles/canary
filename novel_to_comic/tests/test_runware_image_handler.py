@@ -39,7 +39,8 @@ def _completed(task_uuid, *, inline=True, cost=0.05647):
 class _Runware:
     """Fake Runware REST endpoint, scripted per task type."""
 
-    def __init__(self, inference=(), details=(), downloads=()):
+    def __init__(self, inference=(), details=(), downloads=(), balances=()):
+        self.balances = list(balances)
         self.inference = list(inference)
         self.details = list(details)
         self.downloads = list(downloads)
@@ -62,6 +63,12 @@ class _Runware:
             if isinstance(outcome, BaseException):
                 raise outcome
             return outcome(task) if callable(outcome) else outcome
+        if kind == "accountManagement":
+            assert task["operation"] == "getDetails"
+            outcome = self.balances.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return _Response(200, {"data": [{"balance": outcome}]})
         if kind == "getTaskDetails":
             self.lookups.append(task["taskUUID"])
             outcome = self.details.pop(0)
@@ -278,6 +285,7 @@ def test_response_reports_task_uuid_and_runware_cost(monkeypatch):
 
     monkeypatch.setattr(rw.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(rw, "MEDIA_CACHE", rw._MediaCache())
+    monkeypatch.setattr(rw, "BALANCE", type("Quiet", (), {"observe": lambda self, headers, force=False: None})())
     response = asyncio.run(rw.RunwareImageLLM().aimage_edit(
         model="runware/gpt-image-2.5-sunburst", image=[("ref.png", REF_A, "image/png")], prompt="page",
         model_response=_ImageResponse(), api_key="k", optional_params=_wire(),
@@ -288,3 +296,140 @@ def test_response_reports_task_uuid_and_runware_cost(monkeypatch):
     assert response.provider_cost_source == "runware_cost"
     assert response.provider_request_id == client.tasks[0]["taskUUID"]
     assert response._hidden_params["custom_llm_provider"] == "runware"
+
+
+# Balance monitor ---------------------------------------------------------------
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _monitor(monkeypatch, client):
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *exc):
+            return False
+
+    metrics = []
+    monkeypatch.setattr(rw.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(rw, "_record_metric", lambda kind, name, value: metrics.append((kind, name, value)))
+    clock = _Clock()
+    return rw._BalanceMonitor(refresh_s=300, clock=clock), clock, metrics
+
+
+def _observe(monitor, **kwargs):
+    async def run():
+        monitor.observe({"Authorization": "Bearer k"}, **kwargs)
+        if monitor._task is not None:
+            await monitor._task
+    asyncio.run(run())
+
+
+def test_balance_is_reported_and_alerts_once_per_crossing(monkeypatch, caplog):
+    client = _Runware(balances=[40.0, 20.0, 18.0, 30.0])
+    monitor, clock, metrics = _monitor(monkeypatch, client)
+    monkeypatch.setenv("RUNWARE_BALANCE_ALERT_USD", "25")
+    caplog.set_level("INFO", logger=rw.logger.name)
+    for _ in range(4):
+        _observe(monitor)
+        clock.now += 301
+    assert metrics == [("gauge", "runware.balance_usd", b) for b in (40.0, 20.0, 18.0, 30.0)]
+    low = [r for r in caplog.records if "Runware balance low" in r.getMessage()]
+    assert len(low) == 1 and low[0].levelname == "ERROR"
+    assert any("Runware balance restored" in r.getMessage() for r in caplog.records)
+
+
+def test_balance_lookups_are_rate_limited_unless_forced(monkeypatch):
+    client = _Runware(balances=[40.0, 39.0])
+    monitor, clock, metrics = _monitor(monkeypatch, client)
+    _observe(monitor)
+    clock.now += 10
+    _observe(monitor)
+    assert len(metrics) == 1
+    _observe(monitor, force=True)
+    assert [m[2] for m in metrics] == [40.0, 39.0]
+
+
+def test_a_failed_balance_lookup_never_reaches_the_image(monkeypatch):
+    client = _Runware(balances=[httpx.ConnectError("down")])
+    monitor, _, metrics = _monitor(monkeypatch, client)
+    _observe(monitor)
+    assert metrics == [] and monitor.balance_usd is None
+
+
+def test_a_spent_balance_forces_a_lookup(monkeypatch):
+    client = _Runware(inference=[_error(402, "insufficientCredits")], balances=[0.0])
+    forced = []
+    monkeypatch.setattr(rw, "BALANCE", type("Spy", (), {
+        "observe": lambda self, headers, force=False: forced.append(force)})())
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _ImageResponse:
+        def __init__(self):
+            self._hidden_params = {}
+
+    monkeypatch.setattr(rw.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(rw, "MEDIA_CACHE", rw._MediaCache())
+    with pytest.raises(rw.RunwareImageError) as caught:
+        asyncio.run(rw.RunwareImageLLM().aimage_edit(
+            model="runware/gpt-image-2.5-sunburst", image=[], prompt="page",
+            model_response=_ImageResponse(), api_key="k", optional_params=_wire(),
+        ))
+    assert caught.value.upstream_status == 402 and forced == [True]
+
+
+# Upload-only prefetch ------------------------------------------------------------
+
+def test_prefetch_stores_each_reference_once_and_runs_no_task(monkeypatch):
+    client = _Runware()
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _ImageResponse:
+        def __init__(self):
+            self._hidden_params = {}
+
+    cache = rw._MediaCache()
+    monkeypatch.setattr(rw.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(rw, "MEDIA_CACHE", cache)
+
+    def run():
+        return asyncio.run(rw.RunwareImageLLM().aimage_edit(
+            model="runware/gpt-image-2.5-sunburst",
+            image=[("a.png", REF_A, "image/png"), ("b.png", REF_B, "image/png"), ("a2.png", REF_A, "image/png")],
+            prompt="Store references", model_response=_ImageResponse(), api_key="k",
+            optional_params={rw.PREFETCH_PARAM: "1"},
+        ))
+
+    response = run()
+    assert len(client.uploads) == 2 and client.tasks == []
+    assert response.data == [] and response._hidden_params["response_cost"] == 0.0
+    assert cache.get(hashlib.sha256(REF_A).hexdigest()) and cache.get(hashlib.sha256(REF_B).hexdigest())
+    run()
+    assert len(client.uploads) == 2  # Already stored: nothing uploaded again.
