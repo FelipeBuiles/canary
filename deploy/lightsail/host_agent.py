@@ -59,6 +59,16 @@ def lock(path, *, report_busy=False):
         yield
 
 
+def worker_unit_active():
+    try:
+        run(['systemctl', 'is-active', '--quiet', 'canary-host-maintenance'], timeout=5)
+        return True
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode == 3:  # systemctl positively reports an inactive/failed unit.
+            return False
+        raise
+
+
 def operation(phase, **values):
     current = read('operation.json', {})
     current.update(phase=phase, updated_at=time.time(), **values)
@@ -118,6 +128,11 @@ def submit(request):
         previous = read('operation.json', {})
         if previous.get('request_id') == request['request_id']:
             return previous
+        # 'rebooting' has no live worker by design; the recovery unit settles it.
+        if previous.get('phase') in ACTIVE - {'rebooting'} and not worker_unit_active():
+            # The worker died (SIGKILL, RuntimeMaxSec, host crash); any hold it made stays in force.
+            operation('failed', error='worker_exited_inspect_host_before_retry')
+            previous = read('operation.json', {})
         if previous.get('phase') in ACTIVE:
             raise RuntimeError('maintenance_already_running')
         if HOLD.exists():
@@ -130,7 +145,7 @@ def submit(request):
         try:
             # The fixed unit survives the request, the app stopping, and browser disconnects.
             run(['systemd-run', '--unit=canary-host-maintenance', '--collect',
-                 '--property=RuntimeMaxSec=5400', '--property=UMask=0077', '--property=LimitCORE=0',
+                 '--property=RuntimeMaxSec=7200', '--property=UMask=0077', '--property=LimitCORE=0',
                  '/usr/bin/python3', str(BASE / 'host_agent.py'), '--worker'])
         except BaseException:
             operation('failed', error='worker_launch_failed_inspect_host_before_retry')
@@ -179,8 +194,10 @@ def worker(*, recover=False):
     release.RUNTIME.mkdir(mode=0o700, exist_ok=True)
     owns_hold = recover
     stopping_started = recover
+    config = token = None
     # Failure fencing and stopping must finish before releasing CI's lock.
-    with lock(release.RUNTIME / 'worker.lock', report_busy=True):
+    # A busy lock at boot must not overwrite the recorded 'rebooting' operation.
+    with lock(release.RUNTIME / 'worker.lock', report_busy=not recover):
         try:
             action = current['action']
             if recover:
@@ -225,6 +242,16 @@ def worker(*, recover=False):
             write('plan.json', {**simulation(), 'checked_at': time.time()})
             restore(release, config, token, version)
         except BaseException as exc:
+            resumed = False
+            if owns_hold and not stopping_started and config and token:
+                # Canary was never stopped (drain failed or timed out): reopen admission
+                # and release our own hold rather than leaving an idle, paused app.
+                try:
+                    if release.api('/api/ops/resume', config, token, 'POST').get('draining') is False:
+                        HOLD.unlink(missing_ok=True)
+                        owns_hold, resumed = False, True
+                except Exception:  # noqa: BLE001 — stay fenced when resume is uncertain.
+                    print('drain_recovery_uncertain_maintenance_hold_retained', flush=True)
             if owns_hold:
                 HOLD.touch(mode=0o600)
                 if stopping_started:
@@ -232,7 +259,7 @@ def worker(*, recover=False):
                         run(['systemctl', 'stop', 'canary.service'], timeout=90)
                     except subprocess.SubprocessError:
                         pass
-            code = str(exc) if isinstance(exc, RuntimeError) and str(exc) in {
+            code = 'drain_failed_generation_resumed' if resumed else str(exc) if isinstance(exc, RuntimeError) and str(exc) in {
                 'updates_changed_review_new_preview', 'existing_maintenance_hold',
                 'boot_recovery_not_enabled', 'unknown_application_version', 'host_loader_mismatch',
             } else 'maintenance_failed_inspect_host_journal'

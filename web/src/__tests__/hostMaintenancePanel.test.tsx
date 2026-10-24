@@ -56,3 +56,15 @@ it("makes an uninstalled agent visible without invented host data", async () => 
   expect((await screen.findByRole("alert")).textContent).toContain("Host agent unavailable");
   expect(screen.queryByText("Host reboot required")).toBeNull();
 });
+
+it("keeps controls locked when a poll that predates the submission returns", async () => {
+  const user = userEvent.setup();
+  render(<HostMaintenancePanel connection={connection} />);
+  await screen.findByText("Host reboot required");
+  await user.click(screen.getByRole("button", { name: "Review host reboot" }));
+  vi.mocked(operatorFetch).mockResolvedValueOnce({ action: "reboot", phase: "queued", request_id: "id", updated_at: Date.now() / 1000 });
+  await user.click(screen.getByRole("button", { name: "Reboot host" }));
+  await user.click(screen.getByRole("button", { name: "Refresh status" }));
+  await waitFor(() => expect(operatorFetch).toHaveBeenCalledTimes(3));
+  expect((screen.getByRole("button", { name: "Check for updates" }) as HTMLButtonElement).disabled).toBe(true);
+});

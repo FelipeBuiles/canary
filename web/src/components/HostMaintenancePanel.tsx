@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { operatorFetch, type HostStatus, type OperatorConnection } from "../api/operator";
 import { Button } from "./ui/Button";
 import { Surface } from "./ui/Surface";
@@ -13,12 +13,17 @@ export function HostMaintenancePanel({ connection }: { connection: OperatorConne
   const [confirm, setConfirm] = useState<Action | null>(null);
   const [reviewedDigest, setReviewedDigest] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
+  // A poll that began before the POST returns stale status; only the submitted operation releases the controls.
+  const submittedId = useRef<string | null>(null);
   const refresh = useCallback(async () => {
     try {
       const result = await operatorFetch<HostStatus>("/api/ops/backoffice/host", connection);
       setStatus(result);
       setError("");
-      setAccepted(false);
+      if (submittedId.current === null || result.operation?.request_id === submittedId.current) {
+        submittedId.current = null;
+        setAccepted(false);
+      }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not reach host maintenance.");
     }
@@ -35,16 +40,19 @@ export function HostMaintenancePanel({ connection }: { connection: OperatorConne
   async function submit(action: Action) {
     setPending(true);
     setConfirm(null);
+    const requestId = crypto.randomUUID();
     try {
       const operation = await operatorFetch<NonNullable<HostStatus["operation"]>>("/api/ops/backoffice/host", connection, {
         method: "POST",
-        body: JSON.stringify({ action, request_id: crypto.randomUUID(), ...(action === "update" ? { plan_digest: reviewedDigest } : {}) }),
+        body: JSON.stringify({ action, request_id: requestId, ...(action === "update" ? { plan_digest: reviewedDigest } : {}) }),
       });
       setStatus((previous) => previous ? { ...previous, operation } : previous);
+      submittedId.current = requestId;
       setAccepted(true);
       setError("");
     } catch (failure) {
       setError(`${failure instanceof Error ? failure.message : "Host request failed."} The outcome may be unknown. Refresh status before trying again.`);
+      submittedId.current = null;
       setAccepted(true);
     } finally {
       setPending(false);

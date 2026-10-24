@@ -109,6 +109,8 @@ def test_failure_keeps_maintenance_closed(host, monkeypatch, failure):
         release.drain = fail
     if failure == 'ready':
         release.wait_candidate = fail
+    if failure == 'drain':
+        release.api = lambda path, *args: (_ for _ in ()).throw(OSError('down')) if 'resume' in path else {'git_sha': 'a' * 40}
     with pytest.raises((RuntimeError, subprocess.SubprocessError)):
         m.worker()
     assert m.HOLD.exists()
@@ -116,6 +118,7 @@ def test_failure_keeps_maintenance_closed(host, monkeypatch, failure):
     assert 'sensitive' not in json.dumps(m.read('operation.json'))
     if failure == 'drain':
         assert ['systemctl', 'stop', 'canary.service'] not in events
+        assert m.HOLD.exists()
     else:
         assert events[-1] == ['systemctl', 'stop', 'canary.service']
 
@@ -252,3 +255,63 @@ def test_requested_reboot_records_boot_before_submission_and_waits_for_next_boot
     m.worker(recover=True)
     assert m.read('operation.json')['phase'] == 'complete'
     assert not m.HOLD.exists()
+
+
+def test_drain_failure_resumes_admission_and_releases_own_hold(host):
+    m, events, release = host
+    m.write('plan.json', {**m.simulation(), 'checked_at': m.time.time()})
+    m.submit(request('update', plan_digest='b' * 64))
+    release.drain = lambda *args: (_ for _ in ()).throw(RuntimeError('drain_timeout'))
+    with pytest.raises(RuntimeError):
+        m.worker()
+    assert not m.HOLD.exists()
+    assert m.read('operation.json')['error'] == 'drain_failed_generation_resumed'
+    assert ['systemctl', 'stop', 'canary.service'] not in events
+
+
+def test_dead_worker_is_reconciled_instead_of_blocking_forever(host, monkeypatch):
+    m, _, _ = host
+    m.write('operation.json', {'action': 'update', 'request_id': str(uuid.uuid4()), 'phase': 'updating'})
+    original = m.run
+
+    def run(args, **kwargs):
+        if 'is-active' in args:
+            raise subprocess.CalledProcessError(3, args)
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(m, 'run', run)
+    m.submit(request('check'))
+    assert m.read('operation.json')['phase'] == 'queued'
+
+
+def test_rebooting_operation_is_not_reconciled_away(host, monkeypatch):
+    m, _, _ = host
+    m.write('operation.json', {'action': 'reboot', 'request_id': str(uuid.uuid4()), 'phase': 'rebooting'})
+    monkeypatch.setattr(m, 'worker_unit_active', lambda: False)
+    with pytest.raises(RuntimeError, match='maintenance_already_running'):
+        m.submit(request('check'))
+
+
+def test_busy_lock_during_recovery_keeps_rebooting_record(host, monkeypatch):
+    m, _, release = host
+    m.write('operation.json', {'action': 'reboot', 'request_id': 'x', 'phase': 'rebooting', 'boot_id': 'old-boot', 'version': 'a' * 40})
+    release.RUNTIME.mkdir()
+    with m.lock(release.RUNTIME / 'worker.lock'):
+        with pytest.raises(BlockingIOError):
+            m.worker(recover=True)
+    assert m.read('operation.json')['phase'] == 'rebooting'
+
+
+@pytest.mark.parametrize('failure', [subprocess.CalledProcessError(1, ['systemctl']), subprocess.TimeoutExpired(['systemctl'], 5)])
+def test_uncertain_worker_state_is_not_reconciled(host, monkeypatch, failure):
+    m, _, _ = host
+    previous = {'action': 'check', 'request_id': str(uuid.uuid4()), 'phase': 'checking'}
+    m.write('operation.json', previous)
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(m, 'run', fail)
+    with pytest.raises(subprocess.SubprocessError):
+        m.submit(request('check'))
+    assert m.read('operation.json') == previous

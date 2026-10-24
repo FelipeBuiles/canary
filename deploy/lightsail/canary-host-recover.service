@@ -8,6 +8,9 @@ ConditionPathExists=/var/lib/canary-host/operation.json
 Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/lib/canary/host_agent.py --recover
 TimeoutStartSec=600
+# A busy release lock at boot is transient; a settled operation makes retries no-ops.
+Restart=on-failure
+RestartSec=30
 UMask=0077
 LimitCORE=0
 
