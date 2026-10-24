@@ -54,6 +54,13 @@ services:
       POSTHOG_HOST: ${POSTHOG_HOST:-}
       POSTHOG_TRACE_SAMPLE_RATE: ${POSTHOG_TRACE_SAMPLE_RATE:-1}
     volumes:
+      # Private fixed-action agent; never mount the Docker socket in the app.
+      - type: bind
+        source: /run/canary-host
+        target: /run/canary-host
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: /srv/canary/projects
         target: /projects

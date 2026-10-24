@@ -67,12 +67,15 @@ type RangeKey = "7d" | "30d" | "90d";
 type NoticeTone = "ink" | "red" | "gold" | "sage" | "blue";
 const OperatorModelPanel = lazy(() => import("../components/OperatorModelPanel").then(({ OperatorModelPanel }) => ({ default: OperatorModelPanel })));
 
+const HostMaintenancePanel = lazy(() => import("../components/HostMaintenancePanel").then(({ HostMaintenancePanel }) => ({ default: HostMaintenancePanel })));
+
 const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; shortcut: string }> = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, shortcut: "⌘ 1" },
   { key: "users", label: "Users", icon: UsersRound, shortcut: "⌘ 2" },
   { key: "support", label: "Support queue", icon: LifeBuoy, shortcut: "⌘ 3" },
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "⌘ 4" },
   { key: "testers", label: "Tester sessions", icon: UserCheck, shortcut: "⌘ 6" },
+  { key: "host", label: "Host maintenance", icon: Activity, shortcut: "⌘ 7" },
   { key: "models", label: "Stage models", icon: Settings2, shortcut: "⌘ 5" },
 ];
 
@@ -98,6 +101,7 @@ const VIEW_META: Record<BackofficeView, { kicker: string; title: string; descrip
     description: "See where the press is busy, where creators pause, and what the run is costing.",
   },
   testers: { kicker: "Launch learning", title: "Tester sessions", description: "Recruit writers, capture sessions, and act on evidence." },
+  host: { kicker: "Infrastructure", title: "Host maintenance", description: "Lightsail health, package updates, and restarts." },
   models: {
     kicker: "Generation settings",
     title: "Stage models",
@@ -1002,6 +1006,7 @@ export function BackofficePage() {
             {activeView === "testers" && <TesterTracker connection={connection} />}
             {activeView === "support" && <FeedbackInbox connection={connection} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
+            {activeView === "host" && <Suspense fallback={<p role="status">Loading host maintenance…</p>}><HostMaintenancePanel connection={connection} /></Suspense>}
             {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}
           </div>
         </main>

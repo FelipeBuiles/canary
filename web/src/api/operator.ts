@@ -280,3 +280,26 @@ export function updateFeedback(connection: OperatorConnection, item: CustomerFee
   return operatorFetch<CustomerFeedback>(`/api/ops/backoffice/feedback/${encodeURIComponent(item.user_id)}/${encodeURIComponent(item.id)}`, connection,
     { method: "PATCH", body: JSON.stringify({ status }) });
 }
+
+export interface HostOperation {
+  action: "check" | "update" | "reboot";
+  request_id: string;
+  phase: string;
+  updated_at: number;
+  error?: string;
+}
+export interface HostStatus {
+  checked_at: number;
+  readiness: { status: string; checks: Record<string, string> } | null;
+  services: Record<string, string>;
+  containers: Array<{ Names: string; Image: string; State: string; Status: string }> | null;
+  uptime_seconds: number;
+  load: number[];
+  disk_free_bytes: number;
+  disk_total_bytes: number;
+  reboot_required: boolean;
+  reboot_packages: string[];
+  maintenance_hold: boolean;
+  plan: { digest: string; checked_at: number; packages: string[] } | null;
+  operation: HostOperation | null;
+}

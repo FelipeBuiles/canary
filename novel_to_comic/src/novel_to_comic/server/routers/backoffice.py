@@ -1026,3 +1026,22 @@ def write_tester_tracker(collection: str, record_id: str, body: TesterRecordWrit
     if not rows:
         raise HTTPException(503, "Tracker save not confirmed. Reload before retrying.")
     return {key: rows[0][key] for key in ("id", "data", "revision")}
+
+
+class HostMaintenanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str = Field(pattern=r"^(check|update|reboot)$")
+    request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    plan_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+@router.get("/host")
+def operator_host_status():
+    from ..host_maintenance import host_request
+    return host_request({"action": "status"})
+
+
+@router.post("/host", status_code=202)
+def operator_host_maintenance(body: HostMaintenanceRequest):
+    from ..host_maintenance import host_request
+    return host_request(body.model_dump(exclude_none=True))
