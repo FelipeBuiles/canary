@@ -575,10 +575,11 @@ def test_style_digest_refreshes_when_selected_bytes_change(tmp_path: Path):
     spec = build_character_state_spec(Config(), tmp_path, char, state, style_path=style_path)
     style_path.write_bytes(b"style-v2")
     plan = build_state_reference_plan(spec, tmp_path)
-    style = next(asset for asset in plan.selected if asset.role == "style")
     expected = hashlib.sha256(b"style-v2").hexdigest()
 
-    assert style.content_sha256 == expected
+    # The look takes its style from the main sheet, yet still records the
+    # selected proof's current bytes, so a new proof still outdates it.
+    assert not any(asset.role == "style" for asset in plan.selected)
     assert spec.style_sha256 == expected
     assert spec.lineage_metadata()["style_sha256"] == expected
 
@@ -676,8 +677,8 @@ def test_shape_change_keeps_only_hair_and_is_not_an_edit_of_the_parent(tmp_path:
 
     wire = captured["wire"]
     assert wire.references[0].role == "subject"
-    assert wire.references[0].preserve_facets == ("hair",)
-    assert "face" in wire.references[0].ignore_facets
+    assert wire.references[0].preserve_facets == ("hair", "rendering style")
+    assert {"face", "wardrobe"} <= set(wire.references[0].ignore_facets)
     assert wire.edit_parent_indices == ()
     assert "Image operation: create a new image" in wire.prompt_parts[0]
 
@@ -972,7 +973,8 @@ def test_cast_estimate_uses_final_state_reference_count(tmp_path: Path, monkeypa
     monkeypatch.setattr("novel_to_comic.usage.estimate_image_cost", fake_estimate)
     s3_cast.estimate_cost(Config(image_model="image-gemini-pro"), tmp_path, None)
 
-    assert (1, 2) in calls
+    # The look sends its main sheet only: the sheet carries the style.
+    assert (1, 1) in calls
 
 
 def test_state_only_first_run_estimate_omits_missing_parent_reference(tmp_path: Path):
@@ -1113,3 +1115,44 @@ def test_form_state_sheet_drops_the_character_proportion_system(tmp_path: Path):
     spec = build_character_state_spec(Config(style_template=style), tmp_path, char, state)
     assert "Gouache on board." in spec.rendered_prompt
     assert "cleft jaws" not in spec.rendered_prompt
+
+
+def test_a_look_takes_style_and_clothes_from_its_sheet_not_the_proof(tmp_path: Path):
+    """Regression: a proof that depicts the book's own heroine gave her looks the
+    proof's black hair, crown and gown over her sheet's (2026-10-24)."""
+    from novel_to_comic.compiled_request import compile_reference_instruction
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    style_path, _ = _write_style(tmp_path)
+    state = AppearanceState(changed_facets=("face",), id="tears", label="In tears",
+                            visual_anchor="young woman, beautiful face, tears in her eyes", visually_significant=True)
+    plan = build_state_reference_plan(
+        build_character_state_spec(Config(), tmp_path, char, state, style_path=style_path), tmp_path)
+
+    assert [asset.role for asset in plan.selected] == ["subject"]
+    assert any(drop.candidate.role == "style" for drop in plan.dropped)
+    sheet = plan.selected[0]
+    assert {"hair", "wardrobe", "rendering style"} <= set(sheet.preserve_facets)
+    instruction = compile_reference_instruction(sheet, 1).semantic_instruction
+    assert "rendering style authority" in instruction and "selected art direction owns rendering" not in instruction
+
+
+def test_a_look_that_changes_clothes_or_replaces_identity_keeps_the_proof_rules(tmp_path: Path):
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    style_path, _ = _write_style(tmp_path)
+    dressed = AppearanceState(changed_facets=("clothing",), id="gown", label="Ball gown",
+                              visual_anchor="Mara in a ball gown", visually_significant=True)
+    plan = build_state_reference_plan(
+        build_character_state_spec(Config(), tmp_path, char, dressed, style_path=style_path), tmp_path)
+    assert "wardrobe" in plan.selected[0].ignore_facets and "wardrobe" not in plan.selected[0].preserve_facets
+
+    beast = AppearanceState(replaces_identity=True, id="beast", label="Beast",
+                            visual_anchor="a winged serpent, no human face", visually_significant=True)
+    plan = build_state_reference_plan(
+        build_character_state_spec(Config(), tmp_path, char, beast, style_path=style_path), tmp_path)
+    assert [asset.role for asset in plan.selected] == ["style"]

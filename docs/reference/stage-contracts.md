@@ -1098,8 +1098,12 @@ the correction allowance. Established designs stay fixed through the correction.
 Canonical sheets receive these choices alongside verbatim source anchors, age,
 wardrobe and distinguishing details. Authorized correction addenda take priority.
 
-Canonical and state character requests use the selected raw Style proof directly
-on every image route. Generated material boards are not substitutes: they lose
+Canonical character requests use the selected raw Style proof directly
+on every image route. A character look drawn from its main sheet does not: the
+sheet, which the proof styled, is its rendering authority and also keeps its
+wardrobe unless the look changes clothing. A proof depicts the book's own
+characters, so beside the sheet it was a second identity that looks copied
+(hair, crown, gown). A look that replaces identity has no sheet and keeps the proof. Generated material boards are not substitutes: they lose
 facial abstraction and character proportion evidence. The proof owns artistic
 treatment, not depicted identities, hair, costumes, poses, gaze, expressions,
 camera angles, text or composition. Cast design and canonical/state anchors own

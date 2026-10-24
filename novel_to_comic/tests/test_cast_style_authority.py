@@ -142,15 +142,17 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
          patch.object(look_assets, "submit_non_panel_request", side_effect=submit):
         asyncio.run(generate())
     style_hashes = set()
-    for request in requests:
+    for request in requests[:-1]:
         styles = [ref for ref in request.reference_plan.selected if ref.role == "style"]
         assert len(styles) == 1 and styles[0].path == expected
         style_hashes.add(styles[0].content_sha256)
         assert "one artistic hand across the entire cast" in request.compiled.final_prompt
         assert "sole visual rendering style authority" in request.compiled.final_prompt
     assert len(style_hashes) == 1
-    state_subjects = [ref for ref in requests[-1].reference_plan.selected if ref.role == "subject"]
-    assert len(state_subjects) == 1 and state_subjects[0].entity_id == "sailor"
+    # The look's style authority is its main sheet, which the proof styled.
+    state_refs = requests[-1].reference_plan.selected
+    assert [ref.role for ref in state_refs] == ["subject"] and state_refs[0].entity_id == "sailor"
+    assert "rendering style authority" in requests[-1].compiled.final_prompt
     for char, request in zip(bible.characters, requests):
         assert char.visual_anchor in request.compiled.final_prompt
 

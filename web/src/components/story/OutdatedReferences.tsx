@@ -1,16 +1,18 @@
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { ConfirmDrawer } from "../composites/ConfirmDrawer";
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries } from "@tanstack/react-query";
+import { LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 import { CreditAmount } from "../ui/CreditAmount";
 import { useCastFreshness, useKeepReference, useReopenCast } from "../../api/seriesQueries";
 import { fetchAssetRegenEstimate, regenLocationState, regenStateRef } from "../../api/pipeline";
-import { seedGenerationJob } from "../../api/generationTracking";
+import { useGenerationTracking } from "../../hooks/useGenerationTracking";
+import { isGenerationActive } from "../../lib/generationTracking";
 import type { ReferenceFreshness } from "../../api/storyBible";
-import type { CostEstimate, StageStatus, StoryBible } from "../../types/api";
+import type { CostEstimate, GenerationJob, StageStatus, StoryBible } from "../../types/api";
 import { referencesToUpdate } from "./castReferences";
 
 interface Props {
@@ -32,6 +34,8 @@ interface Group {
   redrawn: ReferenceFreshness[];
   /** Entries whose description or direction changed, or that have no image yet. */
   changed: ReferenceFreshness[];
+  /** References a queued or running job is already redrawing. */
+  updating: ReferenceFreshness[];
 }
 
 /**
@@ -42,9 +46,7 @@ interface Group {
  * ?references=update starts the update.
  */
 export function OutdatedReferences({ project, bible, castStatus, onResume, resumeDisabled = false, ready = true }: Props) {
-  const { t } = useI18n();
   const { data, isFetching } = useCastFreshness(project);
-  const keep = useKeepReference();
   const reopen = useReopenCast();
   const pending = referencesToUpdate(data?.references);
   const [search, setSearch] = useSearchParams();
@@ -66,6 +68,30 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
     if (!resumeDisabled) update();
   });
   if (!pending.length) return null;
+  return <ReferenceList project={project} bible={bible} pending={pending} sectionRef={sectionRef}
+    onUpdate={update} updateDisabled={resumeDisabled || reopen.isPending} updateError={reopen.error} />;
+}
+
+/** The pending references, grouped per entry; references already being redrawn are not offered again. */
+function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDisabled, updateError }: {
+  project: string; bible: StoryBible; pending: ReferenceFreshness[];
+  sectionRef: RefObject<HTMLElement | null>; onUpdate: () => void; updateDisabled: boolean; updateError: Error | null;
+}) {
+  const { t } = useI18n();
+  const keep = useKeepReference();
+  const tracking = useGenerationTracking(project);
+  // A reference stays out of date until its new image lands; once its redraw
+  // is queued it is no longer offered again, so a second click can't pay twice.
+  const isUpdating = (ref: ReferenceFreshness) => {
+    if (ref.kind === "props" && ref.state_id) return false;
+    const identity = ref.kind === "characters" ? "char_id" : ref.kind === "locations" ? "loc_id" : "prop_id";
+    const own = tracking.status({ identity, value: ref.state_id ? `${ref.entity_id}:${ref.state_id}` : ref.entity_id, currentStyle: true });
+    if (isGenerationActive(own)) return true;
+    if (!ref.state_id) return false;
+    const main = tracking.status({ identity, value: ref.entity_id, currentStyle: true });
+    const looks = main?.payload.with_looks;
+    return isGenerationActive(main) && Array.isArray(looks) && looks.includes(ref.state_id);
+  };
   const entities = new Map<string, { name: string; looks: Map<string, string> }>(
     [...bible.characters, ...bible.locations, ...bible.props].map((entity) => [entity.id, {
       name: entity.name,
@@ -78,11 +104,13 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
   for (const ref of pending) {
     const key = `${ref.kind}:${ref.entity_id}`;
     const group = groups.get(key) ?? {
-      kind: ref.kind, entityId: ref.entity_id, name: entities.get(ref.entity_id)?.name ?? ref.entity_id, redrawn: [], changed: [],
+      kind: ref.kind, entityId: ref.entity_id, name: entities.get(ref.entity_id)?.name ?? ref.entity_id, redrawn: [], changed: [], updating: [],
     };
-    (ref.status === "outdated" && ref.reason === "parent_redrawn" ? group.redrawn : group.changed).push(ref);
+    (isUpdating(ref) ? group.updating
+      : ref.status === "outdated" && ref.reason === "parent_redrawn" ? group.redrawn : group.changed).push(ref);
     groups.set(key, group);
   }
+  const actionable = [...groups.values()].some((group) => group.redrawn.length + group.changed.length > 0);
   const keepAll = (refs: ReferenceFreshness[]) => {
     for (const ref of refs) keep.mutate({ project, kind: ref.kind, entityId: ref.entity_id, stateId: ref.state_id });
   };
@@ -122,6 +150,12 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
                 </div>
               </div>
             )}
+            {group.updating.length > 0 && (
+              <p role="status" className="flex items-center gap-2 font-body text-sm text-ink-muted">
+                <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />
+                {t("Redrawing:")} {group.updating.map((ref) => lookLabel(ref) ?? t("Main image")).join(" · ")}
+              </p>
+            )}
             {group.changed.map((ref) => (
               <div key={ref.state_id ?? ""} className="flex flex-wrap items-center gap-3">
                 <span className="min-w-0 flex-1 font-body text-sm">
@@ -140,11 +174,11 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
           </li>
         ))}
       </ul>
-      {(keep.error || reopen.error) && <ErrorNotice error={(keep.error ?? reopen.error)} operation="save" />}
-      <div className="flex flex-wrap items-center justify-end gap-3">
+      {(keep.error || updateError) && <ErrorNotice error={(keep.error ?? updateError)} operation="save" />}
+      {actionable && <div className="flex flex-wrap items-center justify-end gap-3">
         <p className="font-body text-xs text-ink-muted">{t("Cast makes the new images and regenerates every changed one you haven't kept. You'll see the cost first.")}</p>
-        <Button size="sm" disabled={resumeDisabled || reopen.isPending} onClick={update}>{t("Update images")}</Button>
-      </div>
+        <Button size="sm" disabled={updateDisabled} onClick={onUpdate}>{t("Update images")}</Button>
+      </div>}
     </section>
   );
 }
@@ -154,7 +188,7 @@ function RedrawLooks({ project, kind, entityId, name, looks }: {
   project: string; kind: "character" | "location"; entityId: string; name: string; looks: string[];
 }) {
   const { t } = useI18n();
-  const qc = useQueryClient();
+  const tracking = useGenerationTracking(project);
   const [confirming, setConfirming] = useState(false);
   const estimates = useQueries({
     queries: looks.map((look) => ({
@@ -170,12 +204,13 @@ function RedrawLooks({ project, kind, entityId, name, looks }: {
   } : undefined;
   const redraw = useMutation({
     mutationFn: async () => {
-      // One job per look, so each lands (and is billed) on its own.
+      // One job per look, so each lands (and is billed) on its own. Each
+      // admitted job is tracked at once, which takes the look off this list.
       for (const look of looks) {
-        const admitted = kind === "character"
-          ? await regenStateRef(project, entityId, look)
-          : await regenLocationState(project, entityId, look);
-        seedGenerationJob(qc, project, admitted.job);
+        const subject = { identity: kind === "character" ? "char_id" : "loc_id", value: `${entityId}:${look}` };
+        await tracking.start(subject, (): Promise<{ job: GenerationJob }> => kind === "character"
+          ? regenStateRef(project, entityId, look)
+          : regenLocationState(project, entityId, look), { actionLabel: "Regenerate appearance" });
       }
     },
   });
