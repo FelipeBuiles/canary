@@ -307,7 +307,6 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker={t("STORY")}
         title={t("CONFIRM THE STORY & BRIEF")}
         lead={t("Review what Scenewright found and set the promises that every page must keep.")}
       />

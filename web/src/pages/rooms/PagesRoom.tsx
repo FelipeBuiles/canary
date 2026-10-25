@@ -6,7 +6,7 @@ import { trackProductEvent } from "../../api/events";
 import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
+import { BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
@@ -32,12 +32,10 @@ import { canReadDocument } from "../../lib/stationAccess";
 import {
   ApprovalBar,
   RerunStageAction,
-  EntityCard,
   ConfirmDrawer,
   RoomHeader,
   RoomShell,
   RoomTabs,
-  SectionHeader,
   StagePlaceholder,
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
@@ -48,6 +46,7 @@ import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { getImageFailureCopy } from "../../lib/imageFailure";
 import type {
   CompletePageSummary,
@@ -65,7 +64,6 @@ import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
-import { seriesPath } from "../../api/projectScope";
 import { PartNotices } from "../../components/parts/PartNotices";
 import { describeRedrawChanges } from "../../components/pages/redrawChanges";
 import { isStorageLimitError } from "../../lib/storageLimit";
@@ -216,7 +214,7 @@ function PageReview({
         <div className="shrink-0 bg-bristol">
           <header className="flex items-start justify-between gap-3 px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
             <div className="min-w-0">
-              <h2 className="font-display text-2xl font-black uppercase leading-none tracking-[-0.03em] sm:text-3xl">
+              <h2 className="font-display text-[1.375rem] font-extrabold leading-none tracking-[-0.015em]">
                 {t("Page")} {item.page.page_number}
               </h2>
               <p className="mt-2 max-w-[22rem] font-meta text-[10px] leading-relaxed text-ink-muted sm:text-xs">
@@ -712,67 +710,78 @@ export function PagesRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker={t("PAGES")}
-        title={t("REVIEW COMPLETE PAGES")}
-        lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
+        title={t("Pages")}
+        lead={[
+          t("{count, plural, one {# page} other {# pages}}", { count: pages.length }),
+          status?.style_selected ? selectedStyle?.label : undefined,
+        ].filter(Boolean).join(" · ")}
       />
       <PartNotices status={status} project={id} />
-      <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8">
-        <div>
-          <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Your story, page by page")}</h2>
-          <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("Read the edition as it comes to life. Open a page for a closer look, review flagged findings, or shape the next revision.")}</p>
-          <div className="mt-5 flex flex-wrap gap-3">
-            {unresolvedPages.length > 0 ? <Button variant="onInk" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "page" })}>{t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})<ArrowUpRight size={16} aria-hidden="true" /></Button>
-              : drawnPages.length > 0 && <Button variant="onInk" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}><BookOpen size={16} aria-hidden="true" />{t("Start reading")}</Button>}
+      {!status?.style_selected && <p role="status" className="text-sm">{t("Select a visual direction in Look before drawing pages.")}</p>}
+
+      <section aria-label={t("Page gallery")} className="space-y-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div role="group" aria-label={t("Filter pages")} className="inline-flex border border-ink-black/55 bg-bristol">
+            {([
+              ["all", t("All"), pages.length],
+              ["needs-review", t("Needs you"), unresolvedPages.length],
+              ["drawing", t("Drawing"), drawingPages.size],
+              ["failed", t("Failed"), failedPages.size],
+            ] as const).filter(([value, , count]) => value === "all" || count > 0 || filter === value).map(([value, label, count]) => (
+              <button key={value} type="button" aria-pressed={filter === value} onClick={() => updateContext({ filter: value })}
+                className={cn(
+                  "flex h-8 items-center gap-1.5 px-3 font-meta text-[0.8125rem] font-medium transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]",
+                  filter === value ? "bg-ink-black text-pulp-paper" : "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black",
+                )}>
+                {label} <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            ))}
+          </div>
+          {drawnPages.length < pages.length && (
+            <div className="flex items-center gap-2">
+              <progress aria-label={t("Drawing progress")} value={drawnPages.length} max={Math.max(1, pages.length)} className="h-1 w-20 overflow-hidden [&::-moz-progress-bar]:bg-ink-black [&::-webkit-progress-bar]:bg-surface-variant [&::-webkit-progress-value]:bg-ink-black" />
+              <p className="font-meta text-xs text-ink-soft">{t("{drawn} of {total} pages drawn", { drawn: String(drawnPages.length), total: String(pages.length) })}</p>
+            </div>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-transparent text-ink-muted hover:text-ink-black"
+              data-reading-kind="adaptation"
+              disabled={!canReadDocument("adaptation", status)}
+              onClick={() => updateContext({ reading: "adaptation" })}
+            >
+              {t("Adaptation")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-transparent text-ink-muted hover:text-ink-black"
+              data-reading-kind="page-plan"
+              disabled={!canReadDocument("page-plan", status)}
+              onClick={() => updateContext({ reading: "page-plan" })}
+            >
+              {t("Page plan")}
+            </Button>
+            {unresolvedPages.length > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "page" })}>
+                {t("Review {count} flagged", { count: unresolvedPages.length })}
+              </Button>
+            ) : drawnPages.length > 0 && (
+              <Button variant="outline" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}>
+                <BookOpen size={15} aria-hidden="true" />{t("Start reading")}
+              </Button>
+            )}
           </div>
         </div>
-        <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
-          <p className="font-meta text-sm font-bold">{t("{drawn} of {total} pages drawn", { drawn: String(drawnPages.length), total: String(pages.length) })}</p>
-          <progress aria-label={t("Drawing progress")} value={drawnPages.length} max={Math.max(1, pages.length)} className="mt-3 h-2 w-full overflow-hidden [&::-webkit-progress-bar]:bg-pulp-paper/20 [&::-webkit-progress-value]:bg-narrator-gold [&::-moz-progress-bar]:bg-narrator-gold" />
-          <p className="mt-3 font-body text-xs leading-6 text-pulp-paper/85">{t("Open completed pages to check the artwork and lettering.")}</p>
-          {status?.style_selected && selectedStyle && <div className="mt-4 flex items-center gap-3">
-            {selectedStyle.has_sample && <img src={`/api${seriesPath(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 shrink-0 object-contain" />}
-            <p className="font-body text-xs leading-6"><span className="block font-meta text-narrator-gold">{t("Visual direction")}</span>{selectedStyle.label}</p>
-          </div>}
-        </div>
-      </section>
-      {!status?.style_selected && <p role="status" className="mb-4 text-sm">{t("Select a visual direction in Look before drawing pages.")}</p>}
-
-      <section aria-label={t("Page gallery")}>
-        <SectionHeader
-          variant="underline"
-          title={t("PAGE GALLERY")}
-          description={`${data.pages.length} ${t("planned pages")}`}
-          actions={(
-            <>
-              <Button
-                variant="outline"
-                size="xs"
-                data-reading-kind="adaptation"
-                disabled={!canReadDocument("adaptation", status)}
-                onClick={() => updateContext({ reading: "adaptation" })}
-              >
-                {t("BOOK ADAPTATION")}
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                data-reading-kind="page-plan"
-                disabled={!canReadDocument("page-plan", status)}
-                onClick={() => updateContext({ reading: "page-plan" })}
-              >
-                {t("PAGE PLAN")}
-              </Button>
-            </>
-          )}
-        />
         {drawStatus === "failed" && (status?.stages.draw?.error || status?.stages.draw?.error_code) && (
           isStorageLimitError(status.stages.draw.error, status.stages.draw.error_code)
             ? <StorageLimitNotice error={status.stages.draw.error} errorDetail={status.stages.draw.error_detail} />
             : <ErrorNotice error={status.stages.draw.error} errorCode={status.stages.draw.error_code} errorDetail={status.stages.draw.error_detail} operation="generate" />
         )}
         {drawStatus === "pending" && (
-          <Surface tone="pulp" padding="md" className="mb-5">
+          <Surface tone="bristol" padding="md" border="soft" shadow="none">
             <div className="flex flex-wrap items-end justify-between gap-5">
               <div className="min-w-0 flex-1 basis-80">
                 <h3 className="font-body text-base font-bold text-ink-black">
@@ -804,12 +813,12 @@ export function PagesRoom() {
           </Surface>
         )}
         {(data?.review_recheck?.length ?? 0) > 0 && (
-          <div className="mb-5">
+          <div>
             <ReviewRecheck project={id} disabled={drawingPages.size > 0 || !!status?.is_running} />
           </div>
         )}
         {drawStatus !== "pending" && !generationJobsLoading && pagesWaitingToDraw.length > 0 && (
-          <Surface tone="pulp" padding="md" className="mb-5">
+          <Surface tone="bristol" padding="md" border="soft" shadow="none">
             <div className="flex flex-wrap items-end justify-between gap-5">
               <div className="min-w-0 flex-1 basis-80">
                 <h3 className="font-body text-base font-bold text-ink-black">{t("Finish drawing the edition")}</h3>
@@ -832,7 +841,7 @@ export function PagesRoom() {
           </Surface>
         )}
         {(data?.redraws?.length ?? 0) > 0 && (
-          <div className="mb-5">
+          <div>
             <OutOfDatePages project={id} redraws={(data?.redraws ?? []).filter((page) => !drawingPages.has(page.page_number))}
               disabled={drawingPages.size > 0 || !!status?.is_running}
               onQueued={(jobs) => setPageJobs((current) => ({
@@ -841,7 +850,7 @@ export function PagesRoom() {
           </div>
         )}
         {drawingPages.size > 0 && (
-          <Surface tone="pulp" border="soft" shadow="none" padding="md" className="mb-5">
+          <Surface tone="bristol" border="soft" shadow="none" padding="md">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p role="status" className="text-sm font-bold">{drawingPages.size} {t("pages drawing or queued")}</p>
             </div>
@@ -857,23 +866,11 @@ export function PagesRoom() {
             </div>
           </Surface>
         )}
-        <div role="group" aria-label={t("Filter pages")} className="mb-6 flex flex-wrap gap-2 bg-surface-container p-3">
-          {([
-            ["all", t("All"), pages.length],
-            ["needs-review", t("Needs review"), unresolvedPages.length],
-            ["drawing", t("Drawing"), drawingPages.size],
-            ["failed", t("Failed"), failedPages.size],
-          ] as const).map(([value, label, count]) => (
-            <Button key={value} variant={filter === value ? "secondary" : "outline"} size="sm" aria-pressed={filter === value} onClick={() => updateContext({ filter: value })}>
-              {label} ({count})
-            </Button>
-          ))}
-        </div>
-        {visiblePages.length === 0 && <p role="status" className="mb-6 text-sm text-ink-muted">{t("No pages in this filter.")}</p>}
+        {visiblePages.length === 0 && <p role="status" className="benday-paper px-5 py-10 text-center text-sm text-ink-muted">{t("No pages in this filter.")}</p>}
         <WholeBookReveal
           ready={filter === "all" && pages.length > 1 && drawnPages.length === pages.length && drawingPages.size === 0}
           editionKey={editionKeyFor(projectId, pages.map((item) => item.page))}
-          className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))] gap-5"
+          className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,200px),1fr))] gap-x-3 gap-y-5"
         >
           {visiblePages.map((item) => {
             const { revision, drawing: pageIsDrawing, failure: pageFailure, failurePhase, badge, openIssues: openIssueCount, canRetryGeneration } = states.get(item.page.page_number)!;
@@ -887,23 +884,7 @@ export function PagesRoom() {
               : null;
             const pageActionError = pageActionErrors[item.page.page_number];
             return (
-              <EntityCard key={item.page.page_number} padding="cozy" className="h-full">
-                <div className="mb-3 flex min-h-7 flex-wrap items-center justify-between gap-2">
-                  <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
-                  {badge === "revising" ? (
-                    <StatusPill tone="ink">{t("New revision drawing")}</StatusPill>
-                  ) : badge === "stale" ? (
-                    <StatusPill tone="red">{t("Re-planned · redraw")}</StatusPill>
-                  ) : badge === "earlier-look" ? (
-                    <StatusPill tone="gold">{t("Earlier look · redraw")}</StatusPill>
-                  ) : badge === "confirm-fix" ? (
-                    <StatusPill tone="gold">{t("Confirm fix")}</StatusPill>
-                  ) : badge === "flagged" ? (
-                    <StatusPill tone="red">{openIssueCount} {t("FLAGGED")}</StatusPill>
-                  ) : badge === "placement" ? (
-                    <StatusPill tone="gold">{t("Needs placement")}</StatusPill>
-                  ) : null}
-                </div>
+              <article key={item.page.page_number} aria-label={`${t("Page")} ${item.page.page_number}`} className="relative min-w-0">
                 <ImageGenerationPreview project={id} target={`page:${item.page.page_number}`} active={pageIsDrawing} keepChildren={!!revision} aspect="2 / 3"
                   aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
                   finalSrc={revision ? (pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")) : undefined}
@@ -913,9 +894,9 @@ export function PagesRoom() {
                     type="button"
                     onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
                     aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision}`}
-                    className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+                    className="group block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
                   >
-                    <div className="aspect-[2/3] overflow-hidden bg-surface-container">
+                    <div className="aspect-[2/3] overflow-hidden bg-surface-container outline outline-1 outline-ink-black/12 transition-[outline-color,box-shadow,translate] duration-[var(--motion-press)] group-hover:-translate-x-px group-hover:-translate-y-px group-hover:shadow-press group-hover:outline-2 group-hover:outline-ink-black">
                       <PageThumbnail
                         src={pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
@@ -925,9 +906,9 @@ export function PagesRoom() {
                     </div>
                   </button>
                 ) : (
-                  <div className="aspect-[2/3] overflow-hidden bg-surface-container">
+                  <div className="benday-paper aspect-[2/3] overflow-hidden outline outline-1 outline-ink-black/12">
                     {failureCopy ? (
-                      <div role="alert" className="flex h-full flex-col overflow-y-auto p-5 text-center">
+                      <div role="alert" className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center">
                         <div className="my-auto flex flex-col items-center">
                           <Layers size={28} aria-hidden="true" className="text-hero-red" />
                           <strong className="mt-4 font-meta text-xs text-hero-red">
@@ -981,10 +962,10 @@ export function PagesRoom() {
                         ) : null}
                       </div>
                     ) : (
-                      <div className="flex h-full flex-col overflow-y-auto p-5 text-center text-ink-muted">
+                      <div className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center text-ink-muted">
                         <div className="my-auto flex flex-col items-center gap-4">
                           <Layers size={28} aria-hidden="true" />
-                          <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
+                          <span className="font-meta text-xs font-semibold">{t("Ready to draw")}</span>
                           <span className="font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
                           {pageActionError && !paidIntent && (
                             <ErrorNotice error={pageActionError} operation="generate" />
@@ -998,7 +979,7 @@ export function PagesRoom() {
                             onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
                             disabled={!status?.style_selected}
                           >
-                            {t("GENERATE COMPLETE PAGE")}
+                            {t("Draw page")}
                           </Button>
                         )}
                       </div>
@@ -1006,7 +987,26 @@ export function PagesRoom() {
                   </div>
                 )}
                 </ImageGenerationPreview>
-              </EntityCard>
+                {/* Comic caption box and stamp: the page's identity rides on the art. */}
+                <div className="pointer-events-none absolute inset-x-1.5 top-1.5 z-10 flex flex-wrap items-start justify-between gap-1">
+                  <span className="border border-ink-black bg-pulp-paper px-1.5 py-0.5 font-meta text-[0.6875rem] font-bold uppercase leading-none tracking-[0.12em] text-ink-black">
+                    {t("Page")} {item.page.page_number}
+                  </span>
+                    {badge === "revising" ? (
+                      <StatusPill className="border border-ink-black" tone="ink">{t("New revision drawing")}</StatusPill>
+                    ) : badge === "stale" ? (
+                      <StatusPill className="border border-ink-black" tone="red">{t("Re-planned · redraw")}</StatusPill>
+                    ) : badge === "earlier-look" ? (
+                      <StatusPill className="border border-ink-black" tone="gold">{t("Earlier look · redraw")}</StatusPill>
+                    ) : badge === "confirm-fix" ? (
+                      <StatusPill className="border border-ink-black" tone="gold">{t("Confirm fix")}</StatusPill>
+                    ) : badge === "flagged" ? (
+                      <StatusPill className="border border-ink-black" tone="gold">{t("{count, plural, one {# check} other {# checks}}", { count: openIssueCount })}</StatusPill>
+                    ) : badge === "placement" ? (
+                      <StatusPill className="border border-ink-black" tone="gold">{t("Needs placement")}</StatusPill>
+                    ) : null}
+                </div>
+              </article>
             );
           })}
         </WholeBookReveal>
@@ -1071,7 +1071,7 @@ export function PagesRoom() {
 
       {reviewIndex < 0 && !projectWorkActive && drawingPages.size === 0 && !run.isPending && !generate.isPending && <ApprovalBar
         next={t("Run Finish preflight and export the book")}
-        primaryLabel={t("CONTINUE TO BOOK")}
+        primaryLabel={t("Continue to Book")}
         onPrimary={continueToBook}
         primaryDisabled={
           approve.isPending

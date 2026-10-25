@@ -68,5 +68,5 @@ export function RoomShell({
     );
   }
 
-  return <div className={fullHeight ? "h-full" : "space-y-10"}>{children}</div>;
+  return <div className={fullHeight ? "h-full" : "space-y-6"}>{children}</div>;
 }

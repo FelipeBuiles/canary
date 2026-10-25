@@ -64,7 +64,7 @@ describe("mobile project shell", () => {
           <Routes>
             <Route path="/project/:id" element={<Shell />}>
               <Route path="pages" element={<>
-                <RoomHeader kicker="PAGES" title="REVIEW COMPLETE PAGES" />
+                <RoomHeader title="REVIEW COMPLETE PAGES" />
                 <p>Artwork to review</p>
                 <ApprovalBar next="Review the artwork" primaryLabel="Continue" onPrimary={onContinue} />
               </>} />

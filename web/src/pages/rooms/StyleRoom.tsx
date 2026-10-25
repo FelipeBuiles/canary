@@ -364,7 +364,6 @@ export function StyleRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker="LOOK"
         title="CHOOSE THE LOOK"
         lead="Choose one visual direction. Scenewright carries it through characters, places, and panels."
         actions={suggestions.length > 0 || batchInFlight ? (

@@ -1,84 +1,47 @@
 import type { ReactNode } from "react";
-import { useLocation } from "react-router-dom";
 import { cn } from "../../lib/cn";
 import { useI18n } from "../../i18n";
-import { STATIONS, stationForRoute } from "../../lib/stations";
 import { TopBarPortal } from "../../layout/TopBarSlot";
 
 /**
  * Unified stage page header. Renders into the shell masthead (AppTopBar slot)
- * rather than occupying its own bar in the content flow: kicker stacked above
- * a display title on the left, lead alongside, actions on the right.
- * Masthead width, not the viewport, decides what fits: the task title and
- * actions keep priority; the lead and station block appear only with room.
+ * rather than occupying its own bar in the content flow: the room title, one
+ * line of facts, and the room's actions. Station progress lives in the rail,
+ * so the masthead never repeats it. Masthead width, not the viewport, decides
+ * what fits: the title and actions keep priority; the meta line appears only
+ * with room.
  */
 export function RoomHeader({
-  kicker,
   title,
   lead,
   actions,
   className,
 }: {
-  kicker: string;
   title: string;
+  /** One line of facts ("16 pages · Two-Tone Woodcut Print"), not an explanation. */
   lead?: ReactNode;
   actions?: ReactNode;
   className?: string;
 }) {
   const { t } = useI18n();
-  const location = useLocation();
-  const route = location.pathname.split("/").filter(Boolean).at(-1) ?? "";
-  const station = stationForRoute(route);
-  const stationIndex = station ? STATIONS.findIndex((item) => item.key === station.key) : -1;
-  const progress = stationIndex >= 0 ? ((stationIndex + 1) / STATIONS.length) * 100 : 0;
 
   return (
     <>
       <TopBarPortal inlineOnMobile>
-        <div className={cn("@container/masthead relative flex min-w-0 flex-1 items-stretch overflow-hidden", className)}>
-          {station && (
-            <div className="hidden w-[68px] shrink-0 flex-col items-center justify-center bg-ink-black text-bristol @min-[60rem]/masthead:flex">
-              <span className="font-meta text-[0.46rem] font-bold tracking-[0.14em] text-bristol/65">{t("STATION")}</span>
-              <strong className="mt-1 font-display text-[1.5rem] font-black leading-none tracking-[-0.03em]">
-                {station.number}
-              </strong>
-            </div>
+        <div className={cn("@container/masthead relative flex min-w-0 flex-1 items-center gap-4 studio-desktop:px-5", className)}>
+          <h1 className="min-w-0 max-w-full truncate font-display text-[1.75rem] font-black uppercase leading-[0.95] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] sm:text-[2rem] studio-desktop:text-[1.625rem]" title={t(title)}>
+            {t(title)}
+          </h1>
+
+          {lead && (
+            <span className="hidden min-w-0 flex-[0_1_auto] truncate font-meta text-xs font-medium text-ink-soft @min-[40rem]/masthead:block">
+              {typeof lead === "string" ? t(lead) : lead}
+            </span>
           )}
 
-          <div className="flex min-w-0 flex-1 items-center gap-5 studio-desktop:px-5 studio-desktop:pb-1">
-            <div className="flex min-w-0 flex-[0_1_auto] flex-col items-start justify-center gap-1">
-              <span className="hidden font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red studio-desktop:block">
-                {t(kicker)}
-              </span>
-              <h1 className="max-w-full text-balance font-display text-[1.85rem] font-black uppercase leading-[0.92] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] sm:text-[2.25rem] studio-desktop:text-[1.55rem] studio-desktop:leading-[0.9] studio-desktop:line-clamp-2 studio-desktop:[overflow-wrap:break-word]" title={t(title)}>
-                {t(title)}
-              </h1>
-            </div>
-
-            {lead && (
-              <>
-                <span aria-hidden="true" className="hidden h-8 w-[2px] shrink-0 bg-ink-black/16 @min-[56rem]/masthead:block" />
-                <span className="hidden min-w-0 max-w-[46rem] flex-[1_1_0] text-balance font-body text-[0.8rem] font-semibold leading-snug text-ink-muted line-clamp-2 @min-[56rem]/masthead:[display:-webkit-box]">
-                  {typeof lead === "string" ? t(lead) : lead}
-                </span>
-              </>
-            )}
-
-            {actions && (
-              <div className="ml-auto hidden shrink-0 items-center gap-2 pl-3 studio-desktop:flex">
-                {actions}
-              </div>
-            )}
-          </div>
-
-          {station && (
-            <div aria-hidden="true" className="absolute inset-x-0 bottom-0 hidden h-[4px] bg-surface-variant studio-desktop:block">
-              <span
-                className="relative block h-full bg-hero-red transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                style={{ width: `${progress}%` }}
-              >
-                <span className="absolute -right-1 bottom-0 h-[4px] w-2 bg-narrator-gold" />
-              </span>
+          {actions && (
+            <div className="ml-auto hidden shrink-0 items-center gap-2 pl-3 studio-desktop:flex">
+              {actions}
             </div>
           )}
         </div>
