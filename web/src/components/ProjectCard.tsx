@@ -5,6 +5,7 @@ import { LazyImage } from "./ui/LazyImage";
 import { Skeleton } from "./ui/Skeleton";
 import { BACKEND_STAGE_TO_STATION_ROUTE, STATIONS, stationForRoute } from "../lib/stations";
 import { useI18n } from "../i18n";
+import { StatusPill } from "./ui/StatusPill";
 import { partProjectKey, projectFileUrl } from "../api/projectScope";
 
 const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
@@ -30,33 +31,21 @@ interface Props {
   deleteIncompatiblePending?: boolean;
 }
 
-/** One status line does both jobs: what state, and where in the flow. */
-function statusLine(project: ProjectSummary, t: (s: string) => string): { label: string; className: string } {
+/** One status pill does both jobs: where in the flow, and the studio state word. */
+function statusLine(project: ProjectSummary, t: (s: string) => string): { label: string; tone: "neutral" | "red" | "gold" | "sage" | "ink" } {
   if (project.incompatible) {
-    return { label: t("Needs reset"), className: "bg-hero-red text-bristol" };
+    return { label: t("Needs reset"), tone: "red" };
   }
   const stationRoute = project.furthest_stage
     ? BACKEND_STAGE_TO_STATION_ROUTE[project.furthest_stage as StageName]
     : null;
   const station = stationRoute ? stationForRoute(stationRoute) ?? STATIONS[0] : null;
-  const stationLabel = station ? t(station.label) : null;
+  const where = (state: string) => (station ? `${t(station.label)} · ${state}` : state);
 
-  if (project.is_running) {
-    return {
-      label: stationLabel ? `${t("In progress")} — ${stationLabel}` : t("In progress"),
-      className: "bg-narrator-gold text-ink-black",
-    };
-  }
-  if (project.furthest_stage === "finish") {
-    return { label: t("Complete"), className: "bg-chip-sage text-archive-sage" };
-  }
-  if (project.furthest_stage) {
-    return {
-      label: stationLabel ? `${t("Needs your review")} — ${stationLabel}` : t("Needs your review"),
-      className: "bg-chip-gold text-ink-black",
-    };
-  }
-  return { label: t("New"), className: "bg-surface-container text-ink-muted" };
+  if (project.is_running) return { label: where(t("Working")), tone: "ink" };
+  if (project.furthest_stage === "finish") return { label: t("Ready"), tone: "sage" };
+  if (project.furthest_stage) return { label: where(t("Needs you")), tone: "gold" };
+  return { label: t("Not started"), tone: "neutral" };
 }
 
 export function ProjectCard({
@@ -91,8 +80,9 @@ export function ProjectCard({
   const station = stationRoute ? stationForRoute(stationRoute) : null;
 
   const cardContent = (
-    <article className={`${expanded ? "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]" : ""} h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink`}>
-      <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
+    <article className={`${expanded ? "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:gap-6" : ""} h-full`}>
+      {/* The cover is the card: it lifts like a page pulled from the stack. */}
+      <div className="relative overflow-hidden outline outline-1 outline-ink-black/12 transition-[outline-color,box-shadow,translate] duration-[var(--motion-press)] group-hover:-translate-x-px group-hover:-translate-y-px group-hover:shadow-press group-hover:outline-2 group-hover:outline-ink-black group-focus-visible:-translate-x-px group-focus-visible:-translate-y-px group-focus-visible:shadow-press group-focus-visible:outline-2 group-focus-visible:outline-ink-black">
       {project.has_cover ? (
         <LazyImage
           src={coverUrl}
@@ -139,28 +129,19 @@ export function ProjectCard({
       )}
       </div>
 
-      <div className={expanded ? "flex flex-col justify-center p-5 sm:p-8" : "p-4"}>
+      <div className={expanded ? "flex flex-col justify-center pt-3 sm:pt-0" : "pt-3"}>
       <h3
         title={project.project_name}
-        className="break-words font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
+        className="break-words font-display text-[1.0625rem] font-black uppercase leading-none tracking-[-0.02em] text-ink-black"
       >
         {project.project_name}
       </h3>
-      <p className="mt-2 truncate font-body text-[0.86rem] font-semibold leading-tight text-ink-muted">
+      <p className="mt-1 truncate font-body text-xs text-ink-soft">
         {byline}
       </p>
-
-      <div className="mt-3">
-        <span
-          className={`inline-flex min-h-8 items-center px-3.5 font-meta text-xs font-bold leading-none tracking-[0.08em] uppercase ${card.className}`}
-        >
-          {card.label}
-        </span>
-      </div>
-      <div className="mt-4 flex min-h-11 items-center justify-between border-t-[2px] border-ink-black/10 pt-3 font-meta text-xs font-bold tracking-[0.08em] text-ink-muted transition-colors group-hover:text-ink-black">
-        <span>{project.incompatible ? t("PROJECT CANNOT OPEN") : t("OPEN FILE")}</span>
-        <span aria-hidden="true" className="text-hero-red transition-transform duration-150 group-hover:translate-x-1">{project.incompatible ? "×" : "→"}</span>
-      </div>
+      {!(project.is_running && !coverPending) && (
+        <StatusPill tone={card.tone} className="mt-2">{card.label}</StatusPill>
+      )}
       </div>
     </article>
   );
@@ -182,10 +163,10 @@ export function ProjectCard({
       )}
 
       {project.incompatible && onDeleteIncompatible && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-end p-4">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-end">
           <button
             type="button"
-            className="pointer-events-auto min-h-11 bg-hero-red px-4 font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-bristol shadow-[3px_3px_0_0_var(--color-ink-black)] transition-transform hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-75"
+            className="pointer-events-auto min-h-8 border-[2px] border-ink-black bg-hero-red px-3 font-meta text-xs font-semibold text-bristol shadow-press disabled:cursor-wait disabled:opacity-75"
             onClick={onDeleteIncompatible}
             disabled={deleteIncompatiblePending}
           >
@@ -195,14 +176,14 @@ export function ProjectCard({
       )}
 
       {coverFailed && !project.has_cover && !coverPending && onRetryCover && (
-        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-end p-4 ${expanded ? "sm:right-auto sm:w-[45.4545%]" : ""}`}>
+        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-start justify-end p-2 ${expanded ? "sm:right-auto sm:w-[45.4545%]" : ""}`}>
           <button
             type="button"
-            className="pointer-events-auto min-h-11 bg-hero-red px-4 font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-bristol shadow-[3px_3px_0_0_var(--color-ink-black)] transition-transform hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-75"
+            className="pointer-events-auto min-h-8 border border-ink-black bg-pulp-paper px-2.5 font-meta text-xs font-medium text-ink-black transition-colors hover:bg-narrator-gold disabled:cursor-wait disabled:opacity-75"
             onClick={onRetryCover}
             disabled={coverRetrying}
           >
-            {coverRetrying ? t("RETRYING COVER…") : t("COVER FAILED — RETRY")}
+            {coverRetrying ? t("RETRYING COVER…") : t("Retry cover")}
           </button>
         </div>
       )}

@@ -73,7 +73,7 @@ describe("Library first-run (Issue #0)", () => {
     projectsResult.data = [];
     renderLibrary();
     expect(screen.getByRole("img", { name: /Generated comic page/ }).getAttribute("src")).toBe("/marketing/elm-and-keep-page-12.webp");
-    const opener = screen.getByRole("button", { name: "NEW PRODUCTION" });
+    const opener = screen.getByRole("button", { name: "New production" });
     await user.click(opener);
     const dialog = screen.getByRole("dialog");
     expect(dialog.contains(document.activeElement)).toBe(true);
@@ -90,7 +90,7 @@ describe("Library first-run (Issue #0)", () => {
     const user = userEvent.setup();
     projectsResult.data = [];
     renderLibrary();
-    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByRole("button", { name: "New production" }));
     await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
     const field = screen.getByLabelText("Library of Short Stories code or URL");
     await user.type(field, "the-open-window");
@@ -114,7 +114,7 @@ describe("Library first-run (Issue #0)", () => {
     projectsResult.data = [];
     importStoryMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "prepared-source" }));
     renderLibrary();
-    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByRole("button", { name: "New production" }));
     await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
     await user.type(screen.getByLabelText("Library of Short Stories code or URL"), "the-open-window");
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
@@ -131,7 +131,7 @@ describe("Library first-run (Issue #0)", () => {
     projectsResult.data = [];
     createProjectMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "full-book", part_id: "part_0001" }));
     const view = renderLibrary();
-    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByRole("button", { name: "New production" }));
     await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["Book"], "book.txt", { type: "text/plain" }));
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
@@ -217,7 +217,7 @@ describe("Library first-run (Issue #0)", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "COVER FAILED — RETRY" }));
+    await user.click(screen.getByRole("button", { name: "Retry cover" }));
     expect(generateCoverMutation.mutate).toHaveBeenCalledWith(
       { project: "demo" },
       expect.objectContaining({ onError: expect.any(Function) }),

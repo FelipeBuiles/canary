@@ -3547,5 +3547,9 @@
   "Queued": "Queued",
   "Review {count} flagged": "Review {count} flagged",
   "Ready to draw": "Ready to draw",
-  "Continue to Book": "Continue to Book"
+  "Continue to Book": "Continue to Book",
+  "Ready": "Ready",
+  "Retry cover": "Retry cover",
+  "New production": "New production",
+  "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# production} other {# productions}}"
 }
