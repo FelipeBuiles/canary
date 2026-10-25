@@ -29,6 +29,7 @@ import {
   StagePlaceholder,
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
+import { StatusPill } from "../../components/ui/StatusPill";
 import { Skeleton } from "../../components/ui/Skeleton";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
@@ -167,37 +168,53 @@ export function BookRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        title={t("YOUR EDITION")}
-        lead={t("Read your pages, settle any remaining decisions, and prepare your book to keep.")}
+        title={t("Book")}
+        lead={completePages ? `${bookPages.length} ${bookPages.length === 1 ? t("page drawn") : t("pages drawn")}` : undefined}
       />
 
-
-      {/* The hero's own width decides whether the cover sits beside the text. */}
+      {/* Readiness first: what this edition is, whether it can leave, and the way out. */}
       <div className="@container">
-      <section aria-label={t("Read your book")} className="grid gap-6 bg-ink-black p-5 text-bristol shadow-paper @min-[40rem]:grid-cols-[minmax(0,13rem)_minmax(0,1fr)] @min-[40rem]:items-center @min-[40rem]:gap-8 @min-[40rem]:p-9 @min-[56rem]:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
-        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[11rem] overflow-hidden @min-[40rem]:max-w-[15rem] bg-surface-container text-ink-black shadow-[6px_6px_0_0_var(--color-narrator-gold)] transition-transform hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold motion-reduce:transition-none">
+      <section aria-label={t("Read your book")} className="grid gap-5 @min-[40rem]:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] @min-[40rem]:items-center @min-[40rem]:gap-7">
+        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[9rem] overflow-hidden border border-ink-black bg-surface-container text-ink-black shadow-[4px_4px_0_0_var(--color-narrator-gold)] transition-[translate,box-shadow] duration-[var(--motion-press)] hover:-translate-x-px hover:-translate-y-px hover:shadow-[5px_5px_0_0_var(--color-narrator-gold)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red motion-reduce:transition-none @min-[40rem]:max-w-[10rem]">
           {status?.has_cover
             ? <img src={`/api${projectPath(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
             : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageDisplayImage(id, bookPages[0])} alt={t("First page of the book")} />}
         </button>}
         <div className="min-w-0">
-          <h2 className="text-balance break-words font-display text-3xl font-black leading-tight tracking-[-0.03em] @min-[56rem]:text-5xl">{title}</h2>
-          <p className="mt-3 font-meta text-sm text-bristol/85">{completePages ? `${bookPages.length} ${bookPages.length === 1 ? t("page drawn") : t("pages drawn")}` : pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>
-          <p role="status" className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 font-meta text-xs font-bold uppercase tracking-[0.1em]">
-            {checking ? <span className="text-bristol/85">{t("Checking edition…")}</span>
-              : preflightError || !preflight ? <span className="text-narrator-gold">{t("The book could not be checked.")}</span>
-              : fixCount > 0 ? <span className="bg-hero-red px-2 py-1 text-bristol">{fixCount} {t("{count, plural, one {fix needed before export} other {fixes needed before export}}", { count: fixCount })}</span>
-              : <span className="bg-narrator-gold px-2 py-1 text-ink-black">{t("Ready to export")}</span>}
-            {!checking && placementReviews.length > 0 && <span className="text-bristol/75">{placementReviews.length} {t("{count, plural, one {page to check by eye} other {pages to check by eye}}", { count: placementReviews.length })}</span>}
+          <h2 className="text-balance break-words font-display text-[1.75rem] font-black uppercase leading-[0.95] tracking-[-0.03em] @min-[56rem]:text-[2.25rem]">{title}</h2>
+          {!completePages && <p className="mt-2 font-meta text-xs text-ink-soft">{pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>}
+          <p role="status" className="mt-3 flex flex-wrap items-center gap-2">
+            {checking ? <StatusPill tone="ink">{t("Checking edition…")}</StatusPill>
+              : preflightError || !preflight ? <StatusPill tone="red">{t("The book could not be checked.")}</StatusPill>
+              : fixCount > 0 ? <StatusPill tone="red">{fixCount} {t("{count, plural, one {fix needed before export} other {fixes needed before export}}", { count: fixCount })}</StatusPill>
+              : <StatusPill tone="sage">{t("Ready to export")}</StatusPill>}
+            {!checking && placementReviews.length > 0 && <StatusPill tone="gold">{placementReviews.length} {t("{count, plural, one {page to check by eye} other {pages to check by eye}}", { count: placementReviews.length })}</StatusPill>}
           </p>
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            {bookPages.length > 0 && <Button variant="onInk" onClick={() => setReaderOpen(true)}><BookOpen size={18} aria-hidden="true" />{t("Read your book")}</Button>}
-            <a href={canExport ? "#book-downloads" : "#edition-checks"} className="inline-flex min-h-11 items-center gap-2 px-3 font-meta text-sm text-bristol underline underline-offset-4 hover:text-narrator-gold">{canExport ? t("Download your edition") : t("Review edition checks")}<ArrowDown size={16} aria-hidden="true" /></a>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {bookPages.length > 0 && <Button variant="outline" onClick={() => setReaderOpen(true)}><BookOpen size={16} aria-hidden="true" />{t("Read your book")}</Button>}
+            {canExport
+              ? <a href="#book-downloads" className="inline-flex min-h-10 items-center gap-2 border-[2px] border-ink-black bg-hero-red px-4 font-meta text-[0.8125rem] font-semibold text-bristol shadow-press transition-[translate,box-shadow,background-color] hover:translate-x-px hover:translate-y-px hover:bg-hero-red-press hover:shadow-[2px_2px_0_0_var(--color-ink-black)]">{t("Download your edition")}<ArrowDown size={15} aria-hidden="true" /></a>
+              : <a href="#edition-checks" className="inline-flex min-h-10 items-center gap-2 px-2 font-meta text-[0.8125rem] font-semibold text-ink-black underline decoration-ink-black/30 underline-offset-4 hover:text-hero-red">{t("Review edition checks")}<ArrowDown size={15} aria-hidden="true" /></a>}
           </div>
-          <p className="mt-4 font-body text-xs leading-6 text-bristol/75">{t("Reading does not generate artwork or use credits.")}</p>
+          <p className="mt-2 font-body text-xs text-ink-soft">{t("Reading does not generate artwork or use credits.")}</p>
         </div>
       </section>
       </div>
+
+      {/* The delivery path, as caption boxes: where each step lives on this page. */}
+      <nav aria-label={t("Book sections")} className="flex flex-wrap gap-2 border-y border-ink-black/12 py-2.5">
+        {([
+          ["#edition-checks", t("Resolve"), !checking && preflight ? (fixCount > 0 ? String(fixCount) : "✓") : null],
+          ["#book-downloads", t("Export"), null],
+          ["#book-share", t("Share"), null],
+          ["#book-credit-history", t("History"), null],
+        ] as const).map(([href, label, mark], index) => (
+          <a key={href} href={href} className="inline-flex h-8 items-center gap-2 border border-ink-black bg-pulp-paper px-2.5 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-black transition-colors hover:bg-narrator-gold">
+            <span className="tabular-nums text-ink-soft">{index + 1}</span>{label}
+            {mark && <span className={fixCount > 0 ? "text-status-blocked-text" : "text-ready"}>{mark}</span>}
+          </a>
+        ))}
+      </nav>
 
       {readerOpen && (
         <BookReader
@@ -212,7 +229,6 @@ export function BookRoom() {
           <SectionHeader
             variant="underline"
             title={t("BEFORE YOU EXPORT")}
-            description={t("What blocks your edition comes first. Checks marked optional never block export.")}
             actions={preflight && !checking && !preflightError ? <span className="font-meta text-xs font-bold text-ink-muted">{readyPages} / {preflight.pages.length} {t("pages ready")}</span> : undefined}
           />
         </div>
@@ -228,7 +244,7 @@ export function BookRoom() {
           <ErrorNotice error={preflightError} operation="load" title="The book could not be checked."
             onRetry={() => void refetch()} retryDisabled={isFetching} retryLabel={t("Retry edition checks")} />
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-2">
             {findings.map((finding) => (
               <CheckItem key={finding.key} tone="fix"
                 title={finding.copy ? t(finding.copy.title) : finding.message}
@@ -316,7 +332,9 @@ export function BookRoom() {
         unavailableReason={checking ? t("Checking edition…") : preflightError ? t("The book could not be checked.") : fixCount > 0 ? t("Fix what blocks export above, then create your package.") : undefined} />
       {newPackage && !isFetching && !preflightError && <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">{t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}</p>}
 
-      <BookPublication project={id} title={title} ready={canExport} onPreview={() => setReaderOpen(true)} />
+      <div id="book-share" tabIndex={-1} className="scroll-mt-6">
+        <BookPublication project={id} title={title} ready={canExport} onPreview={() => setReaderOpen(true)} />
+      </div>
 
       {finishDiagnostics.length ? (
         <section aria-label={t("TECHNICAL DIAGNOSTICS")}>
@@ -354,11 +372,10 @@ export function BookRoom() {
 
       {status?.parts && <CombinedExport project={id} parts={status.parts} />}
 
-      <section id="book-credit-history" className="scroll-mt-6">
+      <section id="book-credit-history" tabIndex={-1} className="scroll-mt-6">
         <SectionHeader
           variant="underline"
           title={t("CREDIT HISTORY")}
-          description={t("Credits used by this book across every part, edition, and revision. Open an activity to see what each step cost.")}
           actions={<Link to={`/credits?project=${encodeURIComponent(splitProjectKey(id).id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
         />
         <CreditSpendSummary spendByStage={creditHistory?.pages[0]?.spend_by_stage} />
@@ -400,19 +417,18 @@ function CheckItem({ tone, title, pages = [], detail, subjects = [], evidence = 
   children?: ReactNode;
 }) {
   const { t } = useI18n();
-  const rule = tone === "fix" ? "border-hero-red" : tone === "optional" ? "border-narrator-gold" : "border-archive-sage";
   return (
-    <li className={`border-l-[4px] ${rule} bg-bristol px-4 py-4 md:px-5`}>
+    <li className="border border-ink-black/12 bg-bristol px-4 py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="min-w-0 font-body text-sm font-bold leading-6">
           {pages.length === 1 && <span className="mr-2 font-meta text-xs text-ink-muted">{t("Page")} {pages[0]}</span>}
           {title}
         </p>
-        {tone !== "done" && (
-          <span className={`shrink-0 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] ${tone === "fix" ? "text-hero-red" : "text-ink-muted"}`}>
+        {tone !== "done" ? (
+          <StatusPill tone={tone === "fix" ? "red" : "neutral"} className="shrink-0">
             {tone === "fix" ? t("Blocks export") : t("Optional")}
-          </span>
-        )}
+          </StatusPill>
+        ) : <StatusPill tone="sage" className="shrink-0">{t("Ready")}</StatusPill>}
       </div>
       {subjects.length > 0 && <p className="mt-1 font-body text-sm leading-6">{subjects.join(" · ")}</p>}
       {detail && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{detail}</p>}

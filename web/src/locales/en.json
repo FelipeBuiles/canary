@@ -3558,5 +3558,8 @@
   "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# prop} other {# props}}",
   "Save brief": "Save brief",
   "Approve brief": "Approve brief",
-  "Save & approve brief": "Save & approve brief"
+  "Save & approve brief": "Save & approve brief",
+  "Book sections": "Book sections",
+  "Resolve": "Resolve",
+  "Share": "Share"
 }

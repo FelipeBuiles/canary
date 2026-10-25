@@ -3558,5 +3558,8 @@
   "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# objeto} other {# objetos}}",
   "Save brief": "Guardar brief",
   "Approve brief": "Aprobar brief",
-  "Save & approve brief": "Guardar y aprobar brief"
+  "Save & approve brief": "Guardar y aprobar brief",
+  "Book sections": "Secciones del libro",
+  "Resolve": "Resolver",
+  "Share": "Compartir"
 }
