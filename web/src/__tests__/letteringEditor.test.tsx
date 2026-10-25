@@ -537,7 +537,7 @@ describe("placement check", () => {
     api.get.mockResolvedValue(checked({ heads: null }));
     mount();
     await ready();
-    expect(within(check()).getByText(/ran before faces were read/)).toBeTruthy();
+    expect(within(check()).getByText(/Faces not read for this artwork/)).toBeTruthy();
     expect(within(check()).queryByText(/Covers/)).toBeNull();
     expect(within(check()).queryByRole("button", { name: /Redo layout/ })).toBeNull();
   });

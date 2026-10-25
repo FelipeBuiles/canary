@@ -5,10 +5,10 @@ import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, plac
 import { getLetteringSuggestions, getPageLettering, putPageLettering, resetPageLettering, getBookLetteringStyle, putBookLetteringStyle, type HybridLetteringResponse, type PageLettering, type LetteringElement, type LetteringStyle, type RoleName, } from "../../api/lettering";
 import { pageRenderUrl } from "../../api/pages";
 import { clearLetteringDraft, editableSignature, historyReducer, initialHistory, letteringDraftKey, readLetteringDraft, writeLetteringDraft } from "../../lib/letteringHistory";
+import { Redo2, Undo2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
-import { Toolbar } from "../composites/Toolbar";
 import { LetteringCanvas } from "./LetteringCanvas";
 import { LetteringStyleControls } from "./LetteringStyleControls";
 import { LetteringPresetTiles, LetteringRoleTiles } from "./LetteringPickers";
@@ -334,17 +334,21 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
   const reviewPending = !dirty && !busy && base.placement_review_needed && !base.source_stale;
   return <div ref={root} className="lettering-editor" onKeyDown={keys}>
     <style>{fontCSS()}</style>
-    <Toolbar className="lettering-main-toolbar" bottomRule>
-      <Button variant="outline" size="sm" disabled={pageLocked || dirty} title={dirty ? t("Save this page before changing the book-wide style") : undefined} onClick={() => setBookStyleOpen(true)} aria-expanded={bookStyleOpen}>{t("Book lettering style")}</Button>
-      <div className="lettering-toolbar-actions">
-        <span role="status" aria-live="polite" className="lettering-save-state">{busy ? t("Saving…") : dirty ? t(draftStored ? "Unsaved · draft kept on this device" : "Unsaved · local recovery unavailable") : reviewPending ? t("Placement not reviewed") : t("Saved")}</span>
-        <Button size="xs" variant="outline" disabled={pageLocked || (!history.past.length && !history.gesture)} onClick={() => dispatch({ type: "undo" })}>{t("Undo")}</Button>
-        <Button size="xs" variant="outline" disabled={pageLocked || !history.future.length} onClick={() => dispatch({ type: "redo" })}>{t("Redo")}</Button>
-        <Button data-lettering-save size="sm" disabled={pageLocked || !layout.state || (!dirty && !base.placement_review_needed)} onClick={() => void save(loadedArtUrl === artUrl)}>{reviewPending ? t("Confirm placement") : t("Save lettering")}</Button>
+    <div className="lettering-main-toolbar">
+      <div className="lettering-toolbar-book">
+        <Button variant="outline" size="xs" disabled={pageLocked || dirty} title={dirty ? t("Save this page before changing the book-wide style") : undefined} onClick={() => setBookStyleOpen(true)} aria-expanded={bookStyleOpen}>{t("Book lettering style")}</Button>
+        <div className="lettering-language"><ProjectLetteringLanguage project={project} disabled={pageLocked || dirty} onBusyChange={setTranslationBusy} onApplied={adoptBookChange} /></div>
       </div>
-    </Toolbar>
+      <div className="lettering-toolbar-actions">
+        {issues.length > 0 && <span role="status" className="lettering-issue-count">{t("{count, plural, one {# element needs attention before export} other {# elements need attention before export}}", { count: issues.length })}</span>}
+        <span role="status" aria-live="polite" className="lettering-save-state">{busy ? t("Saving…") : dirty ? t(draftStored ? "Unsaved · draft kept on this device" : "Unsaved · local recovery unavailable") : reviewPending ? t("Placement not reviewed") : t("Saved")}</span>
+        <Button size="xs" variant="outline" className="lettering-icon-button" aria-label={t("Undo")} title={t("Undo")} disabled={pageLocked || (!history.past.length && !history.gesture)} onClick={() => dispatch({ type: "undo" })}><Undo2 size={16} aria-hidden="true" /></Button>
+        <Button size="xs" variant="outline" className="lettering-icon-button" aria-label={t("Redo")} title={t("Redo")} disabled={pageLocked || !history.future.length} onClick={() => dispatch({ type: "redo" })}><Redo2 size={16} aria-hidden="true" /></Button>
+        <Button data-lettering-save size="sm" disabled={pageLocked || !layout.state || (!dirty && !base.placement_review_needed)} title={reviewPending ? t("Check the lettering against this artwork, then confirm to record your placement review. Suggested positions are starting points, not detected empty spaces.") : undefined} onClick={() => void save(loadedArtUrl === artUrl)}>{reviewPending ? t("Confirm placement") : t("Save lettering")}</Button>
+      </div>
+    </div>
+    <div className="lettering-notices">
     {error && <div><ErrorNotice error={error} operation="save" /><div className="flex flex-wrap gap-2 mt-2"><Button variant="outline" size="xs" onClick={() => void reload()} disabled={busy}>{t("Reload saved version")}</Button>{!fontsReady && <Button size="xs" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div></div>}
-    {!heads?.length && <p role="status" className="lettering-hint">{t("Face evidence is unavailable. Placement suggestions are approximate. Use Check page text in Checks to request a page read, then review balloon positions and tails yourself.")}</p>}
     {layout.error && <ErrorNotice error={layout.error} operation="preview" />}
     {!draftStored && dirty && <p role="alert" className="lettering-error">{t("This browser could not store your recovery draft. Save before closing or changing pages.")}</p>}
     {recovery && <div className="lettering-notice"><h4 className="font-bold">{t("Unsaved lettering found on this device")}</h4><p>{canRestore ? t("Restore it before continuing, or keep the saved version.") : t("This draft belongs to an older page or style revision. It will not be applied to newer work. Download it to recover wording, then keep the saved version.")}</p>
@@ -357,13 +361,12 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       }}>{t("Keep saved version")}</Button></div></div>}
     {base.source_stale && <div className="lettering-notice"><h4 className="font-bold">{t("The page plan changed")}</h4><p>{t("These placements are preserved, but cannot be published against a different allocation. Rebuild from the current plan to continue.")}</p><Button className="mt-3" variant="outline" disabled={busy} onClick={() => void rebuild()}>{t("Rebuild lettering")}</Button></div>}
     {disabled && <p className="lettering-notice">{t("Artwork is being revised. Your lettering is retained; finish editing after the new render is ready.")}</p>}
-    {base.placement_review_needed && !base.source_stale && <p className="lettering-hint">{t("Check the lettering against this artwork, then confirm to record your placement review. Suggested positions are starting points, not detected empty spaces.")}</p>}
-    <div className="lettering-context-toolbar"><ProjectLetteringLanguage project={project} disabled={pageLocked || dirty} onBusyChange={setTranslationBusy} onApplied={adoptBookChange} /></div>
-    {bookStyleOpen && <BookStyleEditor project={project} initial={base.style} pagePreview={{ state: history.present, artUrl }} disabled={locked || dirty} onClose={() => setBookStyleOpen(false)} onApplied={async () => {
+    </div>
+    {bookStyleOpen && <div className="lettering-book-style-wrap"><BookStyleEditor project={project} initial={base.style} pagePreview={{ state: history.present, artUrl }} disabled={locked || dirty} onClose={() => setBookStyleOpen(false)} onApplied={async () => {
       await adoptBookChange();
       setBookStyleOpen(false);
-    }} />}
-    {!fontsReady ? <p role="status">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace" hidden={bookStyleOpen}>
+    }} /></div>}
+    {!fontsReady ? <p role="status" className="lettering-loading">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace" hidden={bookStyleOpen}>
       <LetteringCanvas guides={{
         faces: showFaces && faceGuides ? faceGuides : [],
         dragFaces: faceGuides ?? [],
@@ -424,8 +427,6 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
         </section>
       </aside>
     </div>}
-    {issues.length > 0 && <p className="lettering-warning" role="status">{issues.length} {t("visible elements need attention before export. You can still save your work.")}</p>}
-    <details className="lettering-shortcuts"><summary>{t("Keyboard shortcuts")}</summary><p className="lettering-hint">{t("Ctrl / ⌘ S saves. Ctrl / ⌘ Z undoes page edits. Text fields keep their normal typing undo. Hidden source copy can always be restored.")}</p></details>
   </div>;
 }
 export function BookStyleEditor({ project, initial, pagePreview, disabled, onClose, onApplied }: {

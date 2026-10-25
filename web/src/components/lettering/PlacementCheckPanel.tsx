@@ -74,9 +74,9 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
     <summary><span>{t("Placement check")}</span><span className={`lettering-check-badge ${toFix ? "is-fix" : toConsider ? "is-consider" : "is-clear"}`}>{summary}</span></summary>
     <div className="lettering-check-body">
       <p className="lettering-check-source">{!read
-        ? t("This page was drawn before pages were checked automatically, so faces aren’t known yet. Panel borders are still checked.")
+        ? t("Faces not read yet. Panel borders are checked.")
         : heads === null
-          ? t("This artwork’s text check ran before faces were read. Panels and drawn-in text are still checked.")
+          ? t("Faces not read for this artwork. Panels and drawn-in text are checked.")
           : heads.length
             ? `${t("Checked against this artwork")} · ${heads.length} ${t("{count, plural, one {face found} other {faces found}}", { count: heads.length })}`
             : t("Checked against this artwork · no faces found")}</p>
@@ -89,11 +89,11 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
               {element && <span className="lettering-check-where">{order.get(element.id)} · {quote(textFor(element, locale)) || t("Write some words…")}</span>}
               <span className="lettering-check-detail">{copy.detail}</span></span>
           </button>
-          {check.fix && copy.action && <Button size="xs" variant={check.severity === "fix" ? "primary" : "outline"} disabled={disabled} onClick={() => onFix(check)}>{copy.action}</Button>}
+          {check.fix && copy.action && <Button size="xs" variant="outline" disabled={disabled} onClick={() => onFix(check)}>{copy.action}</Button>}
         </li>;
       })}</ul>}
       <div className="lettering-small-actions">
-        {fixable.length > 1 && <Button size="xs" disabled={disabled} onClick={onFixAll}>{t("Fix all")} · {fixable.length}</Button>}
+        {fixable.length > 1 && <Button size="xs" variant="secondary" disabled={disabled} onClick={onFixAll}>{t("Fix all")} · {fixable.length}</Button>}
         {!!heads?.length && <label className="lettering-checkbox"><input type="checkbox" checked={showFaces} onChange={event => onShowFaces(event.target.checked)} />{t("Show faces found")}</label>}
       </div>
       {!!heads?.length && <div className="lettering-check-relayout">
@@ -101,10 +101,9 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
         <p className="lettering-hint">{t("Places each planned balloon above its speaker, inside its panel. Your wording and styles stay; Undo restores your layout.")}</p>
       </div>}
       {!read && <div className="lettering-check-run">
-        <Button size="xs" disabled={disabled || !!running || !estimate.data} onClick={() => void run("check", async () => { await analyzeCompletePage(project, pageNumber); await onChecked(); })}>
+        <Button size="xs" variant="outline" title={t("Finds faces for balloons and tails, and any words drawn into the art. New pages get this automatically.")} disabled={disabled || !!running || !estimate.data} onClick={() => void run("check", async () => { await analyzeCompletePage(project, pageNumber); await onChecked(); })}>
           {running === "check" ? t("Checking this page…") : t("Check this page")}{estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
-        <p className="lettering-hint">{t("Finds faces for balloons and tails, and any words drawn into the art. New pages get this automatically.")}</p>
         {estimate.error && <ErrorNotice error={(estimate.error as Error)} operation="estimate" />}
       </div>}
       {error && <ErrorNotice error={error} operation="generate" />}

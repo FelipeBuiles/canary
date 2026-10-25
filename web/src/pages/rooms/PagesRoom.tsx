@@ -3,7 +3,6 @@ import { pageState, pageDisplayImage } from "../../lib/pageState";
 import { isGenerationActive, isGenerationTerminal } from "../../lib/generationTracking";
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { trackProductEvent } from "../../api/events";
-import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
 import { BookOpen, Columns2, LayoutGrid, Layers, MoreHorizontal, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
@@ -36,7 +35,6 @@ import {
   ConfirmDrawer,
   RoomHeader,
   RoomShell,
-  RoomTabs,
   StagePlaceholder,
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
@@ -72,7 +70,7 @@ import { StorageLimitNotice } from "../../components/composites/StorageLimitNoti
 
 const LetteringEditor = lazy(() => import("../../components/lettering/LetteringEditor").then(module => ({ default: module.LetteringEditor })));
 
-type ReviewView = "page" | "lettering" | "history";
+type ReviewView = "page" | "lettering" | "source";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -231,18 +229,20 @@ function PageReview({
           </p>
           <p className="hidden min-w-0 flex-1 truncate text-[0.8125rem] text-pulp-paper/80 xl:block" title={item.page.rhythm_intent}>{item.page.rhythm_intent}</p>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <RoomTabs
-              ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
-              className="gap-0 border border-pulp-paper/20 [&>button]:h-9 [&>button]:min-h-0 [&>button]:border-0 [&>button]:bg-transparent [&>button]:px-3 [&>button]:font-meta [&>button]:text-[0.8125rem] [&>button]:font-medium [&>button]:normal-case [&>button]:tracking-normal [&>button]:text-on-chrome-muted [&>button:hover]:text-pulp-paper [&>button[aria-selected=true]]:bg-pulp-paper [&>button[aria-selected=true]]:text-ink-black [&>button[aria-pressed=true]]:bg-pulp-paper [&>button[aria-pressed=true]]:text-ink-black"
-              tabs={[
-                { key: "page", label: t("Page"), active: shownView === "page", onClick: () => selectView("page") },
-                ...(editableLettering ? [{
-                  key: "lettering", label: t("Lettering"), active: shownView === "lettering",
-                  onClick: () => selectView("lettering"), disabled: editSourceRevision == null,
-                }] : []),
-                { key: "history", label: t("History"), active: shownView === "history", onClick: () => selectView("history") },
-              ]}
-            />
+            <div role="group" aria-label={`${t("Page")} ${item.page.page_number} ${t("sections")}`} className="flex border border-pulp-paper/20">
+              {([
+                { key: "page", label: t("Page") },
+                ...(editableLettering ? [{ key: "lettering", label: t("Lettering"), disabled: editSourceRevision == null }] : []),
+                { key: "source", label: t("Source") },
+              ] as Array<{ key: ReviewView; label: string; disabled?: boolean }>).map((tab) => (
+                <button key={tab.key} type="button" aria-pressed={shownView === tab.key} disabled={tab.disabled}
+                  onClick={() => selectView(tab.key)}
+                  className={cn("h-9 px-3 font-meta text-[0.8125rem] font-medium transition-colors focus-visible:relative focus-visible:outline focus-visible:outline-2 focus-visible:outline-narrator-gold disabled:cursor-not-allowed disabled:opacity-40",
+                    shownView === tab.key ? "bg-pulp-paper text-ink-black" : "text-on-chrome-muted hover:bg-pulp-paper/10 hover:text-pulp-paper")}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
             <nav aria-label={t("Review navigation")} className="flex gap-1">
               <button type="button" className={darkButton} aria-label={t("PREVIOUS PAGE")} title={t("PREVIOUS PAGE")} disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>
                 <ReviewChevronLeft size={18} aria-hidden="true" />
@@ -340,25 +340,14 @@ function PageReview({
               )}
             </div>
 
-            {shownView === "history" && (
-              <div role="region" aria-label={t("History")}
-                className="grid min-h-full gap-8 bg-pulp-paper p-4 text-ink-black lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] lg:grid-rows-[minmax(0,1fr)] lg:p-6">
-                <div className="min-w-0 lg:min-h-0">
-                  <PageVersions
-                    key={`${project}:${item.page.page_number}`}
-                    project={project} pageNumber={item.page.page_number}
-                    activeRevision={editSourceRevision} disabled={pageIsDrawing}
-                    onSelected={() => selectView("page")}
-                  />
-                </div>
-                <div className="min-w-0 border-t border-ink-black/15 pt-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
-                  <PageSourcePanel project={project} item={item} />
-                </div>
+            {shownView === "source" && (
+              <div role="region" aria-label={t("Source")} className="min-h-full bg-pulp-paper px-4 py-6 text-ink-black lg:px-10 lg:py-8">
+                <div className="mx-auto max-w-6xl"><PageSourcePanel project={project} item={item} /></div>
               </div>
             )}
 
             {shownView === "lettering" && editSourceRevision != null && !renderStale && (
-              <div className="min-h-full bg-pulp-paper p-4 text-ink-black lg:p-6">
+              <div className="min-h-full bg-pulp-paper text-ink-black">
                 <Suspense fallback={<p role="status">{t("Opening lettering…")}</p>}><LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/></Suspense>
               </div>
             )}
@@ -435,7 +424,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "lettering" || reviewParam === "history" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "lettering" || reviewParam === "source" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const layout: "spreads" | "grid" = searchParams.get("layout") === "grid" ? "grid" : "spreads";

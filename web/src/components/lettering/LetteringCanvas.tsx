@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type KeyboardEvent, type CSSProperties } from "react";
 import { elementRect, renderOverlay, type LetteringElement, type PageLettering, type LetteringStyle, type Rect } from "@lettering-engine";
-import { Button } from "../ui/Button";
-import { Toolbar } from "../composites/Toolbar";
+import { Hand, Keyboard, Minus, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 interface Props {
   state: PageLettering;
@@ -80,7 +79,8 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     observer.observe(target);
     return () => observer.disconnect();
   }, []);
-  const width = Math.max(160, Math.min(size.width - 40, (size.height - 40) * state.canvas_aspect_ratio)) * zoom;
+  // The page wrap pads 24px around the page and 72px below it, clear of the floating tools.
+  const width = Math.max(160, Math.min(size.width - 48, (size.height - 96) * state.canvas_aspect_ratio)) * zoom;
   const selectedElement = state.elements.find(e => e.id === selected && !e.hidden);
   // Geometry is pure render data; pointer handlers read refs only on events.
   const resizeHandle = selectedElement ? resizeHandlePosition(selectedElement, state.canvas_aspect_ratio) : null;
@@ -165,15 +165,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     else
       change(element.id, { placement: { ...element.placement, x: clamp(element.placement.x + dx, 0, 1 - elementRect(element).width), width: Math.min(element.placement.width, 1 - clamp(element.placement.x + dx, 0, 1 - elementRect(element).width)), y: clamp(element.placement.y + dy, 0, 1 - elementRect(element).height), height: Math.min(element.placement.height, 1 - clamp(element.placement.y + dy, 0, 1 - elementRect(element).height)) } });
   }
-  return <div className="lettering-canvas-column">
-    <Toolbar className="justify-between px-1" bottomRule={false}>
-      <div className="flex gap-1">
-        <Button variant="outline" size="xs" aria-label={t("Zoom out")} onClick={() => setZoom(z => Math.max(.5, z - .25))} disabled={zoom <= .5}>−</Button>
-        <Button variant="outline" size="xs" onClick={() => setZoom(1)} title={t("Fit the full page")}>{t("Fit")} · {Math.round(zoom * 100)}%</Button>
-        <Button variant="outline" size="xs" aria-label={t("Zoom in")} onClick={() => setZoom(z => Math.min(3, z + .25))} disabled={zoom >= 3}>+</Button>
-      </div>
-      <Button variant={panMode ? "secondary" : "outline"} size="xs" aria-pressed={panMode} onClick={() => setPanMode(p => !p)}>{panMode ? t("Pan enabled") : t("Pan")}</Button>
-    </Toolbar>
+  return <div className="lettering-canvas-column benday-ink">
     <div ref={viewport} className={`lettering-viewport ${panMode ? "is-panning" : ""}`} aria-label={t("Lettering page canvas")} onPointerDown={event => {
       if (!panMode || !viewport.current)
         return; pan.current = { x: event.clientX, y: event.clientY, left: viewport.current.scrollLeft, top: viewport.current.scrollTop }; event.currentTarget.setPointerCapture(event.pointerId);
@@ -181,7 +173,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       if (!pan.current || !viewport.current)
         return; viewport.current.scrollLeft = pan.current.left + pan.current.x - event.clientX; viewport.current.scrollTop = pan.current.top + pan.current.y - event.clientY;
     }} onPointerUp={() => { pan.current = null; }} onPointerCancel={() => { pan.current = null; }}>
-      <div className="lettering-page-wrap" style={{ minWidth: width + 40, minHeight: width / state.canvas_aspect_ratio + 40 }}>
+      <div className="lettering-page-wrap" style={{ minWidth: width + 48, minHeight: width / state.canvas_aspect_ratio + 96 }}>
         <div ref={page} className="lettering-page" style={{ width, aspectRatio: state.canvas_aspect_ratio }} onClick={event => {
           if (event.target === event.currentTarget)
             select(null);
@@ -204,6 +196,19 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       </div>
     </div>
     {artFailed && <p role="alert" className="lettering-error">{t("Base artwork could not load. Do not assess placement against this blank preview; reload the page.")}</p>}
-    <p className="lettering-hint">{t("Select a box to move it. Drag its corner to resize. Double-click to edit words. Arrow keys nudge; Shift moves farther.")}</p>
+    <div className="lettering-canvas-tools" role="toolbar" aria-label={t("Canvas")}>
+      <button type="button" aria-label={t("Zoom out")} title={t("Zoom out")} onClick={() => setZoom(z => Math.max(.5, z - .25))} disabled={zoom <= .5}><Minus size={16} aria-hidden="true" /></button>
+      <button type="button" className="is-text" onClick={() => setZoom(1)} title={t("Fit the full page")}>{t("Fit")} · {Math.round(zoom * 100)}%</button>
+      <button type="button" aria-label={t("Zoom in")} title={t("Zoom in")} onClick={() => setZoom(z => Math.min(3, z + .25))} disabled={zoom >= 3}><Plus size={16} aria-hidden="true" /></button>
+      <span aria-hidden="true" className="lettering-canvas-tools-rule" />
+      <button type="button" className="is-text" aria-pressed={panMode} onClick={() => setPanMode(p => !p)}><Hand size={15} aria-hidden="true" />{t("Pan")}</button>
+      <details className="lettering-shortcuts">
+        <summary aria-label={t("Keyboard shortcuts")} title={t("Keyboard shortcuts")}><Keyboard size={16} aria-hidden="true" /></summary>
+        <div className="lettering-shortcuts-body">
+          <p>{t("Select a box to move it. Drag its corner to resize. Double-click to edit words. Arrow keys nudge; Shift moves farther.")}</p>
+          <p>{t("Ctrl / ⌘ S saves. Ctrl / ⌘ Z undoes page edits. Text fields keep their normal typing undo. Hidden source copy can always be restored.")}</p>
+        </div>
+      </details>
+    </div>
   </div>;
 }

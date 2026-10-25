@@ -149,3 +149,59 @@
 .lettering-tile:disabled { cursor: not-allowed; opacity: .55; }
 .lettering-add-form { display: grid; gap: 10px; }
 @media (max-width: 420px) { .lettering-tile-grid.is-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Review workspace: one slim toolbar, the page on the dark stage, controls in a white inspector. */
+.lettering-editor { gap: 0; background: var(--color-pulp-paper, #fcfaed); }
+.lettering-main-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-height: 52px; padding: 8px 16px; background: var(--color-bristol, #fff); border-bottom: 1px solid var(--lettering-rule); }
+.lettering-toolbar-book { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; position: relative; }
+.lettering-toolbar-actions { gap: 6px; }
+.lettering-save-state { font-family: var(--font-meta, "Lexend"); color: var(--color-ink-muted, #65605a); margin-right: 4px; }
+.lettering-issue-count { font-family: var(--font-meta, "Lexend"); font-size: 12px; color: var(--color-status-blocked-text, #8f1d16); margin-right: 8px; }
+.lettering-icon-button { width: 32px; padding: 0 !important; display: grid; place-items: center; }
+/* Project language: a toolbar button that opens a panel; job status drops to its own line. */
+.lettering-language > section { display: contents; }
+.lettering-language { display: contents; }
+.lettering-language details { position: relative; }
+.lettering-language summary { display: flex; align-items: center; min-height: 32px !important; padding: 0 10px !important; font-family: var(--font-meta, "Lexend"); font-size: 12px !important; font-weight: 400 !important; border: 1px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 55%, transparent); list-style: none; }
+.lettering-language summary::-webkit-details-marker { display: none; }
+.lettering-language summary:hover { color: inherit !important; border-color: var(--color-ink-black, #1b1c15); background: var(--color-sidebar-tint, #f3efe0); }
+.lettering-language details[open] > summary { background: var(--color-ink-black, #1b1c15); color: var(--color-pulp-paper, #fcfaed) !important; }
+.lettering-language details[open] > div { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: min(380px, 80vw); padding: 16px; background: var(--color-bristol, #fff); border: 1px solid var(--lettering-rule); box-shadow: var(--shadow-float, 0 18px 40px -16px #0005); }
+.lettering-language [aria-live]:not(:empty) { flex-basis: 100%; font-size: 13px; }
+.lettering-notices { display: grid; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--lettering-rule); }
+.lettering-notices:empty { display: none; }
+.lettering-book-style-wrap { padding: 16px; }
+.lettering-loading { padding: 24px; }
+.lettering-workspace { gap: 0; }
+.lettering-canvas-column { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.lettering-viewport { flex: 1 1 auto; background: transparent; border: 0; }
+.lettering-page-wrap { padding: 24px 24px 72px; }
+.lettering-page { box-shadow: 0 30px 60px -20px rgb(0 0 0 / .7), 0 0 0 1px rgb(252 250 237 / .12); }
+.lettering-canvas-column > .lettering-error { margin: 0 16px 72px; }
+.lettering-canvas-tools { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3100; display: flex; align-items: center; gap: 2px; padding: 4px; background: #141510f2; border: 1px solid rgb(252 250 237 / .15); box-shadow: 0 12px 30px -12px #000a; color: var(--color-pulp-paper, #fcfaed); }
+.lettering-canvas-tools > button, .lettering-canvas-tools summary { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; height: 32px; padding: 0 8px; font-family: var(--font-meta, "Lexend"); font-size: 12px; font-variant-numeric: tabular-nums; color: inherit; cursor: pointer; }
+.lettering-canvas-tools > button:hover:not(:disabled), .lettering-canvas-tools summary:hover { background: rgb(252 250 237 / .1); color: inherit; }
+.lettering-canvas-tools > button:disabled { opacity: .3; cursor: not-allowed; }
+.lettering-canvas-tools > button[aria-pressed="true"] { background: var(--color-pulp-paper, #fcfaed); color: var(--color-ink-black, #1b1c15); }
+.lettering-canvas-tools-rule { width: 1px; height: 20px; margin: 0 4px; background: rgb(252 250 237 / .15); }
+.lettering-editor .lettering-canvas-tools :is(button, summary):focus-visible { outline: 2px solid var(--color-narrator-gold, #fae361); outline-offset: 1px; }
+.lettering-shortcuts { position: relative; color: inherit; }
+.lettering-shortcuts > summary { list-style: none; min-height: 32px !important; padding-block: 0 !important; }
+.lettering-shortcuts > summary::-webkit-details-marker { display: none; }
+.lettering-shortcuts[open] > summary { background: rgb(252 250 237 / .14); }
+.lettering-shortcuts-body { position: absolute; right: -4px; bottom: calc(100% + 10px); width: 300px; display: grid; gap: 8px; padding: 14px 16px; font-size: 12px; line-height: 1.55; color: var(--color-pulp-paper, #fcfaed); background: #141510; border: 1px solid rgb(252 250 237 / .15); box-shadow: 0 18px 40px -16px #000c; }
+.lettering-inspector { background: var(--color-bristol, #fff); }
+.lettering-check-badge.is-fix { color: var(--color-status-blocked-text, #8f1d16); background: #b4342214; }
+.lettering-check-item, .lettering-check-item.is-consider { border: 1px solid var(--lettering-rule); border-left-width: 1px; background: transparent; }
+.lettering-check-item.is-focused { border-color: #176180; box-shadow: inset 0 0 0 1px #176180; }
+.lettering-check-dot { display: block; flex-shrink: 0; width: 8px; height: 8px; margin-top: 5px; background: #b43422; }
+.is-consider .lettering-check-dot { background: #c28a1f; }
+.lettering-check-target { padding-left: 12px; }
+@media (min-width: 801px) {
+  .lettering-modal-body .lettering-editor { gap: 0; overflow: hidden; }
+  .lettering-modal-body .lettering-workspace { grid-template-columns: minmax(0, 1fr) 25rem; }
+  .lettering-modal-body .lettering-canvas-column { display: flex; }
+  .lettering-modal-body .lettering-inspector { border-left: 0; }
+}
+@media (min-width: 1536px) { .lettering-modal-body .lettering-workspace { grid-template-columns: minmax(0, 1fr) 28rem; } }
+@media (max-width: 800px) { .lettering-viewport { height: 60vh; } }
