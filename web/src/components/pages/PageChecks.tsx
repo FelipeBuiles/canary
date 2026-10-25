@@ -6,12 +6,12 @@ import { readableAnchor } from "../../lib/visualAnchor";
 import type { CompletePageSummary, PageIssue } from "../../types/api";
 import { referenceFileUrl, type ReferenceKind, type VisualReviewReference } from "../../api/pages";
 import { useImageViewer } from "../../hooks/useImageViewer";
-import { Image as ImageIcon, MapPin, Package, Palette, User, type LucideIcon } from "lucide-react";
+import { Check, CircleAlert, Image as ImageIcon, MapPin, Package, Palette, Plus, User, type LucideIcon } from "lucide-react";
+import { cn } from "../../lib/cn";
+import { StatusPill } from "../ui/StatusPill";
 import { useAcceptPageIssue, useDismissPageIssue, useSecondLook } from "../../api/queries";
 import { useCachedVisualReview, useReviewPageVisuals, useVisualReviewEstimate } from "../../api/pageRevisions";
 import { Button } from "../ui/Button";
-import { Surface } from "../ui/Surface";
-import { SectionHeader } from "../composites";
 import { TextCheckArtwork } from "./TextCheckArtwork";
 import { LetteringIssueCard, ResolvedIssueHistory } from "./LetteringEvidence";
 import { isOcrIssue } from "./lettering";
@@ -95,9 +95,11 @@ export function PageChecks({
         : t("Some checks didn't finish.");
 
   return (
-    <section aria-label={t("Checks")} className="space-y-4">
-      <SectionHeader variant="underline" title={t("CHECKS")} />
-      <p role="status" className="font-body text-sm leading-6">{summary}</p>
+    <section aria-label={t("Checks")} className="space-y-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="font-display text-[1.0625rem] font-extrabold tracking-[-0.01em] text-ink-black">{t("Checks")}</h3>
+        <p role="status" className="font-meta text-xs text-ink-soft">{summary}</p>
+      </div>
 
       {active.length > 0 && (
         <ol className="space-y-3">
@@ -108,14 +110,14 @@ export function PageChecks({
             const [problem, ...details] = issue.evidence;
             return (
               <li key={issue.id}>
-                <Surface tone="bristol" border="soft" shadow="none" padding="md">
-                  <div className="space-y-3">
-                    <p className="font-meta text-xs font-bold uppercase tracking-wider text-ink-muted">
-                      {t(label)}
+                <div className={cn("border bg-bristol p-4", included ? "border-ink-black" : "border-ink-black/12")}>
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-ink-soft">{t(label)}</p>
                       {included
-                        ? <span className="text-hero-red"> · {t("In next revision")}</span>
-                        : !pageIsDrawing && issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
-                    </p>
+                        ? <StatusPill tone="ink">{t("In your changes")}</StatusPill>
+                        : !pageIsDrawing && issue.status === "revised" && <StatusPill tone="gold">{t("Redrawn")}</StatusPill>}
+                    </div>
                     {included ?? (isOcrIssue(issue) ? (
                       <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} secondLook={pageIsDrawing ? undefined : {
                         onRetry: () => secondLook.mutate({ project, pageNumber }),
@@ -124,11 +126,11 @@ export function PageChecks({
                       }} /></>
                     ) : (
                       <>
-                        <p className="font-body text-sm leading-6">{problem ?? issue.requested_correction}</p>
+                        <p className="font-body text-sm leading-[21px] text-ink-black">{problem ?? issue.requested_correction}</p>
                         {(details.length > 0 || problem) && (
                           <details className="font-body text-sm leading-6">
-                            <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">{t("Details")}</summary>
-                            <ul className="mt-2 space-y-1">
+                            <summary className="cursor-pointer font-meta text-xs font-medium text-ink-muted hover:text-ink-black">{t("Details")}</summary>
+                            <ul className="mt-2 space-y-1 text-[0.8125rem] leading-5 text-ink-muted">
                               {details.map((line, index) => <li key={`${issue.id}:${index}`}>{line}</li>)}
                               {problem && <li><span className="font-bold">{t("Suggested fix:")} </span>{issue.requested_correction}</li>}
                             </ul>
@@ -136,26 +138,27 @@ export function PageChecks({
                         )}
                       </>
                     ))}
-                    {!pageIsDrawing && !included && <div className="flex flex-wrap justify-end gap-2">
+                    {!pageIsDrawing && !included && <div className="flex flex-wrap items-center gap-2 pt-1">
                       {issue.status === "revised" ? (
                         <>
-                          <Button size="xs" variant="outline" disabled={busy} onClick={() => draft.include(issue)}>
-                            {t("STILL WRONG")}
+                          <span className="basis-full font-body text-[0.8125rem] text-ink-muted">{t("Does it look fixed?")}</span>
+                          <Button size="sm" variant="secondary" disabled={busy} onClick={() => decide(issue, false)}>
+                            <Check size={14} aria-hidden="true" />{t("Looks fixed")}
                           </Button>
-                          <Button size="xs" disabled={busy} onClick={() => decide(issue, false)}>
-                            {t("LOOKS FIXED")}
+                          <Button size="sm" variant="outline" disabled={busy} onClick={() => draft.include(issue)}>
+                            {t("Still wrong")}
                           </Button>
                         </>
                       ) : (
                         <>
-                          <Button size="xs" variant="outline" disabled={busy} onClick={() => decide(issue, true)}>
-                            {t(issue.issue_type === "manual_change" ? "WITHDRAW REQUEST" : "NOT A PROBLEM")}
-                          </Button>
                           {issue.correction_owner === "draw" && issue.issue_type !== "manual_change" && (
-                            <Button size="xs" disabled={busy} onClick={() => draft.include(issue)}>
-                              {t("FIX")}
+                            <Button size="sm" variant="secondary" disabled={busy} onClick={() => draft.include(issue)}>
+                              <Plus size={14} aria-hidden="true" />{t("Add to changes")}
                             </Button>
                           )}
+                          <Button size="sm" variant="outline" className="border-transparent text-ink-muted hover:border-transparent hover:bg-surface-container hover:text-ink-black" disabled={busy} onClick={() => decide(issue, true)}>
+                            {t(issue.issue_type === "manual_change" ? "Withdraw request" : "Not a problem")}
+                          </Button>
                         </>
                       )}
                     </div>}
@@ -163,7 +166,7 @@ export function PageChecks({
                       <ErrorNotice error={actionError.error} operation="save" />
                     )}
                   </div>
-                </Surface>
+                </div>
               </li>
             );
           })}
@@ -171,12 +174,12 @@ export function PageChecks({
       )}
 
       {!pageIsDrawing && (!textChecked || !visualChecked) && (
-        <div className="space-y-2 border-l-[3px] border-narrator-gold bg-bristol px-3 py-2">
+        <div className="space-y-3 bg-surface-container p-3.5">
           {!textChecked && (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-body text-sm">{t("The text check didn't finish.")}</p>
-              <Button size="xs" variant="outline" disabled={retryingText} onClick={onRetryText}>
-                {t(retryingText ? "CHECKING TEXT…" : "CHECK TEXT AGAIN")}
+              <p className="flex items-center gap-2 font-body text-[0.8125rem] text-ink-black"><CircleAlert size={15} aria-hidden="true" className="shrink-0 text-warn-orange" />{t("The text check didn't finish.")}</p>
+              <Button size="sm" variant="outline" className="bg-bristol" disabled={retryingText} onClick={onRetryText}>
+                {t(retryingText ? "Checking text…" : "Check text again")}
               </Button>
             </div>
           )}
@@ -198,13 +201,13 @@ function VisualRetry({ project, pageNumber }: { project: string; pageNumber: num
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-body text-sm">{t("The artwork check didn't finish.")}</p>
-        <Button size="xs" variant="outline"
+        <p className="flex items-center gap-2 font-body text-[0.8125rem] text-ink-black"><CircleAlert size={15} aria-hidden="true" className="shrink-0 text-warn-orange" />{t("The artwork check didn't finish.")}</p>
+        <Button size="sm" variant="outline" className="bg-bristol"
           disabled={review.isPending || !estimate.data || !!estimate.error}
           onClick={() => review.mutate({ project, pageNumber }, {
             onError: (error) => maybeShowInsufficientCredits(error, { actionLabel: t("CHECK ARTWORK AGAIN") }),
           })}>
-          {t(review.isPending ? "CHECKING THE ARTWORK…" : "CHECK ARTWORK AGAIN")}
+          {t(review.isPending ? "Checking the artwork…" : "Check artwork again")}
           {estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
       </div>
@@ -250,7 +253,7 @@ function ComparedWith({ project, pageNumber }: { project: string; pageNumber: nu
   return (
     <details className="group/compared border-t border-ink-black/15 pt-3">
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-        <span className="font-meta text-xs font-bold uppercase tracking-wider text-ink-muted">{t("Compared with")}</span>
+        <span className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-ink-soft">{t("Compared with")}</span>
         <span aria-hidden="true" className="flex -space-x-2">
           {images.slice(0, 5).map((image) => (
             <img key={image.src} src={image.src} alt="" loading="lazy" decoding="async"

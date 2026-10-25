@@ -8,7 +8,7 @@ type Size = "xs" | "sm" | "md" | "lg";
 // One strong primary per view; secondaries step back from the artwork.
 const VARIANT_STYLES: Record<Variant, string> = {
   primary:
-    "border-[2px] border-ink-black bg-hero-red font-semibold text-bristol shadow-press hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-hero-red-press hover:shadow-[2px_2px_0_0_var(--color-ink-black)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-55 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:bg-hero-red",
+    "border-[2px] border-ink-black bg-hero-red font-semibold text-bristol shadow-press hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-hero-red-press hover:shadow-[2px_2px_0_0_var(--color-ink-black)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:border-ink-black/20 disabled:bg-surface-variant disabled:text-ink-soft disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:bg-surface-variant",
   onInk:
     "border-[2px] border-bristol bg-hero-red font-semibold text-bristol shadow-[3px_3px_0_0_var(--color-narrator-gold)] hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-hero-red-press hover:shadow-[2px_2px_0_0_var(--color-narrator-gold)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none disabled:opacity-55 disabled:shadow-none disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:bg-hero-red",
   secondary:

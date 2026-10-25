@@ -267,7 +267,7 @@ describe("RevisionDraft across render targets", () => {
       rerenderDraft({ issues, checks: checksRail(issues) });
       expect(screen.queryByDisplayValue("Restore the approved face")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Fix Fix the background glow" }));
-      fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+      fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
       expect(previewState.mutate.mock.calls[0][0].body.changes).toEqual([
         { id: "issue:issue-10", issue_id: glowIssue.id, instruction: glowIssue.requested_correction, annotations: [] },
       ]);
@@ -358,12 +358,12 @@ describe("RevisionDraft across render targets", () => {
     fireEvent.change(screen.getByLabelText("Change 1"), {
       target: { value: "Restore the approved face without changing the cape" },
     });
-    fireEvent.click(screen.getByText(/compare with previous render/i));
+    fireEvent.click(screen.getByRole("button", { name: /compare with revision/i }));
 
     const after = screen.getByRole("button", { name: /after.*revision 2/i });
     const before = screen.getByRole("button", { name: /before.*revision 1/i });
     // The wipe opens first and overlays both real revisions.
-    expect(screen.getByRole("button", { name: "WIPE" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Wipe" }).getAttribute("aria-pressed")).toBe("true");
     expect(within(screen.getByTestId("revision-wipe")).getByRole("img", { name: "Complete page 1, previous revision 1" }).getAttribute("src"))
       .toContain("/renders/1/");
     expect(within(screen.getByTestId("revision-wipe")).getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
@@ -414,7 +414,7 @@ describe("RevisionDraft across render targets", () => {
   it("compares the shown version with any other saved version", () => {
     pageState.renders = [{ revision: 1 }, { revision: 2 }, { revision: 3 }];
     renderDraft({ parentRenderRevision: 3, compareRevision: 2 });
-    fireEvent.click(screen.getByText(/compare with previous render/i));
+    fireEvent.click(screen.getByRole("button", { name: /compare with revision/i }));
     expect(screen.getByRole("button", { name: /before.*revision 2/i })).toBeTruthy();
 
     fireEvent.change(screen.getByRole("combobox", { name: /compare with/i }), { target: { value: "1" } });
@@ -449,7 +449,7 @@ describe("RevisionDraft across render targets", () => {
     expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face");
     expect(screen.getByLabelText("Change 2")).toHaveProperty("value", "Close the upper eye");
 
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 2 CHANGES" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 2 changes" }));
     await vi.waitFor(() => expect(previewState.mutate).toHaveBeenCalled());
     const changes = previewState.mutate.mock.calls[0][0].body.changes;
     expect(changes.find((change: { instruction: string }) => change.instruction === "Close the upper eye").issue_id).toBeUndefined();
@@ -482,7 +482,7 @@ describe("RevisionDraft across render targets", () => {
     previewState.data = previewStub({ unselected_open_issue_ids: ["issue-10"] });
     renderDraft({ issues: [FACE_ISSUE, glowIssue], checks: checksRail([FACE_ISSUE, glowIssue]) });
     fireEvent.click(screen.getByRole("button", { name: "Fix Restore the approved face" }));
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(screen.getByText("1 other check stays open.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix Fix the background glow" })).toBeTruthy();
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))?.changes.map((change) => change.issue_id)).toEqual(["issue-9"]);

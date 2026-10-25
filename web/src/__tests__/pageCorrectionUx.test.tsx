@@ -84,7 +84,7 @@ describe("page revision draft", () => {
   it("previews text directly, then submits the exact reviewed body only on confirmation", () => {
     renderDraft();
     fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: "Make the car a red sports car" } });
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview).toHaveBeenCalledTimes(1);
     const args = mocks.preview.mock.calls[0]![0];
     expect(args.body.changes).toEqual([expect.objectContaining({ instruction: "Make the car a red sports car", annotations: [] })]);
@@ -97,13 +97,13 @@ describe("page revision draft", () => {
   });
   it("includes only the finding the author fixes, never every open finding", () => {
     renderDraft([issue("issue-1", "Draw the blinds closed"), issue("issue-2", "Frame over Herbert's shoulder")]);
-    expect(screen.getByRole("button", { name: "REVIEW CHANGES" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Add a change to review" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: "Fix Frame over Herbert's shoulder" }));
     expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Frame over Herbert's shoulder");
     expect(screen.getByRole("button", { name: "Fix Draw the blinds closed" })).toBeTruthy();
     // The fixed finding becomes the active change: the page is ready to mark.
     expect(screen.getByText("Click or drag on the page to show where.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview.mock.calls[0]![0].body.changes).toEqual([
       { id: "issue:issue-2", issue_id: "issue-2", instruction: "Frame over Herbert's shoulder", annotations: [] },
     ]);
@@ -111,7 +111,7 @@ describe("page revision draft", () => {
   it("takes a removed finding back out of the revision", () => {
     renderDraft([issue("issue-1", "Draw the blinds closed")]);
     fireEvent.click(screen.getByRole("button", { name: "Fix Draw the blinds closed" }));
-    fireEvent.click(screen.getByRole("button", { name: "REMOVE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(screen.queryByLabelText("Change 1")).toBeNull();
     expect(screen.getByRole("button", { name: "Fix Draw the blinds closed" })).toBeTruthy();
     expect(loadRevisionDraft("demo", 1, target)).toBeNull();
@@ -137,7 +137,7 @@ describe("page revision draft", () => {
     fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, button: 0 });
     fireEvent.pointerUp(canvas, { clientX: 80, clientY: 90, button: 0 });
     expect(screen.getAllByRole("button", { name: "Mark for change 1" })).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     const marks = mocks.preview.mock.calls[0]![0].body.changes[0].annotations;
     expect(marks.map((mark: PageCorrectionAnnotation) => [mark.kind, mark.points])).toEqual([
       ["pin", [{ x: 0.5, y: 0.5 }]],
@@ -151,7 +151,7 @@ describe("page revision draft", () => {
     saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
     renderDraft();
     expect(screen.getByText("The redraw didn’t finish. Your changes are still here.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview.mock.calls[0][0].body.changes[0].id).toBe("request-1");
     expect(mocks.submit).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
@@ -167,7 +167,7 @@ describe("page revision draft", () => {
     // The reconnected request shows inside its tracked finding, not as a separate copy.
     expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Give the audience member a different face");
     expect(screen.queryByLabelText("Change 2")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview.mock.calls[0][0].body.changes).toEqual([{
       id: "request-1", issue_id: manual.id, instruction: "Give the audience member a different face", annotations: marks,
     }]);
@@ -183,7 +183,7 @@ describe("page revision draft", () => {
     expect(loadRevisionDraft("demo", 1, target)).toBeNull();
     expect(screen.queryByLabelText("Change 1")).toBeNull();
     fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: "Bare tip on the right" } });
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview.mock.calls[0][0].body.changes).toEqual([expect.objectContaining({ instruction: "Bare tip on the right" })]);
     expect(mocks.preview.mock.calls[0][0].body.changes[0].id).not.toBe("request-1");
     expect(mocks.submit).not.toHaveBeenCalled();
@@ -217,7 +217,7 @@ describe("page revision draft", () => {
       { id: "outline", kind: "freehand", points: [{ x: 0.6, y: 0.51 }, { x: 0.3, y: 0.72 }], note: "" },
     ], "a".repeat(1000));
     renderDraft();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(mocks.preview).toHaveBeenCalledTimes(1);
     const change = mocks.preview.mock.calls[0]![0].body.changes[0];
     expect(change.instruction).toHaveLength(1000);
@@ -227,19 +227,19 @@ describe("page revision draft", () => {
   it("requires another review after a mark's note changes", () => {
     saved([{ id: "pin", kind: "pin", points: [{ x: 0.5, y: 0.5 }] }]);
     renderDraft();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(screen.getByRole("button", { name: "Generate revision" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Mark for change 1" }));
     fireEvent.change(screen.getByLabelText("Note for mark 1 (optional)"), { target: { value: "Only the left side" } });
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
-    expect(screen.getByRole("button", { name: "REVIEW 1 CHANGE" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review 1 change" })).toBeTruthy();
     expect(screen.getByText("Changed since your last review.")).toBeTruthy();
     expect(mocks.submit).not.toHaveBeenCalled();
   });
   it("explains invalid stored geometry before requesting an estimate", () => {
     saved([{ id: "bad", kind: "rectangle", points: [{ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5 }] }]);
     renderDraft();
-    fireEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(screen.getByRole("alert").textContent).toMatch(/too small/i);
     expect(mocks.preview).not.toHaveBeenCalled();
     expect(mocks.submit).not.toHaveBeenCalled();

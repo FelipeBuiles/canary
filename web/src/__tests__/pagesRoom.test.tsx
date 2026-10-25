@@ -771,7 +771,7 @@ describe("PagesRoom", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
-    expect(screen.getByText("COMPARE WITH PREVIOUS RENDER", { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Compare with revision 1" })).toBeTruthy();
     expect(screen.queryByText("page-issue-1")).toBeNull();
     expect(screen.queryByText("rushed_aftermath")).toBeNull();
   });
@@ -871,20 +871,20 @@ describe("PagesRoom", () => {
 
     // Nothing is included until the author chooses it.
     expect(screen.queryByLabelText("Change 1")).toBeNull();
-    expect(screen.getByRole("button", { name: "REVIEW CHANGES" })).toHaveProperty("disabled", true);
-    await userEvent.click(within(screen.getByRole("region", { name: "Checks" })).getByRole("button", { name: "FIX" }));
+    expect(screen.getByRole("button", { name: "Add a change to review" })).toHaveProperty("disabled", true);
+    await userEvent.click(within(screen.getByRole("region", { name: "Checks" })).getByRole("button", { name: "Add to changes" }));
     expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "Restore the approved face");
     fireEvent.change(screen.getByLabelText("Describe a change"), {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
-    expect(screen.getByRole("button", { name: "REVIEW 2 CHANGES" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Review 2 changes" })).toHaveProperty("disabled", false);
     expect(previewCorrections).not.toHaveBeenCalled();
 
     // Submission is blocked until an explicit preview runs.
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(submitCorrections).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW 2 CHANGES" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 2 changes" }));
     expect(previewCorrections).toHaveBeenCalledWith(
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
@@ -918,16 +918,16 @@ describe("PagesRoom", () => {
     });
     renderRoom();
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    await userEvent.click(screen.getByRole("button", { name: "FIX" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add to changes" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     expect(screen.getByRole("button", { name: "Generate revision" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Describe a change"), {
       target: { value: "A request that has not been added yet" },
     });
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(submitCorrections).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW 2 CHANGES" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 2 changes" }));
     expect(previewCorrections.mock.calls[1][0].body.changes).toHaveLength(2);
     expect(previewCorrections.mock.calls[1][0].body.changes[1].instruction)
       .toBe("A request that has not been added yet");
@@ -938,7 +938,7 @@ describe("PagesRoom", () => {
 
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(submitCorrections).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW 2 CHANGES" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 2 changes" }));
     expect(previewCorrections).toHaveBeenCalledTimes(3);
     expect(previewCorrections.mock.calls[2][0].body.changes).toHaveLength(2);
     expect(previewCorrections.mock.calls[2][0].body.changes[0].instruction)
@@ -958,9 +958,9 @@ describe("PagesRoom", () => {
     });
     renderRoom();
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    await userEvent.click(screen.getByRole("button", { name: "FIX" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add to changes" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW 1 CHANGE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 1 change" }));
     await userEvent.click(screen.getByRole("button", { name: "Generate revision" }));
 
     expect(screen.getByRole("alert").textContent).toContain("Saved edition conflict");
@@ -1140,16 +1140,16 @@ describe("PagesRoom", () => {
     expect(screen.getByText("POSSIBLE DIFFERENCES", { exact: false })).toBeTruthy();
     // No implicit per-issue redraw: fixes wait in the draft until previewed and submitted.
     expect(screen.queryByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "NOT A PROBLEM" }));
+    await userEvent.click(screen.getByRole("button", { name: "Not a problem" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo",
       pageNumber: 1,
       issueId: "page-issue-draw-page-001-render-002-misspelled_lettering",
     }, expect.any(Object));
     // Fix routes through the draft: the finding becomes an editable change in place.
-    await userEvent.click(screen.getByRole("button", { name: "FIX" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add to changes" }));
     expect(screen.getByLabelText("Change 1")).toHaveProperty("value", "OCR lettering does not exactly match canonical wording.");
-    expect(screen.queryByRole("button", { name: "FIX" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add to changes" })).toBeNull();
     expect(generatePage).not.toHaveBeenCalled();
   });
 
@@ -1329,7 +1329,7 @@ describe("PagesRoom", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     expect(screen.getByText("The text check didn't finish.")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "CHECK TEXT AGAIN" }));
+    await userEvent.click(screen.getByRole("button", { name: "Check text again" }));
     expect(analyzePage).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
     expect(analyzePage).toHaveBeenCalledWith({
@@ -1377,13 +1377,13 @@ describe("PagesRoom", () => {
     const checks = screen.getByRole("region", { name: "Checks" });
     expect(within(checks).getByText("Checks run when the page finishes drawing.")).toBeTruthy();
     expect(within(checks).getAllByText("Close the upper eye.").length).toBeGreaterThan(0);
-    expect(within(checks).queryByText(/does it look fixed/)).toBeNull();
+    expect(within(checks).queryByText(/does it look fixed/i)).toBeNull();
     expect(within(checks).queryAllByRole("button")).toHaveLength(0);
 
     generationJobResults = [{ id: "new-revision", status: "complete", payload: { page_number: 1 } }];
     await act(async () => room.rerenderRoom());
-    expect(within(checks).getByText(/does it look fixed/)).toBeTruthy();
-    for (const name of ["STILL WRONG", "LOOKS FIXED", "FIX", "NOT A PROBLEM", "WITHDRAW REQUEST", "DOUBLE-CHECK"]) {
+    expect(within(checks).getByText(/does it look fixed/i)).toBeTruthy();
+    for (const name of ["Still wrong", "Looks fixed", "Add to changes", "Not a problem", "Withdraw request", "DOUBLE-CHECK"]) {
       expect(within(checks).getAllByRole("button", { name }).length).toBeGreaterThan(0);
     }
     expect(generatePage).not.toHaveBeenCalled();
@@ -1409,17 +1409,17 @@ describe("PagesRoom", () => {
     const checks = screen.getByRole("region", { name: "Checks" });
     expect(within(checks).getByText("1 thing to look at.", { exact: false })).toBeTruthy();
     expect(within(checks).getByText("Object")).toBeTruthy();
-    await userEvent.click(within(checks).getByRole("button", { name: "NOT A PROBLEM" }));
+    await userEvent.click(within(checks).getByRole("button", { name: "Not a problem" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo", pageNumber: 1, issueId: `visual-review-${"a".repeat(64)}-1`,
     }, expect.any(Object));
     // The observed problem leads; the suggested fix waits behind Details until Fix makes it the change.
     expect(within(checks).getByText("Panel 3: The scar ring is on the fourth finger.")).toBeTruthy();
-    await userEvent.click(within(checks).getByRole("button", { name: "FIX" }));
+    await userEvent.click(within(checks).getByRole("button", { name: "Add to changes" }));
     expect(within(checks).getByLabelText("Change 1")).toHaveProperty("value", "Move the scar ring to the third finger.");
-    expect(within(checks).getByText(/In next revision/)).toBeTruthy();
-    await userEvent.click(within(checks).getByRole("button", { name: "REMOVE" }));
-    expect(within(checks).getByRole("button", { name: "FIX" })).toBeTruthy();
+    expect(within(checks).getByText(/In your changes/)).toBeTruthy();
+    await userEvent.click(within(checks).getByRole("button", { name: "Remove" }));
+    expect(within(checks).getByRole("button", { name: "Add to changes" })).toBeTruthy();
     expect(reviewVisuals).not.toHaveBeenCalled();
     expect(generatePage).not.toHaveBeenCalled();
   });
@@ -1436,7 +1436,7 @@ describe("PagesRoom", () => {
     }];
     renderRoom();
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    await userEvent.click(within(screen.getByRole("region", { name: "Checks" })).getAllByRole("button", { name: "NOT A PROBLEM" })[0]);
+    await userEvent.click(within(screen.getByRole("region", { name: "Checks" })).getAllByRole("button", { name: "Not a problem" })[0]);
     expect(dismissIssue).toHaveBeenCalled();
     expect(screen.queryByText(/was not found/)).toBeNull();
     expect(screen.queryByText("Your decision was not saved. Try again.", { exact: false })).toBeNull();

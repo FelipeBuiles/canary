@@ -1,6 +1,6 @@
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { Columns2, LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { PageIssue } from "../../types/api";
 import {
@@ -32,7 +32,6 @@ import { BeforeAfterWipe } from "./BeforeAfterWipe";
 import { Loupe } from "../ui/Loupe";
 import { InspectButton } from "../ui/InspectButton";
 import { PageMarker, type EditorAnnotation } from "./PageMarker";
-import { SectionHeader } from "../composites";
 import {
   annotationProblem,
   MAX_CORRECTION_CHANGES,
@@ -518,10 +517,10 @@ export function RevisionDraft({
     const marks = change.annotations.length;
     const reading = readingFor(change);
     return (
-      <div className={`space-y-2 border-l-[3px] pl-3 ${active ? "border-hero-red" : "border-ink-black/20"}`}
+      <div className={`space-y-2 border p-3 transition-colors ${active ? "border-ink-black bg-bristol" : "border-ink-black/12 bg-pulp-paper"}`}
         onFocusCapture={() => !locked && setActiveId(change.id)} onClick={() => !locked && setActiveId(change.id)}>
         <div className="flex items-start gap-2">
-          <span aria-hidden="true" className={`mt-2 flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-ink-black font-meta text-xs font-bold ${active ? "bg-hero-red text-bristol" : "bg-pulp-paper"}`}>
+          <span aria-hidden="true" className={`mt-2 flex size-[22px] shrink-0 items-center justify-center border border-ink-black font-meta text-[0.6875rem] font-bold ${active ? "bg-narrator-gold" : "bg-bristol"}`}>
             {number}
           </span>
           <TextAreaField
@@ -534,15 +533,15 @@ export function RevisionDraft({
             onChange={(event) => updateChange(change.id, { instruction: event.target.value })}
           />
         </div>
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 pl-8">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 pl-[30px]">
           <p className="font-body text-xs text-ink-muted">
             {marks > 0 && t("{count, plural, one {# mark} other {# marks}}", { count: marks })}
             {marks > 0 && active && " · "}
             {active && t("Click or drag on the page to show where.")}
           </p>
           {!locked && (
-            <Button size="xs" variant="outline" onClick={(event) => { event.stopPropagation(); removeChange(change.id); }}>
-              {t("REMOVE")}
+            <Button size="xs" variant="outline" className="border-transparent text-ink-muted hover:border-transparent hover:bg-surface-container hover:text-ink-black" onClick={(event) => { event.stopPropagation(); removeChange(change.id); }}>
+              {t("Remove")}
             </Button>
           )}
         </div>
@@ -584,14 +583,7 @@ export function RevisionDraft({
       {/* The page under the lamp on the ink stage; the next revision in the inspector: its checks, then your own changes. */}
       <div className="grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_25rem] lg:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1fr)_28rem]">
         <div className="benday-ink min-w-0 space-y-4 px-4 py-5 sm:px-6 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
-          {changes.length === 0 && revisions.length > 1 && (
-            <div className="self-center bg-bristol px-2 py-1.5 text-ink-black shadow-float">
-            <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions}
-              selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
-              onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
-            </div>
-          )}
-          <figure className="relative flex h-[max(12rem,calc(100dvh-14rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1 [&_img]:shadow-[0_30px_60px_-20px_rgb(0_0_0/0.7),0_0_0_1px_rgb(252_250_237/0.12)]">
+          <figure hidden={comparisonOpen} className="relative flex h-[max(12rem,calc(100dvh-14rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1 [&_img]:shadow-[0_30px_60px_-20px_rgb(0_0_0/0.7),0_0_0_1px_rgb(252_250_237/0.12)]">
             {drafting ? (
               <PageMarker
                 key={`${comicPageRevision}:${parentRenderRevision}`}
@@ -610,7 +602,6 @@ export function RevisionDraft({
                 <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
               </Loupe>
             )}
-            <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} />
             {redraw && (
               <figcaption role="status" className="pointer-events-none absolute left-1/2 top-4 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-xs font-bold uppercase tracking-wider shadow-ink">
                 {redraw !== "unconfirmed" && <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />}
@@ -618,15 +609,12 @@ export function RevisionDraft({
               </figcaption>
             )}
           </figure>
-          {beforeRevision != null && (
-            <details className="border border-ink-black/20 bg-bristol px-3 py-2 text-ink-black" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
-              <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
-                {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {beforeRevision} → {t("Revision")} {shownRevision})
-              </summary>
+          {beforeRevision != null && comparisonOpen && (
+            <section aria-label={t("Revision comparison")} className="space-y-4 border border-pulp-paper/15 bg-[#141510]/95 p-4 text-pulp-paper lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
               {otherRevisions.length > 1 && (
-                <label className="mt-3 flex flex-wrap items-center gap-2 font-meta text-xs font-bold">
+                <label className="flex flex-wrap items-center gap-2 font-meta text-xs font-medium text-on-chrome-muted">
                   {t("Compare with")}
-                  <select value={beforeRevision} className="min-h-9 border border-ink-black/25 bg-transparent px-2"
+                  <select value={beforeRevision} className="min-h-8 border border-pulp-paper/20 bg-transparent px-2 text-pulp-paper [&>option]:text-ink-black"
                     onChange={(event) => setCompareChoice(Number(event.target.value))}>
                     {otherRevisions.map((option) => (
                       <option key={option.revision} value={option.revision}>{t("Revision")} {option.revision}</option>
@@ -634,23 +622,24 @@ export function RevisionDraft({
                   </select>
                 </label>
               )}
-              <div role="group" aria-label={t("Revision comparison")} className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" aria-pressed={comparison === "wipe"} onClick={() => setComparison("wipe")}>
-                  {t("WIPE")}
-                </Button>
-                <Button size="sm" variant="outline" aria-pressed={comparison === "before"} onClick={() => setComparison("before")}>
-                  {t("BEFORE")} · {t("Revision")} {beforeRevision}
-                </Button>
-                <Button size="sm" variant="outline" aria-pressed={comparison === "after"} onClick={() => setComparison("after")}>
-                  {t("AFTER")} · {t("Revision")} {shownRevision}
-                </Button>
+              <div role="group" aria-label={t("Revision comparison")} className="inline-flex border border-pulp-paper/20">
+                {([
+                  ["wipe", t("Wipe")],
+                  ["before", `${t("Before")} · ${t("Revision")} ${beforeRevision}`],
+                  ["after", `${t("After")} · ${t("Revision")} ${shownRevision}`],
+                ] as const).map(([value, label]) => (
+                  <button key={value} type="button" aria-pressed={comparison === value} onClick={() => setComparison(value)}
+                    className={`h-8 px-3 font-meta text-xs font-medium transition-colors [&+&]:border-l [&+&]:border-pulp-paper/20 ${comparison === value ? "bg-pulp-paper text-ink-black" : "text-pulp-paper/85 hover:bg-pulp-paper/10"}`}>
+                    {label}
+                  </button>
+                ))}
               </div>
-              <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+              <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
                 <div className="relative min-w-0">
                 <InspectButton
                   images={[
-                    { src: pageRenderPreviewUrl(project, pageNumber, beforeRevision, "reader"), alt: `${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${beforeRevision}`, label: `${t("BEFORE")} · ${t("Revision")} ${beforeRevision}` },
-                    { src: canvasSrc, alt: `${t("Complete page")} ${pageNumber}, ${t("current revision")} ${shownRevision}`, label: `${t("AFTER")} · ${t("Revision")} ${shownRevision}` },
+                    { src: pageRenderPreviewUrl(project, pageNumber, beforeRevision, "reader"), alt: `${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${beforeRevision}`, label: `${t("Before")} · ${t("Revision")} ${beforeRevision}` },
+                    { src: canvasSrc, alt: `${t("Complete page")} ${pageNumber}, ${t("current revision")} ${shownRevision}`, label: `${t("After")} · ${t("Revision")} ${shownRevision}` },
                   ]}
                   index={comparison === "before" ? 0 : 1}
                   placement={comparison === "wipe" ? "right-2 top-10" : undefined}
@@ -661,8 +650,8 @@ export function RevisionDraft({
                     afterSrc={canvasSrc}
                     beforeAlt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${beforeRevision}`}
                     afterAlt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${shownRevision}`}
-                    beforeLabel={`${t("BEFORE")} · ${beforeRevision}`}
-                    afterLabel={`${t("AFTER")} · ${shownRevision}`}
+                    beforeLabel={`${t("Before")} · ${beforeRevision}`}
+                    afterLabel={`${t("After")} · ${shownRevision}`}
                     visible={comparisonOpen}
                     firstViewKey={`${project}:${pageNumber}:${beforeRevision}:${shownRevision}`}
                   />
@@ -675,14 +664,14 @@ export function RevisionDraft({
                     decoding="async"
                     className="max-h-[70dvh] w-full object-contain"
                   />
-                  <figcaption className="mt-2 text-sm font-bold" aria-live="polite">
-                    {t(comparison === "before" ? "BEFORE" : "AFTER")} · {t("Revision")} {comparison === "before" ? beforeRevision : shownRevision}
+                  <figcaption className="mt-2 font-meta text-xs font-medium text-on-chrome-muted" aria-live="polite">
+                    {t(comparison === "before" ? "Before" : "After")} · {t("Revision")} {comparison === "before" ? beforeRevision : shownRevision}
                   </figcaption>
                 </figure>
                 )}
                 </div>
-                <div className="space-y-3">
-                  <p className="text-sm leading-6">{t("A new revision is not a confirmed fix. Compare the requested change and check for unintended differences.")}</p>
+                <div className="space-y-3 text-pulp-paper [&_.text-ink-black\/75]:text-pulp-paper/80 [&_.text-ink-muted]:text-on-chrome-muted">
+                  <p className="text-sm leading-6 text-pulp-paper/90">{t("A new revision is not a confirmed fix. Compare the requested change and check for unintended differences.")}</p>
                 <SubmittedCorrection
                   project={project}
                   pageNumber={pageNumber}
@@ -690,8 +679,8 @@ export function RevisionDraft({
                 />
                 {issues.filter((issue) => issue.render_revision === beforeRevision && (issue.status === "open" || issue.status === "revised")).length > 0 && (
                   <div>
-                    <p className="font-meta text-xs font-bold text-ink-muted">
-                      {t("STILL OPEN FROM THE PREVIOUS RENDER")}
+                    <p className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+                      {t("Still open from the previous render")}
                     </p>
                     <ul className="mt-1 space-y-1">
                       {issues
@@ -706,8 +695,22 @@ export function RevisionDraft({
                 )}
               </div>
                 </div>
-            </details>
+            </section>
           )}
+          <div role="toolbar" aria-label={t("Page tools")} className="flex shrink-0 flex-wrap items-center justify-center gap-1 self-center border border-pulp-paper/15 bg-[#141510]/95 p-1 text-pulp-paper">
+            {changes.length === 0 && revisions.length > 1 && (
+              <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions} tone="dark"
+                selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
+                onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
+            )}
+            {beforeRevision != null && (
+              <button type="button" aria-expanded={comparisonOpen} onClick={() => setComparisonOpen((open) => !open)}
+                className={`flex h-8 items-center gap-1.5 px-2.5 font-meta text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-narrator-gold ${comparisonOpen ? "bg-pulp-paper text-ink-black" : "text-pulp-paper/85 hover:bg-pulp-paper/10 hover:text-pulp-paper"}`}>
+                <Columns2 size={14} aria-hidden="true" />{t("Compare with revision {revision}", { revision: String(beforeRevision) })}
+              </button>
+            )}
+            <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} tone="toolbar" />
+          </div>
         </div>
 
         {/* Room at the end for button shadows and their 1px hover nudge, so hovering never adds a scrollbar. */}
@@ -730,8 +733,11 @@ export function RevisionDraft({
           {checks?.(controls)}
 
           {(ownChanges.length > 0 || !locked) && (
-            <section aria-label={t("Your changes")} className="space-y-3">
-              <SectionHeader variant="underline" title={t("Your changes")} />
+            <section aria-label={t("Your changes")} className="space-y-3 border-t border-ink-black/12 pt-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="font-display text-[1.0625rem] font-extrabold tracking-[-0.01em]">{t("Your changes")}</h3>
+                <p className="font-meta text-xs text-ink-soft">{changes.length === 0 ? t("None yet") : t("{count, plural, one {# change} other {# changes}}", { count: changes.length })}</p>
+              </div>
               {ownChanges.length > 0 && (
                 <ol className="space-y-3">
                   {ownChanges.map((change) => <li key={change.id}>{changeCard(change)}</li>)}
@@ -745,7 +751,7 @@ export function RevisionDraft({
                     className="min-h-0"
                     value={manualInput}
                     maxLength={MAX_CORRECTION_INSTRUCTION}
-                    rows={2}
+                    rows={3}
                     placeholder={t("Describe a change, e.g. in panel 2 make his hair pink; keep his face and the lighting.")}
                     onChange={(event) => setManualInput(event.target.value)}
                     onKeyDown={(event) => {
@@ -755,7 +761,8 @@ export function RevisionDraft({
                       }
                     }}
                   />
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-meta text-xs text-ink-soft">{t("Enter adds it. Then mark the spot on the page.")}</p>
                     <Button size="xs" variant="outline" onClick={addManual} disabled={!manualInput.trim()}>
                       {t("Add")}
                     </Button>
@@ -783,7 +790,7 @@ export function RevisionDraft({
           {!previewFresh && !redraw && (
             <div className="sticky bottom-0 -mx-5 space-y-2 border-t border-ink-black/12 bg-pulp-paper px-5 pb-1 pt-4">
               <Button className="w-full" size="md" onClick={runPreview} disabled={locked || preview.isPending || reviewCount === 0}>
-                {preview.isPending ? t("Reviewing…") : t("{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}", { count: reviewCount })}
+                {preview.isPending ? t("Reviewing…") : t("{count, plural, =0 {Add a change to review} one {Review # change} other {Review # changes}}", { count: reviewCount })}
               </Button>
               {preview.data && !submittedJobId && reviewCount > 0 && (
                 <p role="status" className="font-body text-xs text-ink-muted">{t("Changed since your last review.")}</p>
