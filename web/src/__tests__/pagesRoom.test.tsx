@@ -503,7 +503,8 @@ describe("PagesRoom", () => {
 
   it("opens flagged pages on the Page tab with their checks, without starting paid work", async () => {
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "Review 1 flagged" }));
+    await userEvent.click(screen.getByRole("button", { name: "Needs you 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
     expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
@@ -537,7 +538,7 @@ describe("PagesRoom", () => {
     pageIssues = [];
     renderRoom();
     expect(productEvent).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Start reading" }));
+    await userEvent.click(screen.getByRole("button", { name: "Read" }));
     expect(productEvent).not.toHaveBeenCalled();
     const image = within(screen.getByRole("dialog")).getByAltText("Complete page 1, render revision 2");
     fireEvent.load(image);
@@ -554,11 +555,11 @@ describe("PagesRoom", () => {
     expect(productEvent).not.toHaveBeenCalled();
   });
 
-  it("offers Start reading when drawn pages have no unresolved findings", async () => {
+  it("offers Read when drawn pages have no unresolved findings", async () => {
     pageIssues = [];
     renderRoom();
     expect(screen.queryByRole("button", { name: /Review \d+ flagged/ })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Start reading" }));
+    await userEvent.click(screen.getByRole("button", { name: "Read" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
     expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
@@ -1617,6 +1618,7 @@ describe("PagesRoom", () => {
 
   it("opens book adaptation as a full reading workspace and returns to the gallery", async () => {
     renderRoom();
+    await userEvent.click(screen.getByRole("button", { name: "Page documents" }));
     await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
 
     expect(screen.getByRole("region", { name: "BOOK ADAPTATION" })).toBeTruthy();
@@ -1638,6 +1640,7 @@ describe("PagesRoom", () => {
 
   it("switches reading documents in the URL and preserves the gallery filter without generating", async () => {
     renderRoom("/project/demo/pages?filter=needs-review");
+    await userEvent.click(screen.getByRole("button", { name: "Page documents" }));
     await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
     expect(screen.getByLabelText("Current route").textContent).toContain("reading=adaptation");
     await userEvent.click(screen.getByRole("button", { name: "PAGE PLAN" }));
@@ -1669,6 +1672,7 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("region", { name: "PAGE PLAN" })).toBeNull();
     expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
     expect(screen.getByLabelText("Current route").textContent).toContain("filter=needs-review");
+    await userEvent.click(screen.getByRole("button", { name: "Page documents" }));
     expect(screen.getByRole("button", { name: "Adaptation" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Page plan" })).toHaveProperty("disabled", true);
   });
@@ -1680,7 +1684,7 @@ describe("PagesRoom", () => {
     expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
     await userEvent.click(within(dialog).getByRole("button", { name: "NEXT PAGE" }));
     expect(screen.getByRole("dialog", { name: "Page 2 review" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "NEXT UNRESOLVED" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next that needs you · 1" }));
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Close page review" }));
     expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();

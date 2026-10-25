@@ -275,6 +275,17 @@
     background-size: 18px 18px;
   }
 
+  /* The review stage: ink with a faint press-dot field, so artwork is the brightest thing. */
+  .benday-ink {
+    background-color: var(--color-ink-black);
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--color-pulp-paper) 7%, transparent) 1px,
+      transparent 0
+    );
+    background-size: 7px 7px;
+  }
+
   .pressroom-sidebar {
     position: relative;
     isolation: isolate;

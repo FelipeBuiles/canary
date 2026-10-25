@@ -129,7 +129,7 @@ describe("page revision draft", () => {
   it("marks the active change by clicking or dragging on the page, with no tool to choose", () => {
     renderDraft();
     fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: "Change only the coat" } });
-    fireEvent.click(screen.getByRole("button", { name: "ADD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     const canvas = screen.getByRole("group", { name: "Page marks" });
     stubPointer(canvas);
     fireEvent.pointerDown(canvas, { clientX: 100, clientY: 150, button: 0 });
