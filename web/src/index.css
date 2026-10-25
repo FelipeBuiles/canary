@@ -114,6 +114,14 @@
   }
 }
 
+/* Laptop browsers rarely leave 880px of height; full-page flows tighten
+   their vertical rhythm there instead of scrolling. */
+@custom-variant short {
+  @media (height < 55rem) {
+    @slot;
+  }
+}
+
 @theme {
   --color-hero-red: #b51822;
   --color-pulp-paper: #fcfaed;

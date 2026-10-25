@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import { Lock } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { useShortViewport } from "../../hooks/useShortViewport";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 
@@ -40,9 +40,15 @@ const COMPARE_VIEWS = ["sound", "captions", "translation"] as const;
 type CompareView = typeof COMPARE_VIEWS[number];
 const COMPARE_LABELS: Record<CompareView, string> = { sound: "Sound effects", captions: "Captions", translation: "Translation" };
 const VIEW_CROPS: Record<CompareView, Crop> = {
-  sound: { x: 540, y: 1004, width: 470, height: 196 },
-  captions: { x: 16, y: 454, width: 992, height: 368 },
-  translation: { x: 16, y: 454, width: 992, height: 368 },
+  sound: { x: 540, y: 1004, width: 470, height: 176 },
+  captions: { x: 16, y: 454, width: 992, height: 340 },
+  translation: { x: 16, y: 454, width: 992, height: 340 },
+};
+/** Laptop-height windows keep the same moments in a wider strip so the whole choice fits. */
+const SHORT_VIEW_CROPS: Record<CompareView, Crop> = {
+  sound: { x: 540, y: 1008, width: 470, height: 156 },
+  captions: { x: 16, y: 454, width: 992, height: 280 },
+  translation: { x: 16, y: 454, width: 992, height: 280 },
 };
 const VIEW_TAGS: Record<CompareView, Record<LetteringMode, string>> = {
   sound: { integrated: "Painted with the art", editable: "Set on top of the art" },
@@ -108,7 +114,7 @@ function EditableDemo({ crop }: { crop: Crop }) {
 
 function ComparisonImage({ mode, view }: { mode: LetteringMode; view: CompareView }) {
   const { t } = useI18n();
-  const crop = VIEW_CROPS[view];
+  const crop = (useShortViewport() ? SHORT_VIEW_CROPS : VIEW_CROPS)[view];
   if (mode === "editable" && view === "captions") return <EditableDemo crop={crop} />;
   const asset = view === "sound" ? SAMPLES[3].asset : SAMPLES[26].asset;
   const spanish = mode === "editable" && view === "translation";
@@ -141,7 +147,7 @@ function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; v
       <ComparisonImage mode={mode} view={view} />
       <span className="pointer-events-none absolute bottom-3 left-3 border border-ink-black bg-pulp-paper px-2 py-1 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-black">{t(VIEW_TAGS[view][mode])}</span>
     </div>
-    <label className="flex flex-1 cursor-pointer flex-col gap-4 px-6 pb-6 pt-5 group-disabled:cursor-wait">
+    <label className="flex flex-1 cursor-pointer flex-col gap-4 px-6 pb-6 pt-5 short:gap-3.5 short:pb-5 short:pt-4 group-disabled:cursor-wait">
       <span className="flex flex-wrap items-center gap-3">
         <input type="radio" name="letteringMode" value={mode} checked={selected} onChange={() => onChange(mode)} aria-describedby={`lettering-${mode}-details`} className="size-5 shrink-0 accent-hero-red" />
         <span className="font-display text-[1.375rem] font-black uppercase leading-none tracking-[-0.02em]">{t(LABELS[mode])}</span>
@@ -157,44 +163,46 @@ function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; v
           {choice.pros.map((pro) => <span key={pro} className="flex gap-2.5"><span className="grid size-[18px] shrink-0 place-items-center bg-chip-sage text-[0.8125rem] font-bold leading-none text-ready"><span aria-hidden="true">+</span><span className="sr-only">{t("Pro:")}</span></span>{t(pro)}</span>)}
           {choice.cons.map((con) => <span key={con} className="flex gap-2.5"><span className="grid size-[18px] shrink-0 place-items-center bg-chip-red text-[0.8125rem] font-bold leading-none text-status-blocked-text"><span aria-hidden="true">−</span><span className="sr-only">{t("Con:")}</span></span>{t(con)}</span>)}
         </span>
-        <span className="text-sm leading-5 text-ink-muted"><strong className="text-ink-black">{t("Best for:")}</strong> {t(choice.bestFor)}</span>
+        <span className="text-sm leading-5 text-ink-muted short:hidden"><strong className="text-ink-black">{t("Best for:")}</strong> {t(choice.bestFor)}</span>
       </span>
     </label>
   </div>;
 }
 
-export function LetteringChoice({ value, onChange, disabled, intro }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean; intro?: ReactNode }) {
+export function LetteringChoice({ value, onChange, disabled, heading }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean; heading?: ReactNode }) {
   const { t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [view, setView] = useState<CompareView>("sound");
-  return <div className="mt-3 space-y-5">
+  return <div className="space-y-5 short:space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-    {intro}
-    <div role="group" aria-label={t("Compare")} className="flex shrink-0 flex-wrap items-center gap-2.5 font-meta text-xs text-ink-muted">
-      {t("Compare")}
-      <span className="inline-flex border border-ink-black/55 bg-bristol">
-        {COMPARE_VIEWS.map((key) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}
-          className={cn("h-8 px-3 font-meta text-xs font-semibold transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]", view === key ? "bg-ink-black text-pulp-paper" : "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black")}>
-          {t(COMPARE_LABELS[key])}
-        </button>)}
-      </span>
-    </div>
+      {heading}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2">
+        <div role="group" aria-label={t("Compare")} className="flex items-center font-meta text-xs text-ink-muted">
+          <span className="inline-flex border border-ink-black/55 bg-bristol">
+            {COMPARE_VIEWS.map((key) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}
+              className={cn("h-8 px-3 font-meta text-xs font-semibold transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]", view === key ? "bg-ink-black text-pulp-paper" : "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black")}>
+              {t(COMPARE_LABELS[key])}
+            </button>)}
+          </span>
+        </div>
+        <button type="button" aria-expanded={detailsOpen} aria-controls="lettering-details" onClick={() => setDetailsOpen(open => !open)}
+          className="min-h-8 font-meta text-[0.8125rem] font-medium underline decoration-ink-black/35 underline-offset-4 hover:text-hero-red">
+          {t("Compare in detail")}
+        </button>
+      </div>
     </div>
     <fieldset disabled={disabled} aria-describedby="lettering-consequence" className={`group ${disabled ? "opacity-60" : ""}`}>
       <legend className="sr-only">{t("Choose how your comic is lettered")}</legend>
       <div className="grid gap-6 md:grid-cols-2 lg:gap-8">
         {MODES.map(mode => <ChoiceCard key={mode} mode={mode} view={view} selected={value === mode} onChange={onChange} />)}
       </div>
-      <p id="lettering-consequence" className="mt-5 flex items-start gap-2 text-sm leading-relaxed">
-        <Lock size={15} aria-hidden="true" className="mt-0.5 shrink-0" />
-        <span><strong>{t("This choice is permanent for this project.")}</strong> {t("Not sure? Choose editable lettering: it’s the one you can fix later.")}</span>
+      {/* The footer says this visibly beside Create project; screen readers hear it with the choice. */}
+      <p id="lettering-consequence" className="sr-only">
+        {t("This choice is permanent for this project.")} {t("Not sure? Choose editable lettering: it’s the one you can fix later.")}
       </p>
     </fieldset>
 
-    <details className="border-t border-ink-black/12" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
-      <summary className="min-h-11 cursor-pointer py-3 font-meta text-[0.8125rem] font-medium">{t("Compare in detail")}</summary>
-      {detailsOpen && <LetteringDetails />}
-    </details>
+    {detailsOpen && <section id="lettering-details" aria-label={t("Compare in detail")} className="border-t border-ink-black/12 pt-2"><LetteringDetails /></section>}
   </div>;
 }
 
