@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Lock } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 
 export type LetteringMode = "integrated" | "editable";
@@ -12,24 +14,41 @@ const SAMPLES = {
   25: { asset: "cthulhu-25", title: "The Call of Cthulhu", credit: "H. P. Lovecraft", label: "Two speakers", crop: { x: 300, y: 950, width: 530, height: 420 } },
 } as const;
 type SamplePage = keyof typeof SAMPLES;
+const SAMPLE_ORDER: SamplePage[] = [26, 25, 3];
 type Crop = { x: number; y: number; width: number; height: number };
+/** The trade in one glance: integrated wins on look, editable on changing words. */
 const CHOICES = {
   integrated: {
-    promise: "Words drawn as part of the art.",
-    strengths: ["Sound effects drawn into the action", "Balloons and captions shaped to each scene", "One cohesive, hand-made look"],
-    cost: "Changing a word means redrawing the page. It uses credits and can change the art.",
-    bestFor: "One finished edition that feels fully hand-drawn.",
+    tag: "Best-looking",
+    promise: "The words are painted with the page, like a hand-lettered comic.",
+    ratings: { look: 5, words: 1 },
+    pros: ["Sound effects and bursts painted into the action", "Balloons and captions shaped to each scene"],
+    cons: ["Changing a word means redrawing the page. It uses credits and can change the art.", "Another language means drawing the pages again"],
+    bestFor: "One finished edition you won't need to rewrite.",
   },
   editable: {
-    promise: "The art is finished. The words stay yours.",
-    strengths: ["Every word matches your script exactly", "Fix typos or rewrite lines instantly, without credits", "Translate onto the same artwork"],
-    cost: "Sound effects use styled fonts and shapes, not hand-drawn letters.",
+    tag: "Most flexible · safest if unsure",
+    promise: "The art is finished. The words stay yours to fix, rewrite or translate.",
+    ratings: { look: 3, words: 5 },
+    pros: ["Fix typos or rewrite lines instantly, without credits", "Translate onto the same artwork"],
+    cons: ["Sound effects use styled fonts and preset bursts, not hand-drawn letters", "Lettering reads clean and even rather than hand-made"],
     bestFor: "Books you'll keep polishing or publish in more than one language.",
   },
 } as const;
-// Short, wide crops keep both cards’ text above the fold.
-const HERO_CROPS = { integrated: { x: 316, y: 614, width: 348, height: 160 }, editable: { x: 400, y: 450, width: 600, height: 277 } } as const;
-const SAMPLE_ORDER: SamplePage[] = [26, 25, 3];
+/** The same moments side by side: where integrated wins (sound), where they tie (captions), where editable wins (translation). */
+const COMPARE_VIEWS = ["sound", "captions", "translation"] as const;
+type CompareView = typeof COMPARE_VIEWS[number];
+const COMPARE_LABELS: Record<CompareView, string> = { sound: "Sound effects", captions: "Captions", translation: "Translation" };
+const VIEW_CROPS: Record<CompareView, Crop> = {
+  sound: { x: 540, y: 990, width: 470, height: 196 },
+  captions: { x: 16, y: 440, width: 992, height: 413 },
+  translation: { x: 16, y: 440, width: 992, height: 413 },
+};
+const VIEW_TAGS: Record<CompareView, Record<LetteringMode, string>> = {
+  sound: { integrated: "Painted with the art", editable: "Set on top of the art" },
+  captions: { integrated: "Painted with the art", editable: "Set on top of the art" },
+  translation: { integrated: "Spanish means redrawing every page", editable: "Spanish: same art, new words" },
+};
 const TRADEOFFS = [
   ["Look and feel", "Art, text, and balloons are drawn together. Often more expressive and closely integrated.", "Text and balloons are added separately. Consistent and adjustable, but may feel less integrated."],
   ["Sound effects & action", "Letters can be drawn with custom shapes, perspective, and texture as part of the action.", "Style, rotate, and resize effects with fonts, outlines, and preset shapes. Custom drawn letterforms are not reproduced automatically."],
@@ -80,36 +99,65 @@ function useReducedMotion() {
 const LetteringDemo = lazy(() => import("./LetteringDemo"));
 
 /** Editable's proof: move the balloon and change its words on the real lettering engine. */
-function EditableHero() {
+function EditableDemo({ crop }: { crop: Crop }) {
   const { t } = useI18n();
   const reducedMotion = useReducedMotion();
-  const still = <div className="bg-pulp-paper"><CroppedImage src={`${ASSETS}/${SAMPLES[26].asset}-editable.webp`} alt={t("Editable lettering sample: artwork with a movable speech balloon")} crop={HERO_CROPS.editable} /></div>;
-  return <Suspense fallback={still}><LetteringDemo crop={HERO_CROPS.editable} autoplay={!reducedMotion} fallback={still} /></Suspense>;
+  const still = <CroppedImage src={`${ASSETS}/${SAMPLES[26].asset}-editable.webp`} alt={t("Editable lettering sample: artwork with a movable speech balloon")} crop={crop} />;
+  return <Suspense fallback={still}><LetteringDemo crop={crop} autoplay={!reducedMotion} fallback={still} /></Suspense>;
 }
 
-function IntegratedHero() {
+function ComparisonImage({ mode, view }: { mode: LetteringMode; view: CompareView }) {
   const { t } = useI18n();
-  return <div className="bg-pulp-paper"><CroppedImage src={`${ASSETS}/${SAMPLES[3].asset}-integrated.webp`} alt={t("Integrated lettering sample: the word LEAP drawn into the cat’s motion")} crop={HERO_CROPS.integrated} /></div>;
+  const crop = VIEW_CROPS[view];
+  if (mode === "editable" && view === "captions") return <EditableDemo crop={crop} />;
+  const asset = view === "sound" ? SAMPLES[3].asset : SAMPLES[26].asset;
+  const spanish = mode === "editable" && view === "translation";
+  const alt = view === "sound"
+    ? t(mode === "integrated" ? "Integrated lettering: the cat’s cry hand-drawn in a painted burst" : "Editable lettering: the cat’s cry in styled type on a preset burst")
+    : t(mode === "integrated" ? "Integrated lettering: caption and balloon drawn into the panel" : spanish ? "Editable lettering: the same panel with its words in Spanish" : "Editable lettering: caption and balloon set above the finished art");
+  return <CroppedImage src={`${ASSETS}/${asset}-${mode}${spanish ? "-es" : ""}.webp`} alt={alt} crop={crop} />;
 }
 
-function ChoiceCard({ mode, selected, onChange }: { mode: LetteringMode; selected: boolean; onChange: (value: LetteringMode) => void }) {
+function Rating({ label, value }: { label: string; value: number }) {
+  const { t } = useI18n();
+  return <>
+    <span className="font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-soft">{t(label)}</span>
+    <span role="img" aria-label={t("{value} out of 5", { value })} className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((step) => <span key={step} className={cn("h-2.5 w-6", step <= value ? "bg-ink-black" : "border border-ink-black/30")} />)}
+    </span>
+  </>;
+}
+
+function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; view: CompareView; selected: boolean; onChange: (value: LetteringMode) => void }) {
   const { t } = useI18n();
   const choice = CHOICES[mode];
-  return <div className={`relative flex flex-col transition-colors ${selected ? "bg-chip-gold ring-[3px] ring-inset ring-ink-black" : "bg-surface-container ring-2 ring-inset ring-ink-black/15 hover:bg-pulp-paper"}`}>
-    {/* The hero sits outside the label so its demo controls stay separate from the choice. */}
-    <div className="p-[3px] pb-0">{mode === "integrated" ? <IntegratedHero /> : <EditableHero />}</div>
-    <label className="flex flex-1 cursor-pointer flex-col p-4 group-disabled:cursor-wait">
-      <span className="flex items-center gap-3">
-        <input type="radio" name="letteringMode" value={mode} checked={selected} onChange={() => onChange(mode)} aria-describedby={`lettering-${mode}-details`} className="h-5 w-5 shrink-0 accent-ink-black" />
-        <span className="font-display text-xl font-bold">{t(LABELS[mode])}</span>
+  return <div className={cn(
+    "flex flex-col overflow-hidden bg-bristol transition-[translate,box-shadow] duration-150",
+    selected ? "border-2 border-ink-black shadow-[8px_8px_0_0_var(--color-narrator-gold),8px_8px_0_1px_var(--color-ink-black)]"
+      : "border border-ink-black/16 shadow-[4px_4px_0_0_var(--color-ghost-shadow)] hover:-translate-x-0.5 hover:-translate-y-0.5",
+  )}>
+    {/* The image sits outside the label so the live demo's controls stay separate from the choice. */}
+    <div className="relative border-b border-ink-black/15 bg-preview-tint">
+      <ComparisonImage mode={mode} view={view} />
+      <span className="pointer-events-none absolute bottom-3 left-3 border border-ink-black bg-pulp-paper px-2 py-1 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-black">{t(VIEW_TAGS[view][mode])}</span>
+    </div>
+    <label className="flex flex-1 cursor-pointer flex-col gap-4 px-6 pb-6 pt-5 group-disabled:cursor-wait">
+      <span className="flex flex-wrap items-center gap-3">
+        <input type="radio" name="letteringMode" value={mode} checked={selected} onChange={() => onChange(mode)} aria-describedby={`lettering-${mode}-details`} className="size-5 shrink-0 accent-hero-red" />
+        <span className="font-display text-[1.375rem] font-black uppercase leading-none tracking-[-0.02em]">{t(LABELS[mode])}</span>
+        <span className={cn("ml-auto px-2 py-1 font-meta text-xs font-semibold", mode === "integrated" ? "border border-ink-black bg-narrator-gold text-ink-black" : "border border-ready bg-chip-sage text-ready")}>{t(choice.tag)}</span>
       </span>
-      <span id={`lettering-${mode}-details`} className="mt-2 block">
-        <span className="block font-body text-base font-bold leading-snug">{t(choice.promise)}</span>
-        <span className="mt-3 block space-y-1.5">
-          {choice.strengths.map(strength => <span key={strength} className="flex gap-2 text-sm leading-snug"><span aria-hidden="true" className="font-bold">✓</span>{t(strength)}</span>)}
+      <span id={`lettering-${mode}-details`} className="flex flex-col gap-4">
+        <span className="text-base font-semibold leading-snug">{t(choice.promise)}</span>
+        <span className="grid grid-cols-[9.5rem_auto] items-center gap-x-3.5 gap-y-2">
+          <Rating label="Hand-made look" value={choice.ratings.look} />
+          <Rating label="Changing words" value={choice.ratings.words} />
         </span>
-        <span className="mt-3 block text-sm leading-snug text-ink-muted">{t(choice.cost)}</span>
-        <span className="mt-3 block border-t-2 border-ink-black/10 pt-3 text-sm leading-snug"><strong>{t("Best for:")}</strong> {t(choice.bestFor)}</span>
+        <span className="flex flex-col gap-2 border-t border-ink-black/12 pt-3.5 text-sm leading-5">
+          {choice.pros.map((pro) => <span key={pro} className="flex gap-2.5"><span className="grid size-[18px] shrink-0 place-items-center bg-chip-sage text-[0.8125rem] font-bold leading-none text-ready"><span aria-hidden="true">+</span><span className="sr-only">{t("Pro:")}</span></span>{t(pro)}</span>)}
+          {choice.cons.map((con) => <span key={con} className="flex gap-2.5"><span className="grid size-[18px] shrink-0 place-items-center bg-chip-red text-[0.8125rem] font-bold leading-none text-status-blocked-text"><span aria-hidden="true">−</span><span className="sr-only">{t("Con:")}</span></span>{t(con)}</span>)}
+        </span>
+        <span className="text-sm leading-5 text-ink-muted"><strong className="text-ink-black">{t("Best for:")}</strong> {t(choice.bestFor)}</span>
       </span>
     </label>
   </div>;
@@ -118,17 +166,30 @@ function ChoiceCard({ mode, selected, onChange }: { mode: LetteringMode; selecte
 export function LetteringChoice({ value, onChange, disabled }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean }) {
   const { t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  return <div className="mt-5 space-y-5">
+  const [view, setView] = useState<CompareView>("sound");
+  return <div className="mt-6 space-y-5">
+    <div role="group" aria-label={t("Compare")} className="flex flex-wrap items-center gap-2.5 font-meta text-xs text-ink-muted">
+      {t("Compare")}
+      <span className="inline-flex border border-ink-black/55 bg-bristol">
+        {COMPARE_VIEWS.map((key) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}
+          className={cn("h-8 px-3 font-meta text-xs font-semibold transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]", view === key ? "bg-ink-black text-pulp-paper" : "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black")}>
+          {t(COMPARE_LABELS[key])}
+        </button>)}
+      </span>
+    </div>
     <fieldset disabled={disabled} aria-describedby="lettering-consequence" className={`group ${disabled ? "opacity-60" : ""}`}>
       <legend className="sr-only">{t("Choose how your comic is lettered")}</legend>
-      <div className="grid gap-4 sm:grid-cols-2">
-        {MODES.map(mode => <ChoiceCard key={mode} mode={mode} selected={value === mode} onChange={onChange} />)}
+      <div className="grid gap-6 md:grid-cols-2 lg:gap-8">
+        {MODES.map(mode => <ChoiceCard key={mode} mode={mode} view={view} selected={value === mode} onChange={onChange} />)}
       </div>
-      <p id="lettering-consequence" className="mt-4 text-sm leading-relaxed"><strong>{t("This choice is permanent for this project.")}</strong> {t("Not sure? Choose editable lettering: it’s the one you can fix later.")}</p>
+      <p id="lettering-consequence" className="mt-5 flex items-start gap-2 text-sm leading-relaxed">
+        <Lock size={15} aria-hidden="true" className="mt-0.5 shrink-0" />
+        <span><strong>{t("This choice is permanent for this project.")}</strong> {t("Not sure? Choose editable lettering: it’s the one you can fix later.")}</span>
+      </p>
     </fieldset>
 
-    <details className="bg-surface-container px-4" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
-      <summary className="min-h-11 cursor-pointer py-3 font-body text-sm font-bold">{t("Compare in detail")}</summary>
+    <details className="border-t border-ink-black/12" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+      <summary className="min-h-11 cursor-pointer py-3 font-meta text-[0.8125rem] font-medium">{t("Compare in detail")}</summary>
       {detailsOpen && <LetteringDetails />}
     </details>
   </div>;

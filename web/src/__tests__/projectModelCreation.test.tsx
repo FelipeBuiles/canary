@@ -13,13 +13,12 @@ async function setup(source: "file" | "import") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(<QueryClientProvider client={client}><I18nProvider><UploadStep onSubmit={submit} onSubmitImport={submit} isPending={false} error={null} /></I18nProvider></QueryClientProvider>);
   if (source === "file") {
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["story"], "story.txt", { type: "text/plain" }));
   } else {
-    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    await user.click(screen.getByText("Have a story code or link?"));
     await user.type(screen.getByLabelText("Library of Short Stories code or URL"), "story");
   }
-  await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.click(screen.getByText("Models for this project (dev)"));
   await screen.findByRole("combobox", { name: "Adapt" });
   return { user, submit };
@@ -29,27 +28,27 @@ describe("project creation models", () => {
     const { user, submit } = await setup(source);
     expect((screen.getByRole("option", { name: "Codex" }) as HTMLOptionElement).disabled).toBe(true);
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "glm");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", lettering_mode: "editable", dev_model_selections: { adapt: "glm" } });
   });
   it("omits overrides after returning to account inheritance", async () => {
     const { user, submit } = await setup("import");
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "glm");
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", lettering_mode: "editable" });
   });
   it("pins Nano Banana 2.1 for Style/Cast images and Draw without changing account defaults", async () => {
     const { user, submit } = await setup("import");
     await user.selectOptions(screen.getByRole("combobox", { name: "Style & Cast images" }), "image-nano-banana-2.1");
     await user.selectOptions(screen.getByRole("combobox", { name: "Draw" }), "image-nano-banana-2.1");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", lettering_mode: "editable", dev_model_selections: { image: "image-nano-banana-2.1", draw: "image-nano-banana-2.1" } });
     expect(settings.selections.image).toBe("image-sunburst");
     expect(settings.selections.draw).toBe("image-sunburst");

@@ -91,7 +91,7 @@ describe("Library first-run (Issue #0)", () => {
     projectsResult.data = [];
     renderLibrary();
     await user.click(screen.getByRole("button", { name: "New production" }));
-    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    await user.click(screen.getByText("Have a story code or link?"));
     const field = screen.getByLabelText("Library of Short Stories code or URL");
     await user.type(field, "the-open-window");
     const dialog = screen.getByRole("dialog");
@@ -115,12 +115,12 @@ describe("Library first-run (Issue #0)", () => {
     importStoryMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "prepared-source" }));
     renderLibrary();
     await user.click(screen.getByRole("button", { name: "New production" }));
-    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    await user.click(screen.getByText("Have a story code or link?"));
     await user.type(screen.getByLabelText("Library of Short Stories code or URL"), "the-open-window");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(importStoryMutation.mutate).toHaveBeenCalledOnce();
     expect(runPipeline).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Current route").textContent).toBe("/project/prepared-source/story");
@@ -132,12 +132,11 @@ describe("Library first-run (Issue #0)", () => {
     createProjectMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "full-book", part_id: "part_0001" }));
     const view = renderLibrary();
     await user.click(screen.getByRole("button", { name: "New production" }));
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["Book"], "book.txt", { type: "text/plain" }));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     expect(runPipeline).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Current route").textContent).toBe("/project/full-book~part_0001/story");

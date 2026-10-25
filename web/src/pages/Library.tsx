@@ -88,7 +88,7 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4"
+      className="fixed inset-0 z-50 flex bg-pulp-paper"
       {...backdrop}
     >
       <div
@@ -97,7 +97,7 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
         aria-modal="true"
         aria-label={t("New production")}
         tabIndex={-1}
-        className="max-h-[calc(100dvh-2rem)] w-full max-w-[1080px] overflow-y-auto"
+        className="h-dvh w-full focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <UploadStep
