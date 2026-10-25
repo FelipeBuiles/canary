@@ -1,3 +1,4 @@
+import { cn } from "../../lib/cn";
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ErrorNotice } from "../composites/ErrorNotice";
@@ -17,7 +18,7 @@ export interface RevisionOption {
  * free and local; "Use this version" makes the viewed render the one used for
  * reading, export and the next correction.
  */
-export function RevisionSwitcher({ project, pageNumber, revisions, selected, viewing, onView, disabled }: {
+export function RevisionSwitcher({ project, pageNumber, revisions, selected, viewing, onView, disabled, tone = "light" }: {
   project: string;
   pageNumber: number;
   /** Ascending render revisions. */
@@ -26,6 +27,8 @@ export function RevisionSwitcher({ project, pageNumber, revisions, selected, vie
   viewing: number;
   onView: (revision: number) => void;
   disabled?: boolean;
+  /** "dark": sits in the review stage's tool strip. */
+  tone?: "light" | "dark";
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -47,9 +50,10 @@ export function RevisionSwitcher({ project, pageNumber, revisions, selected, vie
   }
 
   const latest = revisions[revisions.length - 1].revision;
+  const dark = tone === "dark";
   return (
     <div role="group" aria-label={t("Page versions")} className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <div className="flex items-center border border-ink-black/25">
+      <div className={cn("flex items-center border", dark ? "border-pulp-paper/20 text-pulp-paper" : "border-ink-black/25")}>
         <button type="button" className="flex min-h-9 min-w-9 items-center justify-center disabled:opacity-30"
           aria-label={t("Previous version")} disabled={index <= 0} onClick={() => step(-1)}>
           <ChevronLeft size={16} aria-hidden="true" />
@@ -57,7 +61,7 @@ export function RevisionSwitcher({ project, pageNumber, revisions, selected, vie
         <label className="sr-only" htmlFor={`revision-switcher-${pageNumber}`}>{t("Version")}</label>
         <div className="relative">
           <select id={`revision-switcher-${pageNumber}`} value={viewing}
-            className="min-h-9 appearance-none border-x border-ink-black/25 bg-transparent pl-3 pr-9 font-meta text-xs font-bold"
+            className={cn("min-h-8 appearance-none border-x bg-transparent pl-3 pr-9 font-meta text-xs font-bold", dark ? "border-pulp-paper/20 [&>option]:text-ink-black" : "min-h-9 border-ink-black/25")}
             onChange={(event) => { select.reset(); onView(Number(event.target.value)); }}>
             {revisions.map((option) => (
               <option key={option.revision} value={option.revision}>
@@ -74,18 +78,18 @@ export function RevisionSwitcher({ project, pageNumber, revisions, selected, vie
           <ChevronRight size={16} aria-hidden="true" />
         </button>
       </div>
-      <span className="font-meta text-xs text-ink-muted">{index + 1} / {revisions.length}</span>
+      <span className={cn("font-meta text-xs", dark ? "text-on-chrome-muted" : "text-ink-muted")}>{index + 1} / {revisions.length}</span>
       {viewing !== selected && (
         <>
           <Button size="sm" disabled={disabled || current.stale || select.isPending}
             onClick={() => select.mutate(viewing)}>
             {select.isPending ? t("Selecting…") : t("Use this version")}
           </Button>
-          <button type="button" className="font-meta text-xs underline underline-offset-4"
+          <button type="button" className={cn("font-meta text-xs underline underline-offset-4", dark && "text-pulp-paper")}
             onClick={() => { select.reset(); onView(selected); }}>
             {t("Back to selected")}
           </button>
-          <p className="basis-full text-xs leading-5 text-ink-muted">
+          <p className={cn("basis-full text-xs leading-5", dark ? "text-on-chrome-muted" : "text-ink-muted")}>
             {current.stale
               ? t("This version belongs to an earlier page plan.")
               : t("Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.")}
