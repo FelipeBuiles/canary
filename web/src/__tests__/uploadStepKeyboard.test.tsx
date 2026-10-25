@@ -53,19 +53,19 @@ describe("UploadStep keyboard flow", () => {
       </I18nProvider>,
     );
 
-    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    await user.click(screen.getByText("Have a story code or link?"));
     const source = screen.getByPlaceholderText("e.g. the-open-window");
     await user.type(source, "the-last-incantation{Enter}");
 
-    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Last Incantation");
+    expect((screen.getByLabelText("Production name") as HTMLInputElement).value).toBe("The Last Incantation");
     expect(onSubmitImport).not.toHaveBeenCalled();
 
-    const projectName = screen.getByLabelText("PROJECT NAME");
+    const projectName = screen.getByLabelText("Production name");
     await user.click(projectName);
     await user.keyboard("{Enter}");
 
     expect(onSubmitImport).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "CREATE PROJECT" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Create project" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByRole("radio", { name: /Integrated lettering/ }));
     await user.keyboard("{Enter}");
 
@@ -89,6 +89,7 @@ describe("UploadStep keyboard flow", () => {
     );
     const submit = vi.fn();
     render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={submit} isPending={false} error={null} /></I18nProvider>);
+    await user.click(screen.getByRole("button", { name: "All 1,080 samples and 0 classics" }));
     let choices = screen.getByLabelText("Story choices");
     expect(within(choices).getAllByRole("article")).toHaveLength(8);
     await user.type(screen.getByRole("searchbox", { name: "Search stories" }), "The Open Window");
@@ -99,11 +100,11 @@ describe("UploadStep keyboard flow", () => {
     expect(screen.queryByText("Story 0000")).toBeNull();
     await user.type(screen.getByRole("searchbox", { name: "Search stories" }), "Story 0000");
     expect(within(screen.getByLabelText("Story choices")).getAllByRole("article")).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Open Window");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect((screen.getByLabelText("Production name") as HTMLInputElement).value).toBe("The Open Window");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en", lettering_mode: "editable" });
   });
 
@@ -116,11 +117,12 @@ describe("UploadStep keyboard flow", () => {
     readStory.mockResolvedValue({ code: "kaitlin-out-of-space", text: "KAITLIN OUT OF SPACE\nBy Krishan Coupland\n\nFirst paragraph.\n\nSecond paragraph." });
     render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
 
+    await user.click(screen.getByRole("button", { name: "All 1 samples and 0 classics" }));
     await user.click(screen.getByRole("button", { name: "READ STORY" }));
     expect(await screen.findByText("First paragraph.")).toBeTruthy();
     expect(screen.getByText("Second paragraph.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /USE THIS STORY/ }));
-    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("Kaitlin Out of Space");
+    expect((screen.getByLabelText("Production name") as HTMLInputElement).value).toBe("Kaitlin Out of Space");
     expect(readStory).toHaveBeenCalledWith("kaitlin-out-of-space", expect.any(AbortSignal));
   });
 
@@ -128,9 +130,9 @@ describe("UploadStep keyboard flow", () => {
     const user = userEvent.setup();
     catalogResult.data = [{ code: "an-education", title: "An Education", author: "Angie", words: 955, genres: ["fantasy"] }];
     render(<I18nProvider><UploadStep initialStoryCode="an-education" onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    expect(screen.getByRole("button", { name: "SELECTED" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("An Education");
+    expect((screen.getByRole("radio", { name: /An Education/ }) as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect((screen.getByLabelText("Production name") as HTMLInputElement).value).toBe("An Education");
   });
 
   it("distinguishes loading, catalog failure, and an empty catalog while upload remains available", async () => {
@@ -148,24 +150,22 @@ describe("UploadStep keyboard flow", () => {
     catalogResult.isError = false;
     view.rerender(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
     expect(screen.getByRole("status").textContent).toContain("The sample library is empty.");
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
-    expect((screen.getByRole("button", { name: "DROP FILE OR CLICK TO BROWSE" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Drop your manuscript or browse your files" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("does not estimate PDF prose from file size and submits the current output settings", async () => {
     const user = userEvent.setup();
     const submit = vi.fn();
     const { container } = render(<I18nProvider><UploadStep onSubmit={submit} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     const file = new File(["compressed document bytes"], "My manuscript.pdf", { type: "application/pdf" });
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, file);
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.queryByText("Rough whole-book estimate")).toBeNull();
     expect(screen.queryByRole("button", { name: "GENERATION QUALITY" })).toBeNull();
-    expect(screen.getByText(/Review a live credit estimate/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    expect(screen.getByRole("heading", { name: "What happens next" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(submit).toHaveBeenCalledWith(file, "My manuscript", { target_language: "en", lettering_mode: "editable" });
   });
 
@@ -173,16 +173,15 @@ describe("UploadStep keyboard flow", () => {
     const user = userEvent.setup();
     const submit = vi.fn();
     render(<I18nProvider><UploadStep onSubmit={submit} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
-    expect((screen.getByRole("button", { name: "CONTINUE" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByLabelText("Paste your text"));
     await user.paste("The Lighthouse\n\nThe keeper climbed the stairs at dusk.");
     expect(screen.getByText("9 words")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Lighthouse");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect((screen.getByLabelText("Production name") as HTMLInputElement).value).toBe("The Lighthouse");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
-    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     const [file, name] = submit.mock.calls[0];
     expect(name).toBe("The Lighthouse");
     expect(file.name).toBe("pasted-manuscript.txt");
@@ -193,7 +192,6 @@ describe("UploadStep keyboard flow", () => {
   it("accepts text pasted onto the drop zone and lets text replace a chosen file", async () => {
     const user = userEvent.setup();
     const { container } = render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["x"], "draft.txt", { type: "text/plain" }));
     expect(screen.getByRole("button", { name: "Replace file draft.txt" })).toBeTruthy();
     fireEvent.paste(screen.getByRole("button", { name: "Replace file draft.txt" }), { clipboardData: { files: [], getData: () => "Copied from a doc" } });
@@ -204,11 +202,10 @@ describe("UploadStep keyboard flow", () => {
   it("points users of other apps to pasting when the file type is unsupported", async () => {
     const user = userEvent.setup({ applyAccept: false });
     const { container } = render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["x"], "novel.rtf"));
     expect(screen.getByRole("alert").textContent).toContain("copy the text and paste it below");
     expect(screen.getByRole("alert").textContent).toContain(".docx");
-    await user.click(screen.getByRole("button", { name: "REMOVE" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -224,11 +221,10 @@ describe("UploadStep keyboard flow", () => {
       ],
     } });
     const { container } = render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     const file = new File(["x"], "novel.docx");
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, file);
     expect(previewedFiles.every((previewed) => previewed === null)).toBe(true);
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(previewedFiles.at(-1)).toBe(file);
     expect(screen.getByText(/75,000 words/)).toBeTruthy();
     expect(screen.getByText(/24 chapters found/)).toBeTruthy();
@@ -244,18 +240,17 @@ describe("UploadStep keyboard flow", () => {
       parts: [{ title: null, characters: 900, words: 160 }],
     } });
     render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.click(screen.getByLabelText("Paste your text"));
     await user.paste("A short scene.");
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(previewedFiles.at(-1)?.name).toBe("pasted-manuscript.txt");
     expect(screen.getByText(/This is very short/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "CONTINUE" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
 
     Object.assign(previewResult, { data: { characters: 300_000, words: 54_000, chapters: 1, part_target_characters: 100_000,
       parts: [{ title: null, characters: 300_000, words: 54_000 }] } });
-    await user.click(screen.getByRole("button", { name: "BACK" }));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByText(/No chapter headings were found/)).toBeTruthy();
   });
 
@@ -263,23 +258,21 @@ describe("UploadStep keyboard flow", () => {
     const user = userEvent.setup();
     Object.assign(previewResult, { isPending: false, isError: true, error: new ApiError(400, "Encrypted PDFs are not supported.") });
     const { container } = render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["x"], "locked.pdf"));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByRole("alert").textContent).toBe("Encrypted PDFs are not supported.");
-    expect((screen.getByRole("button", { name: "CONTINUE" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
 
     Object.assign(previewResult, { error: new ApiError(503, "Service unavailable") });
-    await user.click(screen.getByRole("button", { name: "BACK" }));
-    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByText(/You can still create the project/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "CONTINUE" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("keeps pasted text as a local draft and restores it on the manuscript tab", async () => {
     const user = userEvent.setup();
     const first = render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
-    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.click(screen.getByLabelText("Paste your text"));
     await user.paste("Draft prose that must survive.");
     await vi.waitFor(() => expect(localStorage.getItem("canary.manuscriptDraft")).toBe("Draft prose that must survive."));

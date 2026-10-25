@@ -19,7 +19,8 @@ describe('lettering choice', () => {
     expect(screen.getAllByRole('radio').every(el => !(el as HTMLInputElement).checked)).toBe(true);
     const editable = screen.getByRole('radio', { name: /Editable lettering/ });
     expect(editable.getAttribute('aria-describedby')).toBe('lettering-editable-details');
-    expect(document.getElementById('lettering-editable-details')?.textContent).toContain('Every word matches your script exactly');
+    expect(document.getElementById('lettering-editable-details')?.textContent).toContain('Fix typos or rewrite lines instantly, without credits');
+    expect(screen.getAllByRole('img', { name: /out of 5/ }).map(meter => meter.getAttribute('aria-label'))).toEqual(['5 out of 5', '1 out of 5', '3 out of 5', '5 out of 5']);
     expect(document.getElementById('lettering-integrated-details')?.textContent).toContain('Changing a word means redrawing the page');
     expect(screen.getByText('This choice is permanent for this project.')).toBeTruthy();
     expect(screen.getByText(/Not sure\? Choose editable lettering/)).toBeTruthy();
@@ -29,8 +30,14 @@ describe('lettering choice', () => {
     expect(choose).toHaveBeenCalledWith('integrated');
   });
 
-  it('shows the still editable sample until the live demo is ready', async () => {
+  it('compares sound, captions and translation on the same real pages', async () => {
+    const user = userEvent.setup();
     render(<I18nProvider><LetteringChoice value={null} onChange={vi.fn()} disabled={false} /></I18nProvider>);
+    const choices = () => screen.getAllByRole('img').filter(image => image.tagName === 'IMG').map(image => image.getAttribute('src'));
+    expect(choices()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-editable.webp']);
+    await user.click(screen.getByRole('button', { name: 'Translation' }));
+    expect(choices()).toEqual(['/lettering-comparison/cthulhu-26-integrated.webp', '/lettering-comparison/cthulhu-26-editable-es.webp']);
+    await user.click(screen.getByRole('button', { name: 'Captions' }));
     expect(screen.getAllByRole('img', { name: /movable speech balloon/ })[0].getAttribute('src')).toBe('/lettering-comparison/cthulhu-26-editable.webp');
   });
 
