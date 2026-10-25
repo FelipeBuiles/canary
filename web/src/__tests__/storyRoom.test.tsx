@@ -168,7 +168,7 @@ describe("StoryRoom", () => {
   it("reviews the Story Bible and adaptation Brief together", () => {
     renderRoom();
 
-    expect(screen.getByRole("heading", { name: "CONFIRM THE STORY & BRIEF" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Story" })).toBeTruthy();
     expect(screen.getByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
     // Essential events are ordered requirements; the other lists are not.
@@ -198,7 +198,7 @@ describe("StoryRoom", () => {
     expect(screen.getByText("A new promise")).toBeTruthy();
     expect(screen.getByText("A second promise")).toBeTruthy();
     expect(updateBrief).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
     expect(updateBrief).toHaveBeenCalledWith({
       project: "demo",
       expectedRevision: 3,
@@ -223,7 +223,7 @@ describe("StoryRoom", () => {
 
     fireEvent.change(screen.getByLabelText("Page target: from"), { target: { value: "24" } });
     fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
 
     expect(updateBrief).toHaveBeenCalledWith({
       project: "demo",
@@ -238,7 +238,7 @@ describe("StoryRoom", () => {
   it("approves Brief rather than Extract", () => {
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "APPROVE BRIEF — CONTINUE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve brief" }));
 
     expect(approveBrief).toHaveBeenCalledWith(
       { project: "demo", stage: "brief" },
@@ -251,7 +251,7 @@ describe("StoryRoom", () => {
     const promises = editStoryPromises();
     fireEvent.change(promises, { target: { value: "A promise\n\nA second promise\n" } });
     expect(promises.value).toBe("A promise\n\nA second promise\n");
-    fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save & approve brief" }));
     expect(approveBrief).not.toHaveBeenCalled();
     expect(updateBrief.mock.calls[0][0].changes.story_promises).toEqual(["A promise", "A second promise"]);
     act(() => updateBrief.mock.calls[0][1].onSuccess({
@@ -263,7 +263,7 @@ describe("StoryRoom", () => {
   it("preserves an edited draft after a failed save and never approves it", () => {
     renderRoom();
     fireEvent.change(editStoryPromises(), { target: { value: "Do not lose this\n" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save & approve brief" }));
     act(() => updateBrief.mock.calls[0][1].onError(new Error("Revision conflict")));
     expect(screen.getByRole("alert").textContent).toContain("Revision conflict");
     expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("Do not lose this\n");
@@ -285,7 +285,7 @@ describe("StoryRoom", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText("Brief approved")).toBeTruthy();
     fireEvent.change(editStoryPromises(), { target: { value: "A promise after approval" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
     expect(updateBrief).toHaveBeenCalledWith({
       project: "demo", expectedRevision: 4,
       changes: { story_promises: ["A promise after approval"] },
@@ -304,9 +304,9 @@ describe("StoryRoom", () => {
 
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("The server's new promise");
-    expect((screen.getByRole("button", { name: "SAVE BRIEF" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save brief" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
     expect(updateBrief).toHaveBeenCalledWith({
       project: "demo", expectedRevision: 3, changes: { target_page_max: 32 },
     }, expect.any(Object));
@@ -323,8 +323,8 @@ describe("StoryRoom", () => {
 
     expect(screen.getByRole("alert").textContent).toContain("This brief changed elsewhere");
     expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe(rawDraft);
-    const save = screen.getByRole("button", { name: "SAVE BRIEF" }) as HTMLButtonElement;
-    const approve = screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }) as HTMLButtonElement;
+    const save = screen.getByRole("button", { name: "Save brief" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "Save & approve brief" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     expect(approve.disabled).toBe(true);
     fireEvent.click(save);
@@ -342,7 +342,7 @@ describe("StoryRoom", () => {
   it("does not roll a successful save back to an older cached brief", () => {
     const view = renderRoom();
     fireEvent.change(editStoryPromises(), { target: { value: "The saved promise" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
     const saved = {
       ...storyDecision.brief, revision: 4, content_sha256: "b".repeat(64), story_promises: ["The saved promise"],
     };
@@ -355,7 +355,7 @@ describe("StoryRoom", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("The saved promise");
     fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
     expect(updateBrief).toHaveBeenLastCalledWith({
       project: "demo", expectedRevision: 4, changes: { target_page_max: 32 },
     }, expect.any(Object));
