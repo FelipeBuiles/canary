@@ -3547,5 +3547,9 @@
   "Queued": "En cola",
   "Review {count} flagged": "Revisar {count} señaladas",
   "Ready to draw": "Lista para dibujar",
-  "Continue to Book": "Continuar al libro"
+  "Continue to Book": "Continuar al libro",
+  "Ready": "Lista",
+  "Retry cover": "Reintentar portada",
+  "New production": "Nueva producción",
+  "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# producción} other {# producciones}}"
 }
