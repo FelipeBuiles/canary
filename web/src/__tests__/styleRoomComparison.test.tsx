@@ -184,7 +184,7 @@ it("names author directions, filters yours newest first, and tucks hidden proofs
   expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
     .toEqual(["Midnight ink", "Claymation snowfall", "Moth-wing pastel"]);
   expect(proof("Claymation snowfall").getByText("“claymation, falling snow”")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Yours · 2" }));
+  await user.click(screen.getByRole("button", { name: "Yours 2" }));
   expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
     .toEqual(["Moth-wing pastel", "Claymation snowfall"]);
   await user.click(proof("Moth-wing pastel").getByRole("button", { name: "COMPARE" }));

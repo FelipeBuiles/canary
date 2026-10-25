@@ -146,7 +146,7 @@ export function StyleProofCard({
     <>
       {/* Five rows, aligned across the grid: proof · name · fit · actions · details. */}
       {/* The grid has no row gap (a subgrid would absorb it into each section); the margin spaces rows. */}
-      <EntityCard active={isActive} subgridRows={5} className="mb-8 min-w-0">
+      <EntityCard active={isActive} subgridRows={5} className="mb-6 min-w-0">
         <div className={`relative bg-surface-container ${arrival.className}`} onAnimationEnd={arrival.onAnimationEnd}>
           <ImageGenerationPreview project={projectName} target={`samples/style_${suggestion.index}.png`}
             active={showLoading} finalSrc={suggestion.has_sample ? displayedProofUrl : undefined} aspect="4 / 5"
@@ -202,7 +202,7 @@ export function StyleProofCard({
           )}
         </div>
 
-        <div className="min-w-0 px-5 pt-4">
+        <div className="min-w-0 px-4 pt-3">
           <div className="flex min-h-9 items-center gap-2">
             <span className="shrink-0 bg-pulp-paper px-2 py-1 font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">
               {yours ? t("YOURS") : t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
@@ -256,7 +256,7 @@ export function StyleProofCard({
               <Button type="button" variant="outline" size="xs" onClick={() => setRenaming(false)}>{t("CANCEL")}</Button>
             </form>
           ) : (
-            <h3 className="mt-2 line-clamp-3 text-balance font-display text-[1.45rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black" title={name}>
+            <h3 className="mt-1.5 line-clamp-2 text-balance font-display text-[1.125rem] font-black leading-[1.08] tracking-[-0.02em] text-ink-black" title={name}>
               {name}
             </h3>
           )}
@@ -267,16 +267,16 @@ export function StyleProofCard({
           )}
         </div>
 
-        <div className="min-w-0 px-5 pt-4">
+        <div className="min-w-0 px-4 pt-3">
           {suggestion.story_fit && (
             <>
               <div className="font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">{t("WHY IT FITS")}</div>
-              <p className="mt-1.5 font-body text-sm leading-6 text-ink-black">{suggestion.story_fit}</p>
+              <p className="mt-1 line-clamp-3 font-body text-[0.8125rem] leading-5 text-ink-muted" title={suggestion.story_fit}>{suggestion.story_fit}</p>
             </>
           )}
         </div>
 
-        <div className="min-w-0 px-5 pt-5">
+        <div className="min-w-0 px-4 pt-4">
           <div className="flex flex-wrap gap-2">
             <Button
               variant={isActive ? "secondary" : "primary"}
@@ -308,7 +308,7 @@ export function StyleProofCard({
           )}
         </div>
 
-        <div className="min-w-0 space-y-2 px-5 pb-5 pt-5">
+        <div className="min-w-0 space-y-2 px-4 pb-4 pt-4">
           {suggestion.sample_stale && (
             <div className="flex items-center justify-between gap-3 bg-pulp-paper px-3 py-2">
               <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">

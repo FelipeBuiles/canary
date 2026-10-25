@@ -3551,5 +3551,6 @@
   "Ready": "Ready",
   "Retry cover": "Retry cover",
   "New production": "New production",
-  "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# production} other {# productions}}"
+  "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# production} other {# productions}}",
+  "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# proof} other {# proofs}}"
 }
