@@ -714,7 +714,7 @@ export function RevisionDraft({
         </div>
 
         {/* Room at the end for button shadows and their 1px hover nudge, so hovering never adds a scrollbar. */}
-        <div className="min-w-0 space-y-6 bg-bristol px-5 pb-6 pt-5 text-ink-black lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
+        <div className="min-w-0 space-y-6 bg-bristol px-5 pb-6 pt-5 text-ink-black has-[>.sticky:last-child]:pb-0 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">
           {submittedJobId && canRetry && (
             <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
               <p className="font-body text-sm font-bold">{t("The redraw didn’t finish. Your changes are still here.")}</p>
@@ -788,7 +788,7 @@ export function RevisionDraft({
           )}
 
           {!previewFresh && !redraw && (
-            <div className="sticky bottom-0 -mx-5 space-y-2 border-t border-ink-black/12 bg-pulp-paper px-5 pb-1 pt-4">
+            <div className="sticky bottom-0 -mx-5 shrink-0 space-y-2 border-t border-ink-black/12 bg-pulp-paper px-5 py-4 lg:mt-auto">
               <Button className="w-full" size="md" onClick={runPreview} disabled={locked || preview.isPending || reviewCount === 0}>
                 {preview.isPending ? t("Reviewing…") : t("{count, plural, =0 {Add a change to review} one {Review # change} other {Review # changes}}", { count: reviewCount })}
               </Button>

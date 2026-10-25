@@ -1493,9 +1493,9 @@ describe("PagesRoom", () => {
 
     const reviseTab = screen.getByRole("button", { name: "Page" });
     expect(reviseTab.getAttribute("aria-pressed")).toBe("true");
-    // Integrated lettering lives in the art: only the page (with its checks) and history.
+    // Integrated lettering lives in the art: only the page (with its checks) and its source.
     expect(screen.queryByRole("button", { name: "Lettering" })).toBeNull();
-    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("false");
     // Artwork renders in the first viewport, not behind reading overlays; changes are written beside it.
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(screen.getByLabelText("Describe a change")).toBeTruthy();
@@ -1516,19 +1516,19 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("region", { name: "Checks" })).toBeTruthy();
   });
 
-  it("shows the manuscript source for the open page under History", async () => {
+  it("shows the manuscript source for the open page under Source", async () => {
     renderRoom();
 
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    await userEvent.click(screen.getByRole("button", { name: "History" }));
+    await userEvent.click(screen.getByRole("button", { name: "Source" }));
 
-    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
-    const region = screen.getByRole("region", { name: "History" });
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
+    const region = screen.getByRole("region", { name: "Source" });
     expect(within(region).getByText("Mara argued at the market.").tagName).toBe("MARK");
     expect(within(region).getByText("Lettering positions are not available for this artwork.")).toBeTruthy();
   });
 
-  it("switches to History and back and keeps the draft mounted", async () => {
+  it("switches to Source and back and keeps the draft mounted", async () => {
     renderRoom();
 
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
@@ -1536,9 +1536,9 @@ describe("PagesRoom", () => {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
 
-    await userEvent.click(screen.getByRole("button", { name: "History" }));
-    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("region", { name: "History" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "Source" })).toBeTruthy();
 
     // Unsaved draft state survives tab switches: the draft stays mounted hidden.
     await userEvent.click(screen.getByRole("button", { name: "Page" }));
@@ -1692,10 +1692,10 @@ describe("PagesRoom", () => {
   });
 
   it("restores review context in this session but lets explicit links win", async () => {
-    window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=history&filter=needs-review");
+    window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=source&filter=needs-review");
     const first = renderRoom();
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
     first.unmount();
     renderRoom("/project/demo/pages?page=1&review=page&filter=all");
     expect(screen.getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
