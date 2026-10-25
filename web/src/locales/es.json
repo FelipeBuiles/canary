@@ -3552,5 +3552,8 @@
   "Retry cover": "Reintentar portada",
   "New production": "Nueva producción",
   "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# producción} other {# producciones}}",
-  "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# prueba} other {# pruebas}}"
+  "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# prueba} other {# pruebas}}",
+  "{count, plural, one {# character} other {# characters}}": "{count, plural, one {# personaje} other {# personajes}}",
+  "{count, plural, one {# place} other {# places}}": "{count, plural, one {# lugar} other {# lugares}}",
+  "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# objeto} other {# objetos}}"
 }
