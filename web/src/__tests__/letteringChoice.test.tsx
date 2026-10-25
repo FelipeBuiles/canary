@@ -5,10 +5,9 @@ import { I18nProvider } from '../i18n';
 import { LetteringChoice } from '../components/wizard/LetteringChoice';
 
 async function openDetails(user: ReturnType<typeof userEvent.setup>) {
-  const details = screen.getByText('Compare in detail').closest('details')!;
-  await user.click(screen.getByText('Compare in detail'));
-  // jsdom does not toggle <details> on summary clicks; mirror the browser.
-  if (!details.open) { details.open = true; fireEvent(details, new Event('toggle')); }
+  const toggle = screen.getByRole('button', { name: 'Compare in detail' });
+  await user.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
 }
 
 describe('lettering choice', () => {
@@ -22,8 +21,9 @@ describe('lettering choice', () => {
     expect(document.getElementById('lettering-editable-details')?.textContent).toContain('Fix typos or rewrite lines instantly, without credits');
     expect(screen.getAllByRole('img', { name: /out of 5/ }).map(meter => meter.getAttribute('aria-label'))).toEqual(['5 out of 5', '1 out of 5', '3 out of 5', '5 out of 5']);
     expect(document.getElementById('lettering-integrated-details')?.textContent).toContain('Changing a word means redrawing the page');
-    expect(screen.getByText('This choice is permanent for this project.')).toBeTruthy();
-    expect(screen.getByText(/Not sure\? Choose editable lettering/)).toBeTruthy();
+    const consequence = document.getElementById('lettering-consequence')?.textContent;
+    expect(consequence).toContain('This choice is permanent for this project.');
+    expect(consequence).toMatch(/Not sure\? Choose editable lettering/);
     // The detailed comparison stays out of the way until asked for.
     expect(screen.queryByText('What this means for your book')).toBeNull();
     await user.click(screen.getByRole('radio', { name: /Integrated lettering/ }));

@@ -228,13 +228,13 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
     else onSubmitImport(activeStory?.code ?? pastedUrlOrCode.trim(), name.trim(), overrides);
   }
 
-  const headingClass = "font-display text-[2.5rem] font-black uppercase leading-[0.9] tracking-[-0.035em] text-ink-black focus:outline-none sm:text-[3.25rem]";
+  const headingClass = "font-display text-[2.5rem] font-black uppercase leading-[0.9] tracking-[-0.035em] text-ink-black focus:outline-none sm:text-[3.25rem] short:sm:text-[2.5rem]";
   const continueDisabled = isPending || !sourceReady || (step !== "source" && !name.trim()) || (step === "lettering" && !letteringMode) || (step === "details" && sourceBlocked);
 
   return (
     <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col bg-pulp-paper text-ink-black">
       {/* Identity, where you are, a way out. */}
-      <header className="grid h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-ink-black/12 px-4 sm:h-[72px] sm:px-8 lg:px-10">
+      <header className="grid h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-ink-black/12 px-4 sm:h-[72px] short:sm:h-16 sm:px-8 lg:px-10">
         <div className="flex min-w-0 items-center gap-3">
           <img src="/brand/scenewright-panel-frame/scenewright-symbol-primary.svg" alt="" className="size-7 shrink-0" />
           <span className="hidden truncate font-display text-base font-black uppercase tracking-[-0.01em] sm:inline">{t("New production")}</span>
@@ -267,7 +267,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             />
           </div>
         ) : step === "source" ? (
-          <div className="mx-auto grid w-full max-w-[1200px] items-start gap-10 px-4 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-12 lg:px-10 lg:py-11">
+          <div className="mx-auto grid w-full max-w-[1200px] items-start gap-10 px-4 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-12 lg:px-10 lg:py-11 short:lg:py-6">
             {/* Your story is the point; the panel carries the brand's ink and gold. */}
             <section aria-labelledby="new-production-heading" className="min-w-0 space-y-6">
               <div>
@@ -285,7 +285,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   onDrop={(e) => { e.preventDefault(); setDragging(false); const dropped = e.dataTransfer.files[0]; if (dropped) chooseFile(dropped); }}
                   aria-label={file ? t("Replace file {name}", { name: file.name }) : t("Drop your manuscript or browse your files")}
                   className={cn(
-                    "flex min-h-52 w-full flex-col items-center justify-center gap-2.5 border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-narrator-gold",
+                    "flex min-h-52 short:min-h-40 w-full flex-col items-center justify-center gap-2.5 border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-narrator-gold",
                     dragging ? "border-narrator-gold bg-narrator-gold/12" : file && extOk ? "border-narrator-gold bg-narrator-gold/8" : "border-narrator-gold/55 bg-pulp-paper/[0.03] hover:border-narrator-gold hover:bg-narrator-gold/[0.07]",
                   )}>
                   {file && extOk ? <Check size={38} strokeWidth={2.2} aria-hidden="true" className="text-narrator-gold" /> : <Upload size={36} strokeWidth={1.8} aria-hidden="true" className="text-narrator-gold" />}
@@ -337,7 +337,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                       const checked = tab === "library" && activeStory?.code === story.code;
                       return (
                         <label key={story.code} className={cn(
-                          "flex cursor-pointer items-start gap-3 border-b border-ink-black/12 px-2.5 py-3 transition-colors",
+                          "flex cursor-pointer items-start gap-3 border-b border-ink-black/12 px-2.5 py-3 short:py-2 transition-colors",
                           checked ? "bg-narrator-gold shadow-[inset_0_0_0_1px_var(--color-ink-black)]" : "hover:bg-sidebar-tint",
                         )}>
                           <input type="radio" name="sample-story" value={story.code} checked={checked} onChange={() => chooseStory(story)} className="mt-0.5 size-[18px] shrink-0 accent-hero-red" />
@@ -354,11 +354,11 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   </fieldset>
                 )}
               {!storiesLoading && !storiesError && Boolean(shortStories?.length) && (
-                <button type="button" onClick={() => setBrowsing(true)} className="mt-3.5 min-h-9 text-left font-meta text-[0.8125rem] font-medium underline decoration-ink-black/35 underline-offset-4 hover:text-hero-red">
+                <button type="button" onClick={() => setBrowsing(true)} className="mt-3.5 min-h-9 text-left short:mt-2 font-meta text-[0.8125rem] font-medium underline decoration-ink-black/35 underline-offset-4 hover:text-hero-red">
                   {t("All {curated} samples and {archive} classics", { curated: new Intl.NumberFormat(language).format(curatedCount), archive: new Intl.NumberFormat(language).format(archiveCount) })}
                 </button>
               )}
-              <details className="mt-5 border-t border-ink-black/12 pt-1">
+              <details className="mt-5 border-t border-ink-black/12 pt-1 short:mt-3">
                 <summary className="min-h-10 cursor-pointer py-2.5 font-meta text-[0.8125rem] font-medium">{t("Have a story code or link?")}</summary>
                 <div className="pb-2">
                   <label htmlFor="story-url" className="mb-1.5 block font-meta text-xs font-medium text-ink-muted">{t("Library of Short Stories code or URL")}</label>
@@ -375,13 +375,12 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
             </aside>
           </div>
         ) : step === "lettering" ? (
-          <div className="mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-8 lg:px-10 lg:py-9">
-            <h1 ref={headingRef} tabIndex={-1} className={headingClass}>{t("How should the words live?")}</h1>
+          <div className="mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-8 lg:px-10 lg:py-9 short:lg:py-6">
             <LetteringChoice value={letteringMode} onChange={setLetteringMode} disabled={isPending}
-              intro={<p className="max-w-[40rem] text-[1.0625rem] leading-relaxed text-ink-muted">{t("Integrated looks the most hand-made. Editable keeps every word changeable. You choose once for this project.")}</p>} />
+              heading={<h1 ref={headingRef} tabIndex={-1} className={headingClass}>{t("How should the words live?")}</h1>} />
           </div>
         ) : (
-          <div className="mx-auto grid w-full max-w-[1120px] items-start gap-10 px-4 py-8 sm:px-8 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-12">
+          <div className="mx-auto grid w-full max-w-[1120px] items-start gap-10 px-4 py-8 sm:px-8 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-12 short:lg:py-7">
             <div className="space-y-5">
               <TitlePage kind={sourceKind} title={name.trim() || sourceTitle || t("Your manuscript")} author={tab === "library" ? activeStory?.author : undefined}>
                 {tab === "library" && activeStory?.description
@@ -450,7 +449,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
       </div>
 
       {/* What you're taking with you, the reassurance said once, and the way forward. */}
-      <footer className="shrink-0 border-t-2 border-ink-black bg-bristol px-4 py-3 sm:px-8 lg:px-10">
+      <footer className="shrink-0 border-t-2 border-ink-black bg-bristol px-4 py-3 short:py-2 sm:px-8 lg:px-10">
         {error && <div className="mb-3"><ErrorNotice error={error} operation="upload" /></div>}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 sm:min-h-16">
           <div className="flex min-w-0 flex-1 items-center gap-3.5" aria-live="polite">
@@ -463,7 +462,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 <span className="block truncate text-xs text-ink-soft">
                   {step === "lettering" && letteringMode
                     ? `${t(letteringMode === "integrated" ? "Integrated lettering" : "Editable lettering")} · ${t("Can’t be changed after creating the project")}`
-                    : step === "lettering" ? t("Select a lettering option to create your project.") : sourceKind}
+                    : step === "lettering" ? t("Choose one. It can’t be changed after creating the project.") : sourceKind}
                 </span>
               </span>
             </> : <span className="text-sm text-ink-soft">{t("Add your manuscript, or pick a sample, to continue.")}</span>}
