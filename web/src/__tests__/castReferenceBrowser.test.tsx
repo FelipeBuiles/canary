@@ -76,7 +76,7 @@ it("offers section destinations and explicit review controls without starting ge
   const user = userEvent.setup();
   renderCast();
   const search = await screen.findByRole("searchbox", { name: "Find a reference" });
-  for (const name of ["1 Characters", "1 Places", "1 Props"]) {
+  for (const name of ["Characters 1", "Places 1", "Props 1"]) {
     const link = screen.getByRole("link", { name });
     expect(document.querySelector(link.getAttribute("href")!)).toBeTruthy();
     await user.type(search, "nonexistent");

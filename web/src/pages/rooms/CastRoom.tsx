@@ -1311,33 +1311,36 @@ export function CastRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        title="CONFIRM CHARACTERS & PLACES"
-        lead="These approved references guide every complete page. Open only the people or places that need a fix."
+        title={t("Cast")}
+        lead={[
+          t("{count, plural, one {# character} other {# characters}}", { count: bible.characters.length }),
+          t("{count, plural, one {# place} other {# places}}", { count: bible.locations.length }),
+          bible.props.length > 0 ? t("{count, plural, one {# prop} other {# props}}", { count: bible.props.length }) : undefined,
+        ].filter(Boolean).join(" · ")}
       />
 
-      <section className="bg-ink-black p-6 text-pulp-paper shadow-paper md:p-8">
-        <div className="grid gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:items-end">
-          <div>
-            <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Meet your cast")}</h2>
-            <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("The faces, places and objects that make your story recognizable. Open a reference to inspect it, adjust its direction or explore another version.")}</p>
-            <p className="mt-4 font-meta text-xs text-narrator-gold">{bible.title}</p>
-          </div>
-          <nav aria-label={t("Browse cast references")} className="flex flex-wrap gap-x-5 gap-y-2">
-            <a href="#cast-characters" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><Users size={16} aria-hidden="true" />{bible.characters.length} {t("Characters")}</a>
-            <a href="#cast-places" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><MapPin size={16} aria-hidden="true" />{bible.locations.length} {t("Places")}</a>
-            {bible.props.length > 0 && <a href="#cast-props" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><Box size={16} aria-hidden="true" />{bible.props.length} {t("Props")}</a>}
-          </nav>
+      {/* One toolbar: jump to a section, or search across all of them. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <nav aria-label={t("Browse cast references")} className="inline-flex border border-ink-black/55 bg-bristol">
+          {([
+            ["#cast-characters", Users, t("Characters"), bible.characters.length],
+            ["#cast-places", MapPin, t("Places"), bible.locations.length],
+            ...(bible.props.length > 0 ? [["#cast-props", Box, t("Props"), bible.props.length] as const] : []),
+          ] as const).map(([href, SectionIcon, label, count]) => (
+            <a key={href} href={href} onClick={() => setSearch("")}
+              className="flex h-8 items-center gap-1.5 px-3 font-meta text-[0.8125rem] font-medium text-ink-muted transition-colors hover:bg-sidebar-tint hover:text-ink-black [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]">
+              <SectionIcon size={14} aria-hidden="true" />{label} <span className="tabular-nums opacity-70">{count}</span>
+            </a>
+          ))}
+        </nav>
+        {search.trim() && <p role="status" className="font-meta text-xs text-ink-soft">{t("{count} references found", { count: String(matchCount) })}</p>}
+        <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
+          <label htmlFor="cast-search" className="sr-only">{t("Find a reference")}</label>
+          <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none"><Search size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft" /><TextField id="cast-search" type="search" className="h-10 min-h-0 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search characters, places or props")} /></div>
+          {search.trim() && <Button variant="outline" size="sm" onClick={() => setSearch("")}>{t("Clear search")}</Button>}
         </div>
-      </section>
-
-      <div className="flex flex-wrap items-end justify-between gap-4 bg-surface-container p-4">
-        <div className="w-full sm:max-w-md">
-          <FieldLabel htmlFor="cast-search">{t("Find a reference")}</FieldLabel>
-          <div className="relative"><Search size={17} aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 text-ink-muted" /><TextField id="cast-search" type="search" className="pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search characters, places or props")} /></div>
-        </div>
-        {search.trim() ? <div className="flex items-center gap-3"><p role="status" className="font-body text-sm text-ink-muted">{t("{count} references found", { count: String(matchCount) })}</p><Button variant="outline" size="xs" onClick={() => setSearch("")}>{t("Clear search")}</Button></div> : <p className="max-w-sm font-body text-xs leading-6 text-ink-muted">{t("Review & adjust opens the image and its creative controls.")}</p>}
       </div>
-      {search.trim() && matchCount === 0 && <p className="py-8 font-body text-sm text-ink-muted">{t("No matching references. Try another name or clear your search.")}</p>}
+      {search.trim() && matchCount === 0 && <p className="benday-paper px-5 py-10 text-center font-body text-sm text-ink-muted">{t("No matching references. Try another name or clear your search.")}</p>}
 
       {isStageStuck && (
         <StaleStageNotice
@@ -1378,12 +1381,11 @@ export function CastRoom() {
 
       <CastUpdatingContext.Provider value={updating}>
       <CastSuggestionContext.Provider value={suggestionContext}>
-      <section className="space-y-10">
+      <section className="space-y-8">
         <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
           <SectionHeader
             variant="underline"
             title="CHARACTER REFS"
-            description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
           {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} locations={bible.locations}
             onShowCharacter={() => setSearch("")}
@@ -1407,7 +1409,6 @@ export function CastRoom() {
           <SectionHeader
             variant="underline"
             title="LOCATION PLATES"
-            description="Wide environment plates anchor geography, architecture, light, and atmosphere."
           />
           <div className={`${CAST_GRID} grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))]`}>
             {bible.locations.map((loc) => (

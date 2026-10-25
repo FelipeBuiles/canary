@@ -3552,5 +3552,8 @@
   "Retry cover": "Retry cover",
   "New production": "New production",
   "{count, plural, one {# production} other {# productions}}": "{count, plural, one {# production} other {# productions}}",
-  "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# proof} other {# proofs}}"
+  "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# proof} other {# proofs}}",
+  "{count, plural, one {# character} other {# characters}}": "{count, plural, one {# character} other {# characters}}",
+  "{count, plural, one {# place} other {# places}}": "{count, plural, one {# place} other {# places}}",
+  "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# prop} other {# props}}"
 }
