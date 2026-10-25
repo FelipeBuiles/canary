@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
@@ -40,9 +40,9 @@ const COMPARE_VIEWS = ["sound", "captions", "translation"] as const;
 type CompareView = typeof COMPARE_VIEWS[number];
 const COMPARE_LABELS: Record<CompareView, string> = { sound: "Sound effects", captions: "Captions", translation: "Translation" };
 const VIEW_CROPS: Record<CompareView, Crop> = {
-  sound: { x: 540, y: 990, width: 470, height: 196 },
-  captions: { x: 16, y: 440, width: 992, height: 413 },
-  translation: { x: 16, y: 440, width: 992, height: 413 },
+  sound: { x: 540, y: 1004, width: 470, height: 196 },
+  captions: { x: 16, y: 454, width: 992, height: 368 },
+  translation: { x: 16, y: 454, width: 992, height: 368 },
 };
 const VIEW_TAGS: Record<CompareView, Record<LetteringMode, string>> = {
   sound: { integrated: "Painted with the art", editable: "Set on top of the art" },
@@ -134,7 +134,7 @@ function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; v
   return <div className={cn(
     "flex flex-col overflow-hidden bg-bristol transition-[translate,box-shadow] duration-150",
     selected ? "border-2 border-ink-black shadow-[8px_8px_0_0_var(--color-narrator-gold),8px_8px_0_1px_var(--color-ink-black)]"
-      : "border border-ink-black/16 shadow-[4px_4px_0_0_var(--color-ghost-shadow)] hover:-translate-x-0.5 hover:-translate-y-0.5",
+      : "border-2 border-ink-black/12 shadow-[4px_4px_0_0_var(--color-ghost-shadow)] hover:-translate-x-0.5 hover:-translate-y-0.5",
   )}>
     {/* The image sits outside the label so the live demo's controls stay separate from the choice. */}
     <div className="relative border-b border-ink-black/15 bg-preview-tint">
@@ -163,12 +163,14 @@ function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; v
   </div>;
 }
 
-export function LetteringChoice({ value, onChange, disabled }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean }) {
+export function LetteringChoice({ value, onChange, disabled, intro }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean; intro?: ReactNode }) {
   const { t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [view, setView] = useState<CompareView>("sound");
-  return <div className="mt-6 space-y-5">
-    <div role="group" aria-label={t("Compare")} className="flex flex-wrap items-center gap-2.5 font-meta text-xs text-ink-muted">
+  return <div className="mt-3 space-y-5">
+    <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+    {intro}
+    <div role="group" aria-label={t("Compare")} className="flex shrink-0 flex-wrap items-center gap-2.5 font-meta text-xs text-ink-muted">
       {t("Compare")}
       <span className="inline-flex border border-ink-black/55 bg-bristol">
         {COMPARE_VIEWS.map((key) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}
@@ -176,6 +178,7 @@ export function LetteringChoice({ value, onChange, disabled }: { value: Letterin
           {t(COMPARE_LABELS[key])}
         </button>)}
       </span>
+    </div>
     </div>
     <fieldset disabled={disabled} aria-describedby="lettering-consequence" className={`group ${disabled ? "opacity-60" : ""}`}>
       <legend className="sr-only">{t("Choose how your comic is lettered")}</legend>

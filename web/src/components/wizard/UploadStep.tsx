@@ -331,7 +331,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   </div>
                 ) : !shortStories?.length ? <p role="status" className="mt-4 text-sm text-ink-muted">{t("The sample library is empty. You can still upload a manuscript or paste a story URL.")}</p>
                 : (
-                  <fieldset className="mt-4 border-t border-ink-black/12">
+                  <fieldset className="mt-4 min-w-0 border-t border-ink-black/12">
                     <legend className="sr-only">{t("Sample stories")}</legend>
                     {quickSamples.map((story) => {
                       const checked = tab === "library" && activeStory?.code === story.code;
@@ -377,8 +377,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
         ) : step === "lettering" ? (
           <div className="mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-8 lg:px-10 lg:py-9">
             <h1 ref={headingRef} tabIndex={-1} className={headingClass}>{t("How should the words live?")}</h1>
-            <p className="mt-3 max-w-[44rem] text-[1.0625rem] leading-relaxed text-ink-muted">{t("Integrated looks the most hand-made. Editable keeps every word changeable. You choose once for this project.")}</p>
-            <LetteringChoice value={letteringMode} onChange={setLetteringMode} disabled={isPending} />
+            <LetteringChoice value={letteringMode} onChange={setLetteringMode} disabled={isPending}
+              intro={<p className="max-w-[40rem] text-[1.0625rem] leading-relaxed text-ink-muted">{t("Integrated looks the most hand-made. Editable keeps every word changeable. You choose once for this project.")}</p>} />
           </div>
         ) : (
           <div className="mx-auto grid w-full max-w-[1120px] items-start gap-10 px-4 py-8 sm:px-8 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-12">
