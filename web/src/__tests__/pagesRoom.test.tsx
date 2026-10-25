@@ -442,14 +442,14 @@ describe("PagesRoom", () => {
     const view = renderRoom();
     expect(view.container.querySelector("footer")).toBeNull();
     expect(screen.queryByRole("button", { name: /Start adaptation over/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "CONTINUE TO BOOK" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to Book" })).toBeNull();
     view.unmount();
     projectRunning = false;
     stageStatuses.draw.status = "awaiting_review";
     generationJobResults = [];
     renderRoom();
     expect(screen.getByRole("button", { name: /Start adaptation over/ }).closest("footer")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CONTINUE TO BOOK" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to Book" })).toBeTruthy();
   });
 
   it("hides the fallback footer while project work runs without loaded pages", async () => {
@@ -503,7 +503,7 @@ describe("PagesRoom", () => {
 
   it("opens flagged pages on the Page tab with their checks, without starting paid work", async () => {
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "REVIEW FLAGGED PAGES (1)" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review 1 flagged" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
     expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
@@ -514,7 +514,7 @@ describe("PagesRoom", () => {
     expect(analyzePage).not.toHaveBeenCalled();
     expect(reviewVisuals).not.toHaveBeenCalled();
     await userEvent.click(within(dialog).getByRole("button", { name: "Close page review" }));
-    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Needs you 1" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("uses the artwork as the single review action and keeps revision detail in the dialog", async () => {
@@ -557,7 +557,7 @@ describe("PagesRoom", () => {
   it("offers Start reading when drawn pages have no unresolved findings", async () => {
     pageIssues = [];
     renderRoom();
-    expect(screen.queryByRole("button", { name: /REVIEW FLAGGED PAGES/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Review \d+ flagged/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Start reading" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
@@ -1187,8 +1187,8 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
-    const generate = screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" });
-    expect(generate.closest("article")?.children).toHaveLength(1);
+    const generate = screen.getByRole("button", { name: "Draw page" });
+    expect(within(generate.closest("article")!).getAllByRole("button")).toEqual([generate]);
     await userEvent.click(generate);
     expect(generatePage).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
@@ -1210,10 +1210,12 @@ describe("PagesRoom", () => {
     }];
     renderRoom();
     // Let terminal-job reconciliation run as well as the initial page cards.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Failed (0)" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Draw page" })).toBeTruthy());
     expect(screen.queryByText("IMAGE GENERATION FAILED")).toBeNull();
-    expect(screen.getByRole("button", { name: "Drawing (0)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
+    // Empty filters are hidden: neither the old failure nor the old run counts.
+    expect(screen.queryByRole("button", { name: /^Failed/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Drawing/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Draw page" })).toBeTruthy();
     expect(generatePage).not.toHaveBeenCalled();
   });
 
@@ -1298,8 +1300,8 @@ describe("PagesRoom", () => {
 
     const retry = screen.getByRole("button", { name: "TRY AGAIN" });
     const failedCard = retry.closest("article")!;
-    expect(within(failedCard).queryByText("READY TO DRAW")).toBeNull();
-    expect(failedCard.children).toHaveLength(1);
+    expect(within(failedCard).queryByText("Ready to draw")).toBeNull();
+    expect(within(failedCard).getAllByRole("button")).toEqual([retry]);
     await userEvent.click(retry);
     expect(generatePage).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
@@ -1443,7 +1445,7 @@ describe("PagesRoom", () => {
     analysisChecked = false;
     pageIssues = [];
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "CONTINUE TO BOOK" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue to Book" }));
     expect(continueToBook).toHaveBeenCalledWith({ project: "demo", stage: "draw" }, expect.any(Object));
     expect(recoverChecks).not.toHaveBeenCalled();
     expect(estimateChecks).not.toHaveBeenCalled();
@@ -1476,7 +1478,7 @@ describe("PagesRoom", () => {
   it("continues to Book through the Draw checkpoint", async () => {
     renderRoom();
 
-    await userEvent.click(screen.getByRole("button", { name: "CONTINUE TO BOOK" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue to Book" }));
     expect(continueToBook).toHaveBeenCalledWith(
       { project: "demo", stage: "draw" },
       expect.any(Object),
@@ -1615,7 +1617,7 @@ describe("PagesRoom", () => {
 
   it("opens book adaptation as a full reading workspace and returns to the gallery", async () => {
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "BOOK ADAPTATION" }));
+    await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
 
     expect(screen.getByRole("region", { name: "BOOK ADAPTATION" })).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -1636,7 +1638,7 @@ describe("PagesRoom", () => {
 
   it("switches reading documents in the URL and preserves the gallery filter without generating", async () => {
     renderRoom("/project/demo/pages?filter=needs-review");
-    await userEvent.click(screen.getByRole("button", { name: "BOOK ADAPTATION" }));
+    await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
     expect(screen.getByLabelText("Current route").textContent).toContain("reading=adaptation");
     await userEvent.click(screen.getByRole("button", { name: "PAGE PLAN" }));
     expect(screen.getByRole("region", { name: "PAGE PLAN" })).toBeTruthy();
@@ -1646,7 +1648,7 @@ describe("PagesRoom", () => {
     expect(screen.getByText("Hold, then reveal")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Back to pages" }));
     expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
-    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Needs you 1" }).getAttribute("aria-pressed")).toBe("true");
     expect(generatePage).not.toHaveBeenCalled();
     expect(runPipeline).not.toHaveBeenCalled();
     expect(submitCorrections).not.toHaveBeenCalled();
@@ -1667,8 +1669,8 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("region", { name: "PAGE PLAN" })).toBeNull();
     expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
     expect(screen.getByLabelText("Current route").textContent).toContain("filter=needs-review");
-    expect(screen.getByRole("button", { name: "BOOK ADAPTATION" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "PAGE PLAN" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Adaptation" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Page plan" })).toHaveProperty("disabled", true);
   });
 
   it("opens a Book finding on the requested page and review view", async () => {
@@ -1682,7 +1684,7 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Close page review" }));
     expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Needs you 1" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("restores review context in this session but lets explicit links win", async () => {
@@ -1698,7 +1700,7 @@ describe("PagesRoom", () => {
   it("ignores invalid review URL values without choosing an arbitrary page", async () => {
     renderRoom("/project/demo/pages?page=-3&review=unknown&filter=unknown");
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("button", { name: "All (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "All 1" }).getAttribute("aria-pressed")).toBe("true");
     await userEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     expect(screen.getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -1707,7 +1709,7 @@ describe("PagesRoom", () => {
     includeUndrawnPage = true;
     generationJobResults = [{ id: "resumed-job", status: "running" }];
     renderRoom("/project/demo/pages?filter=drawing");
-    expect(screen.getByRole("button", { name: "Drawing (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Drawing 1" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Inspect completed page 1" }));
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
@@ -1718,27 +1720,27 @@ describe("PagesRoom", () => {
     includeUndrawnPage = true;
     estimateError = new Error("Estimate unavailable");
     renderRoom("/project/demo/pages?filter=all");
-    await userEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draw page" }));
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByRole("alert").textContent).toContain("Estimate unavailable");
     await userEvent.click(within(dialog).getByRole("button", { name: "RETRY ESTIMATE" }));
     expect(retryEstimate.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(generatePage).not.toHaveBeenCalled();
     await userEvent.click(within(dialog).getAllByRole("button", { name: /Cancel/i })[0]);
-    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Draw page" })).toBeTruthy();
   });
 
   it("keeps a submission error next to consent without automatically retrying", async () => {
     includeUndrawnPage = true;
     generatePage.mockImplementation((_variables, options) => options.onError(new Error("Connection interrupted")));
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draw page" }));
     await userEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     expect(within(screen.getByRole("alertdialog")).getByRole("alert").textContent).toContain("Connection interrupted");
     expect(generatePage).toHaveBeenCalledOnce();
     await userEvent.click(within(screen.getByRole("alertdialog")).getAllByRole("button", { name: /Cancel/i })[0]);
     expect(screen.getByRole("alert").textContent).toContain("Connection interrupted");
-    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Draw page" })).toBeTruthy();
   });
 
   it("shows a persisted Draw batch failure when page plans are already available", async () => {
@@ -1774,7 +1776,7 @@ describe("PagesRoom", () => {
       "storage_budget_exceeded",
     )));
     renderRoom();
-    await userEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draw page" }));
     await userEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByRole("heading", { name: "Account storage is full" })).toBeTruthy();

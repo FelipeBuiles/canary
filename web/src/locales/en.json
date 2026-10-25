@@ -3539,5 +3539,13 @@
   "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}": "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}",
   "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}": "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}",
   "{count, plural, one {Scenewright will redraw {name}'s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}'s # looks from its current main image. The current versions stay in history.}}": "{count, plural, one {Scenewright will redraw {name}''s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}''s # looks from its current main image. The current versions stay in history.}}",
-  "Redrawing:": "Redrawing:"
+  "Redrawing:": "Redrawing:",
+  "Library": "Library",
+  "{count, plural, one {# page} other {# pages}}": "{count, plural, one {# page} other {# pages}}",
+  "Needs you": "Needs you",
+  "Working": "Working",
+  "Queued": "Queued",
+  "Review {count} flagged": "Review {count} flagged",
+  "Ready to draw": "Ready to draw",
+  "Continue to Book": "Continue to Book"
 }

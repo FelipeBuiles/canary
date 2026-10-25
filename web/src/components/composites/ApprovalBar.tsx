@@ -56,23 +56,21 @@ export function ApprovalBar({
 
   return (
     <BottomBarPortal>
-      <footer className="relative z-0 flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] studio-desktop:py-0 studio-desktop:pl-0 studio-desktop:pr-6">
-        <div className="hidden self-stretch bg-narrator-gold px-5 font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-black studio-desktop:flex studio-desktop:items-center">
+      <footer className="relative z-0 flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[2px] border-ink-black bg-bristol px-4 py-2.5 studio-desktop:py-0 studio-desktop:pl-0 studio-desktop:pr-5 xl:pr-6">
+        {/* The narrator's caption box: the one gold mark on the bar. */}
+        <div className="sr-only studio-desktop:not-sr-only studio-desktop:flex studio-desktop:items-center studio-desktop:self-stretch studio-desktop:bg-narrator-gold studio-desktop:px-4 studio-desktop:font-meta studio-desktop:text-[0.6875rem] studio-desktop:font-bold studio-desktop:uppercase studio-desktop:tracking-[0.12em] studio-desktop:text-ink-black">
           {t("Next:")}
         </div>
         <div className="w-full min-w-0 studio-desktop:w-auto studio-desktop:flex-1">
-          <span className="mb-2 inline-flex bg-narrator-gold px-2 py-1 font-meta text-[0.62rem] font-bold uppercase leading-none tracking-[0.1em] text-ink-black studio-desktop:hidden">
-            {t("Next:")}
-          </span>
-          <div className="font-body text-sm font-bold leading-snug text-ink-black">
+          <span className="font-body text-[0.8125rem] font-semibold leading-snug text-ink-black">
             {next}
-          </div>
+          </span>
           {error ? (
             <ErrorNotice error={error} operation="approve" />
           ) : costLine && (
-            <div className="mt-1 font-meta text-xs font-semibold tracking-[0.04em] text-ink-muted">
+            <span className="ml-2 font-meta text-xs text-ink-soft">
               {costLine}
-            </div>
+            </span>
           )}
         </div>
         <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto studio-desktop:gap-3">

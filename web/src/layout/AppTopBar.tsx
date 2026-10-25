@@ -43,7 +43,7 @@ export function AppTopBar() {
   return (
     <header
       className={cn(
-        "relative z-40 shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
+        "relative z-40 shrink-0 items-stretch border-b border-ink-black/12 bg-bristol text-ink-black",
         // Phones share one compact project/navigation/account row.
         // Desktop keeps the full room masthead beside the project sidebar.
         inProject ? "flex h-14 studio-desktop:h-shell-top" : "flex h-14",
@@ -63,14 +63,14 @@ export function AppTopBar() {
         </div>
       )}
 
-      <div className="flex shrink-0 items-center gap-3 border-l-[2px] border-ink-black/10 pl-3 pr-4">
+      <div className="flex shrink-0 items-center gap-2 pl-3 pr-4 studio-desktop:pr-5">
         <Link
           to="/credits"
           className={cn(
-            "hidden h-11 items-center gap-2 border-[2px] px-3 font-meta text-[0.62rem] font-bold tracking-[0.06em] transition-colors sm:flex",
+            "hidden h-8 items-center gap-2 border px-2.5 font-meta text-xs font-semibold transition-colors sm:flex",
             isLow
               ? "border-ink-black bg-narrator-gold text-ink-black"
-              : "border-ink-black/18 bg-surface-container text-ink-black hover:border-ink-black",
+              : "border-ink-black/12 text-ink-black hover:border-ink-black/55 hover:bg-sidebar-tint",
           )}
           aria-label={isLow ? "Credits low — top up" : `Credits: ${credits}`}
         >
@@ -84,12 +84,12 @@ export function AppTopBar() {
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
             aria-label="Account menu"
-            className="flex h-11 w-11 items-center justify-center border-[2px] border-ink-black bg-hero-red font-meta text-[0.72rem] font-bold tracking-[0.08em] text-bristol shadow-paper-sm transition-[box-shadow,transform] duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-ink-sm active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+            className="flex size-8 items-center justify-center bg-ink-black font-meta text-[0.6875rem] font-semibold tracking-[0.04em] text-pulp-paper transition-colors duration-150 hover:bg-hero-red"
           >
             {initials(email)}
           </button>
           {open && (
-            <div className="absolute right-0 top-[calc(100%+8px)] w-[290px] border-[3px] border-ink-black bg-bristol shadow-paper-sm">
+            <div className="absolute right-0 top-[calc(100%+8px)] w-[272px] border border-ink-black/12 bg-bristol shadow-float">
               <div className="p-5">
                 <div className="font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.04em]">
                   {email.split("@")[0].replace(/[._-]+/g, " ")}

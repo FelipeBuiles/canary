@@ -3539,5 +3539,13 @@
   "{count, plural, one {Also redraw its look from the new image} other {Also redraw its # looks from the new image}}": "{count, plural, one {Redessiner aussi son aspect à partir de la nouvelle image} other {Redessiner aussi ses # aspects à partir de la nouvelle image}}",
   "{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}": "{count, plural, one {Son image principale a été redessinée : cet aspect a donc été dessiné à partir de la précédente :} other {Son image principale a été redessinée : ces # aspects ont donc été dessinés à partir de la précédente :}}",
   "{count, plural, one {Scenewright will redraw {name}'s look from its current main image. The current version stays in history.} other {Scenewright will redraw {name}'s # looks from its current main image. The current versions stay in history.}}": "{count, plural, one {Scenewright redessinera l’aspect de {name} à partir de son image principale actuelle. La version actuelle reste dans l’historique.} other {Scenewright redessinera les # aspects de {name} à partir de son image principale actuelle. Les versions actuelles restent dans l’historique.}}",
-  "Redrawing:": "Redessin en cours :"
+  "Redrawing:": "Redessin en cours :",
+  "Library": "Bibliothèque",
+  "{count, plural, one {# page} other {# pages}}": "{count, plural, one {# page} other {# pages}}",
+  "Needs you": "À vous de voir",
+  "Working": "En cours",
+  "Queued": "En file",
+  "Review {count} flagged": "Revoir {count} signalées",
+  "Ready to draw": "Prête à dessiner",
+  "Continue to Book": "Continuer vers le livre"
 }

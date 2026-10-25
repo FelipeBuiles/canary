@@ -11,7 +11,7 @@ import { Icon } from "../components/ui/Icon";
 import { canReadDocument, getRoomAccess } from "../lib/stationAccess";
 import { projectFileUrl, splitProjectKey } from "../api/projectScope";
 import { PartSwitcher } from "../components/parts/PartSwitcher";
-import { ArrowLeft, ChevronDown, LockKeyhole } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, LockKeyhole } from "lucide-react";
 import {
   STATIONS,
   getSubstepState,
@@ -33,13 +33,15 @@ interface ProjectCoverThumbProps {
   compact?: boolean;
 }
 
-const STATE_TAG: Record<StationState, { label: string; className: string }> = {
-  done: { label: "✓ DONE", className: "text-archive-sage" },
-  review: { label: "● REVIEW", className: "text-hero-red" },
-  running: { label: "RUNNING", className: "text-narrator-gold" },
-  queued: { label: "QUEUED", className: "text-narrator-gold" },
-  failed: { label: "! FAILED", className: "text-hero-red" },
-  wait: { label: "WAIT", className: "text-bristol/28" },
+/** The rail's share of the studio status vocabulary: a check for Ready, a
+ * tinted word for anything that needs attention, nothing for Not started. */
+const STATE_TAG: Record<StationState, { label: string; pill?: string }> = {
+  done: { label: "Done" },
+  review: { label: "Needs you", pill: "bg-chip-gold text-on-gold" },
+  running: { label: "Working", pill: "bg-secondary-container text-on-secondary-container" },
+  queued: { label: "Queued", pill: "bg-secondary-container text-on-secondary-container" },
+  failed: { label: "Failed", pill: "bg-chip-red text-status-blocked-text" },
+  wait: { label: "Not started" },
 };
 
 function ProjectCoverThumb({
@@ -54,8 +56,8 @@ function ProjectCoverThumb({
     <span
       aria-hidden="true"
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden border-[2px] border-bristol/20 bg-pulp-paper text-ink-black shadow-[3px_3px_0_0_var(--color-hero-red)]",
-        compact ? "h-12 w-9" : "h-16 w-12",
+        "relative flex shrink-0 items-center justify-center overflow-hidden border border-bristol/20 bg-pulp-paper text-ink-black",
+        compact ? "h-12 w-9" : "h-9 w-7",
       )}
     >
       {showCover ? (
@@ -67,7 +69,7 @@ function ProjectCoverThumb({
         />
       ) : (
         <>
-          <Icon name="draft" size={compact ? 15 : 18} className="text-ink-black/65" />
+          <Icon name="draft" size={compact ? 15 : 13} className="text-ink-black/65" />
           <span className={cn(
             "absolute right-0 top-0 bg-narrator-gold [clip-path:polygon(100%_0,100%_100%,0_0)]",
             compact ? "h-2 w-2" : "h-2.5 w-2.5",
@@ -119,7 +121,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     const state = getStationState(station, status);
     const access = getRoomAccess(stationDestination(station, status), status);
     const unavailable = access.state !== "available";
-    const tag = unavailable ? { label: t("Locked"), className: "text-bristol/60" } : STATE_TAG[state];
+    const tag: { label: string; pill?: string } = unavailable ? { label: t("Locked") } : STATE_TAG[state];
     const isActive = activeStation?.key === station.key;
     const readingItems = station.substeps.filter(
       (substep): substep is typeof substep & { drawer: DrawerKind } =>
@@ -131,7 +133,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     );
 
     return (
-      <div key={station.key} className={cn("py-1", isActive && "bg-bristol/6")}>
+      <div key={station.key} className={cn("py-0.5", isActive && "py-1.5")}>
         <button
           type="button"
           onClick={() => goTo(stationDestination(station, status))}
@@ -140,36 +142,34 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           aria-label={`Station ${station.number} ${station.label}: ${tag.label}`}
           aria-current={isActive ? "true" : undefined}
           className={cn(
-            "flex min-h-14 items-center gap-3 px-3 py-2 text-left transition-[background-color,box-shadow,color,transform] duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] disabled:cursor-not-allowed disabled:opacity-70",
+            "relative flex h-10 items-center gap-2.5 px-2.5 text-left transition-[background-color,color] duration-150 disabled:cursor-not-allowed disabled:opacity-60",
             isActive
-              ? "mx-3 w-[calc(100%-1.5rem)] bg-bristol text-ink-black shadow-[4px_4px_0_0_var(--color-hero-red)]"
-              : "w-full px-5 hover:bg-bristol/6 xl:px-6",
+              ? "w-[calc(100%-4px)] bg-bristol text-ink-black shadow-[3px_3px_0_0_var(--color-hero-red)]"
+              : "w-full text-on-chrome-muted hover:bg-bristol/6 hover:text-pulp-paper",
           )}
         >
           <span className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center border-[2px] font-meta text-[0.58rem] font-bold tracking-[0.08em]",
-            isActive ? "border-ink-black bg-narrator-gold text-ink-black" : "border-bristol/20 text-bristol/60",
+            "flex size-6 shrink-0 items-center justify-center border font-meta text-[0.625rem] font-bold tabular-nums",
+            isActive ? "border-ink-black bg-narrator-gold text-ink-black" : "border-bristol/20 text-on-chrome-muted",
           )}>
             {station.number}
           </span>
-          <span data-ph-safe-label={safeReplayLabel(t(station.label))} className={cn(
-            "font-display text-[1.02rem] font-black uppercase leading-none tracking-[-0.02em] 2xl:text-[1.15rem]",
-            isActive ? "text-ink-black" : "text-bristol/78",
-          )}>
+          <span data-ph-safe-label={safeReplayLabel(t(station.label))} className="font-display text-[0.9375rem] font-black uppercase leading-none tracking-[-0.02em]">
             {t(station.label)}
           </span>
-          <span className={cn(
-            "ml-auto font-meta text-[0.52rem] font-bold leading-none tracking-[0.08em]",
-            tag.className,
-            isActive && state === "wait" && "text-ink-black/50",
-            isActive && (state === "running" || state === "queued") && "text-ink-muted",
-          )}>
-            {t(tag.label)}
+          <span aria-hidden="true" className="ml-auto flex items-center">
+            {unavailable ? (
+              <LockKeyhole size={13} className={isActive ? "text-ink-soft" : "text-on-chrome-muted"} />
+            ) : state === "done" ? (
+              <Check size={14} strokeWidth={2.25} className={isActive ? "text-ready" : "text-on-chrome-muted"} />
+            ) : tag.pill ? (
+              <span className={cn("px-1.5 py-0.5 font-meta text-[0.6875rem] font-medium leading-none", tag.pill)}>{t(tag.label)}</span>
+            ) : null}
           </span>
         </button>
 
         {isActive && decisionItems.length > 1 && (
-          <ul className="space-y-1 px-3 pb-2" aria-label={`${station.label} decisions`}>
+          <ul className="pb-1" aria-label={`${station.label} decisions`}>
             {decisionItems.map((substep) => {
               const substepState = getSubstepState(substep, status);
               const isCurrentRoute = activeRoute === substep.route;
@@ -181,15 +181,15 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                     disabled={getRoomAccess(substep.route, status).state !== "available"}
                     aria-current={isCurrentRoute ? "page" : undefined}
                     className={cn(
-                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.75rem] font-bold transition-colors",
+                      "flex h-8 w-full items-center gap-2 pl-11 pr-3 text-left font-meta text-xs font-medium transition-colors",
                       isCurrentRoute
-                        ? "bg-bristol text-ink-black"
-                        : "bg-bristol/5 text-bristol/70 hover:bg-bristol/10 hover:text-bristol",
+                        ? "text-pulp-paper"
+                        : "text-on-chrome-muted hover:bg-bristol/6 hover:text-pulp-paper",
                     )}
                   >
                     <span aria-hidden className={cn(
-                      "flex h-4 w-4 shrink-0 items-center justify-center border text-[0.44rem]",
-                      isCurrentRoute ? "border-ink-black/20" : "border-bristol/20",
+                      "flex h-3.5 w-3.5 shrink-0 items-center justify-center border text-[0.5rem]",
+                      isCurrentRoute ? "border-pulp-paper/60" : "border-bristol/20",
                     )}>
                       {substepState === "done" ? "✓" : substepState === "current" ? "•" : ""}
                     </span>
@@ -202,7 +202,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         )}
 
         {readingItems.length > 0 && (
-          <ul className="space-y-1 px-3 pb-3" aria-label={`${station.label} reading`}>
+          <ul className="pb-1" aria-label={`${station.label} reading`}>
             {readingItems.map((substep) => {
               const locked = getRoomAccess("pages", status).state !== "available" || !canReadDocument(substep.drawer, status);
               const isCurrentReading = activeRoute === "pages"
@@ -216,13 +216,13 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                     title={locked ? t("Available when this document is ready") : undefined}
                     aria-current={isCurrentReading ? "page" : undefined}
                     className={cn(
-                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.72rem] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      "flex h-8 w-full items-center gap-2 pl-11 pr-3 text-left font-meta text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                       isCurrentReading
-                        ? "bg-bristol text-ink-black"
-                        : "bg-bristol/5 text-bristol/70 hover:bg-bristol/10 hover:text-bristol",
+                        ? "text-pulp-paper"
+                        : "text-on-chrome-muted hover:bg-bristol/6 hover:text-pulp-paper",
                     )}
                   >
-                    {locked ? <LockKeyhole size={12} aria-hidden="true" className="shrink-0" /> : <span aria-hidden className="h-1.5 w-1.5 shrink-0 bg-bristol/35" />}
+                    {locked ? <LockKeyhole size={12} aria-hidden="true" className="shrink-0" /> : <span aria-hidden className="h-1 w-1 shrink-0 bg-bristol/35" />}
                     <span>{t(substep.label)}</span>
                   </button>
                 </li>
@@ -247,7 +247,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         <Link
           to="/"
           onClick={onNavigate}
-          className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"
+          className="flex h-shell-top shrink-0 items-center gap-2.5 border-b border-bristol/10 px-4 hover:bg-bristol/6"
           aria-label={t("LIBRARY")}
         >
           {projectId && (
@@ -258,22 +258,22 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             />
           )}
           <span className="min-w-0">
-            <span className="line-clamp-2 font-display text-[0.92rem] font-black uppercase leading-[1.08] tracking-[-0.02em] 2xl:text-[1.05rem]" title={projectTitle}>
+            <span className="block truncate font-body text-[0.8125rem] font-bold leading-4" title={projectTitle}>
               {projectTitle}
             </span>
-            <span className="mt-1.5 block font-meta text-[0.56rem] font-semibold tracking-[0.1em] text-bristol/65 2xl:text-[0.64rem]">
-              ← {t("LIBRARY")}
+            <span className="block font-meta text-xs text-on-chrome-muted">
+              ← {t("Library")}
             </span>
           </span>
         </Link>
 
         {projectId && status?.parts && status.parts.length > 0 && (
-          <div className="shrink-0 border-b-[2px] border-bristol/10 px-5 py-3 xl:px-6">
+          <div className="shrink-0 border-b border-bristol/10 px-4 py-2.5">
             <PartSwitcher project={projectId} parts={status.parts} className="w-full" onNavigate={onNavigate} />
           </div>
         )}
 
-        <nav aria-label={inDrawer ? t("STATION") : "Stations"} className="min-h-0 flex-1 overflow-y-auto py-3">
+        <nav aria-label={inDrawer ? t("STATION") : "Stations"} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {projectId ? (
             STATIONS.map((station) => renderStationRow(station))
           ) : (
@@ -283,19 +283,19 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}
         </nav>
 
-        <div className="h-shell-footer shrink-0 border-t-[2px] border-bristol/10">
+        <div className="h-12 shrink-0 border-t border-bristol/10">
           <Link
             to={settingsPath}
             onClick={onNavigate}
             aria-current={isSettingsActive ? "page" : undefined}
             className={cn(
-              "flex h-full w-full items-center gap-3 px-5 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem]",
+              "flex h-full w-full items-center gap-2.5 px-4 font-meta text-xs font-medium transition-colors",
               isSettingsActive
-                ? "bg-bristol text-ink-black"
-                : "text-bristol/70 hover:bg-bristol/8 hover:text-bristol",
+                ? "bg-bristol/10 text-pulp-paper"
+                : "text-on-chrome-muted hover:bg-bristol/6 hover:text-pulp-paper",
             )}
           >
-            <Icon name="settings" size={15} />
+            <Icon name="settings" size={14} />
             {t("Settings")}
           </Link>
         </div>
@@ -368,7 +368,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   return (
     <>
       {mobileNav}
-      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol studio-desktop:flex xl:w-[270px] 2xl:w-[320px]">
+      <aside className="pressroom-sidebar hidden h-full w-[208px] shrink-0 flex-col bg-ink-black text-bristol studio-desktop:flex xl:w-shell-rail">
         {renderPressroom(false)}
       </aside>
     </>

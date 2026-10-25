@@ -167,7 +167,6 @@ export function BookRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker={t("BOOK")}
         title={t("YOUR EDITION")}
         lead={t("Read your pages, settle any remaining decisions, and prepare your book to keep.")}
       />

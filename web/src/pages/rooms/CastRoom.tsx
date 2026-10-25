@@ -1311,7 +1311,6 @@ export function CastRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        kicker="LOOK"
         title="CONFIRM CHARACTERS & PLACES"
         lead="These approved references guide every complete page. Open only the people or places that need a fix."
       />

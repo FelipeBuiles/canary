@@ -26,7 +26,7 @@ export function Shell() {
           <AppTopBar />
           <main id="main-content" className="app-workbench min-h-0 min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
             <div className={[
-              "app-workbench-sheet flex min-h-full w-full flex-col bg-pulp-paper px-4 pb-4 pt-6 sm:px-6 sm:pb-6 sm:pt-8 studio-desktop:px-6 studio-desktop:py-8 xl:px-10 xl:py-10",
+              "app-workbench-sheet flex min-h-full w-full flex-col bg-pulp-paper px-4 pb-4 pt-5 sm:px-6 sm:pb-6 sm:pt-6 studio-desktop:px-5 studio-desktop:py-5 xl:px-6 xl:py-6",
               !isLibrary ? "mx-auto max-w-[1560px]" : "",
             ].join(" ")}>
               <Outlet />
