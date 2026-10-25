@@ -3555,5 +3555,8 @@
   "{count, plural, one {# proof} other {# proofs}}": "{count, plural, one {# prueba} other {# pruebas}}",
   "{count, plural, one {# character} other {# characters}}": "{count, plural, one {# personaje} other {# personajes}}",
   "{count, plural, one {# place} other {# places}}": "{count, plural, one {# lugar} other {# lugares}}",
-  "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# objeto} other {# objetos}}"
+  "{count, plural, one {# prop} other {# props}}": "{count, plural, one {# objeto} other {# objetos}}",
+  "Save brief": "Guardar brief",
+  "Approve brief": "Aprobar brief",
+  "Save & approve brief": "Guardar y aprobar brief"
 }

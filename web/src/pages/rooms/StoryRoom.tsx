@@ -307,20 +307,21 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
   return (
     <RoomShell project={id}>
       <RoomHeader
-        title={t("CONFIRM THE STORY & BRIEF")}
-        lead={t("Review what Scenewright found and set the promises that every page must keep.")}
+        title={t("Story")}
+        lead={`${data.story_bible.total_scenes} ${t("scenes")} · ${castCharacters(data.story_bible).length} ${t("characters")} · ${data.story_bible.locations.length} ${t("places")}`}
       />
 
-      <section className={`relative overflow-hidden bg-ink-black p-6 text-pulp-paper shadow-paper ${multipart ? "md:px-8 md:py-7" : "md:p-10"}`} aria-label={t("SOURCE MANUSCRIPT")}>
-        {multipart && currentPart && <p className="font-meta text-xs font-bold uppercase tracking-[0.12em] text-narrator-gold">
+      {/* The source keeps its title type; the ink banner around it goes. */}
+      <section aria-label={t("SOURCE MANUSCRIPT")} className="space-y-3">
+        {multipart && currentPart && <p className="font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-soft">
           {t("Part {number} of {count}", { number: currentPart.ordinal, count: parts.length })} · {currentPart.title}
         </p>}
-        <h2 className={`break-words font-display font-black uppercase leading-[1.02] tracking-[-0.035em] ${multipart ? "mt-2 text-3xl sm:text-4xl" : "max-w-[20ch] text-4xl sm:text-5xl xl:text-6xl"}`}>{data.story_bible.title}</h2>
-        <div className={`flex flex-wrap items-end justify-between gap-x-6 ${multipart ? "mt-3 gap-y-2" : "mt-7 gap-y-6"}`}>
-          <p className="font-body text-sm">{t("BY")} {data.story_bible.author}</p>
-          <a href="#story-bible" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {castCharacters(data.story_bible).length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
+          <h2 className="min-w-0 break-words font-display text-[1.75rem] font-black uppercase leading-[0.95] tracking-[-0.03em] text-ink-black sm:text-[2.25rem]">{data.story_bible.title}</h2>
+          <p className="pb-1 font-body text-sm text-ink-muted">{t("BY")} {data.story_bible.author}</p>
+          <a href="#story-bible" className="ml-auto inline-flex min-h-8 items-center gap-1.5 pb-1 font-meta text-xs font-semibold text-ink-black underline decoration-ink-black/30 underline-offset-4 hover:text-hero-red" aria-label={t("Explore extracted story")}>{t("Story Bible")}<ArrowDownRight size={15} aria-hidden="true" /></a>
         </div>
-        {multipart && <div className="mt-6"><BookStrip project={id} parts={parts} tone="ink" /></div>}
+        {multipart && <BookStrip project={id} parts={parts} tone="paper" />}
       </section>
       {earlierDrafts.length > 0 && (
         <section className="space-y-4" aria-label={t("Earlier unsaved drafts")}>
@@ -363,40 +364,40 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
       />
 
 
-      <form onSubmit={save} className="space-y-8">
+      <form onSubmit={save} className="space-y-5">
         <SectionHeader
           variant="underline"
           title={t("ADAPTATION BRIEF")}
           description={multipart && currentPart
             ? t("This brief covers Part {number}: {title}. Review its direction, then edit anything you want your comic to keep.", { number: currentPart.ordinal, title: currentPart.title })
-            : t("Make this story yours. Review the direction below, then edit anything you want your comic to keep.")}
+            : undefined}
           actions={<>
             <p role="status" className="font-meta text-xs text-ink-muted">
               {busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved")}
             </p>
-            <Button type="submit" size="sm" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>{t("SAVE BRIEF")}</Button>
+            <Button type="submit" size="sm" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>{t("Save brief")}</Button>
           </>}
         />
         {saveError && <ErrorNotice error={saveError} operation="save" />}
         {storageError && <p role="alert" className="font-body text-sm text-hero-red">{t("Draft recovery is unavailable in this browser. Save before leaving.")}</p>}
         {conflict && <p role="alert" className="font-body text-sm text-hero-red">{t("This brief changed elsewhere. Your draft is preserved; reload to review the latest revision before saving.")}</p>}
         {invalidRange && <p role="alert" className="font-body text-sm text-hero-red">{t("Choose a minimum of at least 1 page and a maximum no smaller than the minimum.")}</p>}
-        <fieldset disabled={busy} className="space-y-8">
+        <fieldset disabled={busy} className="space-y-6">
           <legend className="sr-only">{t("ADAPTATION BRIEF")}</legend>
           {/* Two independent stacks, not a row grid: short sections never leave
               holes beside long ones. What must happen reads in the wide column;
               how it should feel sits beside it. */}
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-            <div className="min-w-0 space-y-6">
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-5">
               <BriefSection id="story-promises" title={t("STORY PROMISES")} value={draft.story_promises} onChange={(value) => change("story_promises", splitLines(value))} featured />
               <BriefSection id="essential-events" title={t("ESSENTIAL EVENTS")} value={draft.essential_events} onChange={(value) => change("essential_events", splitLines(value))} numbered />
               <BriefSection id="character-turns" title={t("CHARACTER TURNS")} value={draft.character_turns} onChange={(value) => change("character_turns", splitLines(value))} />
             </div>
-            <div className="min-w-0 space-y-6">
+            <div className="min-w-0 space-y-5">
               <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} />
-              <div className="bg-surface-container p-5">
-                <h3 className="font-display text-xl font-black uppercase">{t("Target length")}</h3>
-                <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("A flexible guide. The finished book may be shorter or longer to preserve the story and its pacing.")}</p>
+              <div className="bg-surface-container p-4">
+                <h3 className="font-display text-base font-black uppercase">{t("Target length")}</h3>
+                <p className="mb-4 mt-1 font-body text-xs leading-5 text-ink-muted">{t("A flexible guide. The finished book may be shorter or longer to preserve the story and its pacing.")}</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div><FieldLabel htmlFor="minimum-pages">{t("Page target: from")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
                   <div><FieldLabel htmlFor="maximum-pages">{t("Page target: to")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
@@ -409,11 +410,11 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
           {/* Open when a protected phrase was set aside, so the author sees why. */}
           <details open={(savedBrief.unmatched_protected_language?.length ?? 0) > 0 || undefined} className="group border-t-2 border-ink-black/15 pt-2">
             <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-baseline gap-x-4 gap-y-1 py-3 [&::-webkit-details-marker]:hidden">
-              <span className="inline-flex items-center gap-2 font-display text-xl font-black uppercase">
+              <span className="inline-flex items-center gap-2 font-display text-base font-black uppercase">
                 <ChevronRight size={20} aria-hidden="true" className="text-hero-red transition-transform group-open:rotate-90 motion-reduce:transition-none" />
                 {t("More editorial details")}
               </span>
-              <span className="font-body text-sm text-ink-muted">{t("Point of view, narrator, motifs, protected language and ambiguities.")}</span>
+              <span className="font-body text-xs text-ink-soft">{t("Point of view, narrator, motifs, protected language and ambiguities.")}</span>
             </summary>
             <div className="mt-4 grid items-start gap-6 lg:grid-cols-2">
               <div className="min-w-0 space-y-6">
@@ -431,7 +432,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
 
       <ApprovalBar
         next={t("Choose the visual direction for every complete page")}
-        primaryLabel={dirty ? t("SAVE & APPROVE BRIEF — CONTINUE") : t("APPROVE BRIEF — CONTINUE")}
+        primaryLabel={dirty ? t("Save & approve brief") : t("Approve brief")}
         onPrimary={approve}
         primaryDisabled={busy || invalidRange || conflict || stageStatus !== "awaiting_review"}
         busy={busy}

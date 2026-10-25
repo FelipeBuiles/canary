@@ -21,9 +21,9 @@ export function BriefSection({ id, title, value, onChange, featured = false, num
   const items = Array.isArray(value) ? value.filter((item) => item.trim()) : [];
   const List = numbered ? "ol" : "ul";
   return (
-    <EntityCard className={featured ? "shadow-paper" : ""}>
-      <div ref={toggle} className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-display text-xl font-black uppercase leading-tight">{title}</h3>
+    <EntityCard>
+      <div ref={toggle} className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-display text-base font-black uppercase leading-tight">{title}</h3>
         <Button variant="outline" size="xs" aria-expanded={editing} aria-controls={`${id}-content`}
           aria-label={`${t(editing ? "Done editing" : "Edit")} ${title}`}
           onClick={() => setEditing(!editing)}>
