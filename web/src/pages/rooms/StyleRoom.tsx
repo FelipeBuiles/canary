@@ -19,7 +19,7 @@ import {
   useProjectCoverEstimate,
   useProjects,
 } from "../../api/queries";
-import { Check, ArrowDownRight, Columns2, X } from "lucide-react";
+import { ArrowDownRight, Columns2, X } from "lucide-react";
 import { BookLetteringPanel } from "../../components/lettering/BookLetteringPanel";
 import { StyleProofCard } from "../../components/style/StyleProofCard";
 import { StyleGenerationProgress } from "../../components/style/StyleGenerationProgress";
@@ -33,6 +33,7 @@ import { ApprovalBar, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } f
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { StyleDirectionComposer, type StyleDirectionMode } from "../../components/style/StyleDirectionComposer";
 import { usePipelineStore } from "../../store/pipeline";
 import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
@@ -68,6 +69,10 @@ function multiplyEstimate(estimate: CostEstimate | undefined, count: number): Co
       : estimate.reserved_credits * count,
   };
 }
+
+const SEGMENT = "flex h-8 items-center gap-1.5 px-3 font-meta text-[0.8125rem] font-medium transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]";
+const SEGMENT_ON = "bg-ink-black text-pulp-paper";
+const SEGMENT_OFF = "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black";
 
 export function StyleRoom() {
   const { t } = useI18n();
@@ -364,12 +369,16 @@ export function StyleRoom() {
   return (
     <RoomShell project={id}>
       <RoomHeader
-        title="CHOOSE THE LOOK"
-        lead="Choose one visual direction. Scenewright carries it through characters, places, and panels."
+        title={t("Look")}
+        lead={[
+          suggestions.length > 0 ? t("{count, plural, one {# proof} other {# proofs}}", { count: suggestions.length }) : undefined,
+          activeSuggestion ? proofName(activeSuggestion) : undefined,
+          projectConfig?.lettering_mode === "integrated" ? t("Integrated lettering") : undefined,
+        ].filter(Boolean).join(" · ")}
         actions={suggestions.length > 0 || batchInFlight ? (
           <div className="flex items-center gap-3">
             {anyGenerating && (
-              <span role="status" aria-live="polite" className="font-meta text-[0.68rem] font-bold tracking-[0.08em] text-ink-black/65">
+              <span role="status" aria-live="polite" className="font-meta text-xs text-ink-soft">
                 {runningStyleCount > 0 && `${runningStyleCount} ${t("RUNNING")}`}{runningStyleCount > 0 && queuedStyleCount > 0 && " / "}{queuedStyleCount > 0 && `${queuedStyleCount} ${t("QUEUED")}`}
               </span>
             )}
@@ -379,7 +388,7 @@ export function StyleRoom() {
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="sm"
-                variant="primary"
+                variant="outline"
                 onClick={() => setShowDirectionComposer((visible) => !visible)}
                 disabled={letteringOpen}
               >
@@ -390,9 +399,9 @@ export function StyleRoom() {
         ) : undefined}
       />
 
-      {projectConfig?.lettering_mode === "integrated" && <p className="mt-5 text-sm leading-relaxed text-ink-muted">{t("Integrated lettering: these proofs draw text, balloons, and sound effects into the artwork, just like your pages. Text changes require an image correction.")}</p>}
-      {projectConfig?.lettering_mode !== "integrated" && styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
-      {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
+      {projectConfig?.lettering_mode === "integrated" && !styleSelected && <p className="text-xs leading-5 text-ink-soft">{t("Integrated lettering: these proofs draw text, balloons, and sound effects into the artwork, just like your pages. Text changes require an image correction.")}</p>}
+      {projectConfig?.lettering_mode !== "integrated" && styleSelected && !letteringOpen && <div><Button variant="outline" size="sm" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
+      {letteringOpen && <div><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
 
       {suggestionStatus === "failed" || latestSuggestionJob?.status === "failed" ? (
         <ErrorNotice error={suggestionError ?? latestSuggestionJob?.user_message ?? latestSuggestionJob?.error} operation="generate" />
@@ -480,20 +489,8 @@ export function StyleRoom() {
         </div>
       ) : suggestions.length === 0 ? null : (
         <>
-          <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8">
-            <div>
-              <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("STYLE PROOFS")}</h2>
-              <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("One story, different visual directions. Explore the artwork, compare your favorites, then choose the look your comic will carry.")}</p>
-              {storyBible?.title && <p className="mt-4 font-meta text-xs text-narrator-gold">{storyBible.title}</p>}
-            </div>
-            <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
-              <div className="flex items-center gap-2 font-meta text-xs font-bold text-narrator-gold">{activeSuggestion && <Check size={16} aria-hidden="true" />}{t(activeSuggestion ? "YOUR STYLE" : "YOUR CHOICE")}</div>
-              <p className="mt-3 break-words font-display text-xl font-bold leading-tight">{activeSuggestion ? proofName(activeSuggestion) : t("Which world feels like your story?")}</p>
-              <p className="mt-2 font-body text-xs leading-6 text-pulp-paper/85">{t(activeSuggestion ? "Selected for your comic. You can still explore the other proofs." : "Use Select this style beneath your favorite proof.")}</p>
-            </div>
-          </section>
           {showDirectionComposer && (
-            <div className="mt-6">
+            <div>
               <StyleDirectionComposer
                 automaticCost={suggestEstimate?.estimate_credits}
                 customSingleCost={directionEstimate?.estimates.faithful.estimate_credits}
@@ -553,46 +550,41 @@ export function StyleRoom() {
           )}
 
           <section aria-label={t("STYLE PROOFS")} className="@container/style-proofs">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-surface-container p-4">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 font-meta text-xs font-bold"><Columns2 size={17} aria-hidden="true" />{t("Compare your favorites")}</p>
-                <p role="status" className="mt-2 font-body text-xs leading-6 text-ink-muted">{t(comparedSuggestions.length === 0 ? "Choose up to three proofs to see them side by side." : comparedSuggestions.length === 1 ? "One proof added. Choose another to start comparing." : comparedSuggestions.length === 3 ? "Three proofs added. Remove one to compare another." : "Two proofs ready to compare. You can add one more.")}</p>
-              </div>
-              {comparedSuggestions.length >= 2 && <a href="#style-comparison" className="inline-flex min-h-11 items-center gap-2 font-meta text-xs font-bold text-hero-red underline underline-offset-4">{t("View comparison")}<ArrowDownRight size={17} aria-hidden="true" /></a>}
-              {comparedSuggestions.length > 0 && <div className="flex w-full flex-wrap gap-2">
-                {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${proofName(suggestion)}`}><span className="text-left">{proofName(suggestion)}</span><X size={14} className="shrink-0" aria-hidden="true" /></Button>)}
-              </div>}
-            </div>
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            {yoursCount > 0 && suggestedCount > 0 ? (
-              <div role="group" aria-label={t("Filter proofs")} className="flex flex-wrap gap-2">
+            <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+            {yoursCount > 0 && suggestedCount > 0 && (
+              <div role="group" aria-label={t("Filter proofs")} className="inline-flex border border-ink-black/55 bg-bristol">
                 {([
                   ["all", t("All"), shownSuggestions.length],
                   ["yours", t("Yours"), yoursCount],
                   ["suggested", t("Suggested"), suggestedCount],
                 ] as const).map(([value, label, count]) => (
-                  <Button
-                    key={value}
-                    size="xs"
-                    variant={effectiveFilter === value ? "secondary" : "outline"}
-                    aria-pressed={effectiveFilter === value}
-                    onClick={() => setProofFilter(value)}
-                  >
-                    {label} · {count}
-                  </Button>
+                  <button key={value} type="button" aria-pressed={effectiveFilter === value} onClick={() => setProofFilter(value)}
+                    className={cn(SEGMENT, effectiveFilter === value ? SEGMENT_ON : SEGMENT_OFF)}>
+                    {label} <span className="tabular-nums opacity-70">{count}</span>
+                  </button>
                 ))}
               </div>
-            ) : <span />}
+            )}
               {viewableSuggestions.length > 1 && (
-                <div role="group" aria-label={t("Proof view")} className="flex gap-2">
+                <div role="group" aria-label={t("Proof view")} className="ml-auto inline-flex border border-ink-black/55 bg-bristol">
                   {([["grid", t("Grid")], ["flip", t("Flip")], ["wall", t("Wall")]] as const).map(([value, label]) => (
-                    <Button key={value} size="xs" variant={proofView === value ? "secondary" : "outline"} aria-pressed={proofView === value} onClick={() => setProofView(value)}>
+                    <button key={value} type="button" aria-pressed={proofView === value} onClick={() => setProofView(value)}
+                      className={cn(SEGMENT, proofView === value ? SEGMENT_ON : SEGMENT_OFF)}>
                       {label}
-                    </Button>
+                    </button>
                   ))}
                 </div>
               )}
             </div>
+            {comparedSuggestions.length > 0 && (
+              // The compare tray exists only while something is in it.
+              <div className="mb-5 flex flex-wrap items-center gap-2 border border-ink-black/12 bg-bristol px-3 py-2">
+                <Columns2 size={15} aria-hidden="true" className="text-ink-soft" />
+                <p role="status" className="font-meta text-xs text-ink-muted">{t(comparedSuggestions.length === 1 ? "One proof added. Choose another to start comparing." : comparedSuggestions.length === 3 ? "Three proofs added. Remove one to compare another." : "Two proofs ready to compare. You can add one more.")}</p>
+                {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${proofName(suggestion)}`}><span className="text-left">{proofName(suggestion)}</span><X size={13} className="shrink-0" aria-hidden="true" /></Button>)}
+                {comparedSuggestions.length >= 2 && <a href="#style-comparison" className="ml-auto inline-flex min-h-8 items-center gap-1.5 font-meta text-xs font-semibold text-ink-black underline decoration-ink-black/30 underline-offset-4 hover:text-hero-red">{t("View comparison")}<ArrowDownRight size={15} aria-hidden="true" /></a>}
+              </div>
+            )}
             {proofView === "flip" && viewableSuggestions.length > 1 ? (
               <ProofFlipViewer
                 projectName={id}
@@ -609,7 +601,7 @@ export function StyleRoom() {
               />
             ) : (
               // Fit 280px cards plus 24px gaps, with at most three columns.
-              <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-x-6 @min-[584px]/style-proofs:grid-cols-2 @min-[888px]/style-proofs:grid-cols-3">
+              <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-x-5 @min-[584px]/style-proofs:grid-cols-2 @min-[888px]/style-proofs:grid-cols-3">
                 {filteredSuggestions.map(renderProofCard)}
               </div>
             )}
@@ -625,11 +617,6 @@ export function StyleRoom() {
             )}
           </section>
 
-          {suggestions.length > 0 && suggestions.every((suggestion) => suggestion.has_sample) && (
-            <p className="mt-4 font-meta text-[0.68rem] font-bold tracking-[0.08em] text-ink-black/60">
-              {t("EVERY COMPLETED PROOF USES THE SAME STORY-SPECIFIC AUDITION")}
-            </p>
-          )}
 
         </>
       )}
