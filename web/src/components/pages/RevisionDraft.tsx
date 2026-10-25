@@ -580,16 +580,18 @@ export function RevisionDraft({
   const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
 
   return (
-    <section aria-label={t("Page corrections")} className="space-y-4 lg:flex lg:h-full lg:flex-col">
-      {/* Artwork left, the next revision right: the page's checks, then your own changes. */}
-      <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)]">
-        <div className="min-w-0 space-y-4 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
-          {changes.length === 0 && (
+    <section aria-label={t("Page corrections")} className="lg:flex lg:h-full lg:flex-col">
+      {/* The page under the lamp on the ink stage; the next revision in the inspector: its checks, then your own changes. */}
+      <div className="grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_25rem] lg:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1fr)_28rem]">
+        <div className="benday-ink min-w-0 space-y-4 px-4 py-5 sm:px-6 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
+          {changes.length === 0 && revisions.length > 1 && (
+            <div className="self-center bg-bristol px-2 py-1.5 text-ink-black shadow-float">
             <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions}
               selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
               onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
+            </div>
           )}
-          <figure className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1">
+          <figure className="relative flex h-[max(12rem,calc(100dvh-14rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1 [&_img]:shadow-[0_30px_60px_-20px_rgb(0_0_0/0.7),0_0_0_1px_rgb(252_250_237/0.12)]">
             {drafting ? (
               <PageMarker
                 key={`${comicPageRevision}:${parentRenderRevision}`}
@@ -617,7 +619,7 @@ export function RevisionDraft({
             )}
           </figure>
           {beforeRevision != null && (
-            <details className="border border-ink-black/20 px-3 py-2" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
+            <details className="border border-ink-black/20 bg-bristol px-3 py-2 text-ink-black" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
               <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
                 {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {beforeRevision} → {t("Revision")} {shownRevision})
               </summary>
@@ -709,7 +711,7 @@ export function RevisionDraft({
         </div>
 
         {/* Room at the end for button shadows and their 1px hover nudge, so hovering never adds a scrollbar. */}
-        <div className="min-w-0 space-y-6 border-t border-ink-black/15 pt-5 lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden lg:border-l lg:border-t-0 lg:pb-2 lg:pl-6 lg:pr-2 lg:pt-0">
+        <div className="min-w-0 space-y-6 bg-bristol px-5 pb-6 pt-5 text-ink-black lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
           {submittedJobId && canRetry && (
             <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
               <p className="font-body text-sm font-bold">{t("The redraw didn’t finish. Your changes are still here.")}</p>
@@ -729,7 +731,7 @@ export function RevisionDraft({
 
           {(ownChanges.length > 0 || !locked) && (
             <section aria-label={t("Your changes")} className="space-y-3">
-              <SectionHeader variant="underline" title={t("YOUR CHANGES")} />
+              <SectionHeader variant="underline" title={t("Your changes")} />
               {ownChanges.length > 0 && (
                 <ol className="space-y-3">
                   {ownChanges.map((change) => <li key={change.id}>{changeCard(change)}</li>)}
@@ -755,7 +757,7 @@ export function RevisionDraft({
                   />
                   <div className="flex justify-end">
                     <Button size="xs" variant="outline" onClick={addManual} disabled={!manualInput.trim()}>
-                      {t("ADD")}
+                      {t("Add")}
                     </Button>
                   </div>
                 </div>
@@ -779,8 +781,8 @@ export function RevisionDraft({
           )}
 
           {!previewFresh && !redraw && (
-            <div className="space-y-2 border-t border-ink-black/15 pt-4">
-              <Button className="w-full" size="sm" onClick={runPreview} disabled={locked || preview.isPending || reviewCount === 0}>
+            <div className="sticky bottom-0 -mx-5 space-y-2 border-t border-ink-black/12 bg-pulp-paper px-5 pb-1 pt-4">
+              <Button className="w-full" size="md" onClick={runPreview} disabled={locked || preview.isPending || reviewCount === 0}>
                 {preview.isPending ? t("Reviewing…") : t("{count, plural, =0 {REVIEW CHANGES} one {REVIEW # CHANGE} other {REVIEW # CHANGES}}", { count: reviewCount })}
               </Button>
               {preview.data && !submittedJobId && reviewCount > 0 && (

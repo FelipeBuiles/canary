@@ -429,7 +429,7 @@ describe("RevisionDraft across render targets", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous version" }));
     expect(screen.getAllByRole("img", { name: /render revision 1/i }).length).toBeGreaterThan(0);
     fireEvent.change(screen.getByLabelText("Describe a change"), { target: { value: "Darker sky" } });
-    fireEvent.click(screen.getByRole("button", { name: "ADD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(screen.queryByRole("button", { name: /use this version/i })).toBeNull();
     expect(screen.getAllByRole("img", { name: /render revision 2/i }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("img", { name: /render revision 1/i })).toBeNull();

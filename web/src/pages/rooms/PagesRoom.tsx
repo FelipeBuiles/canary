@@ -6,10 +6,11 @@ import { trackProductEvent } from "../../api/events";
 import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
-import { BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
+import { BookOpen, Columns2, LayoutGrid, Layers, MoreHorizontal, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
+import { gallerySpreads } from "../../lib/pageSpreads";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -152,9 +153,13 @@ function PageReview({
   checkingText,
   checkError,
   deliberateView,
+  totalPages,
+  filmstrip,
 }: {
   project: string;
   item: CompletePageSummary;
+  totalPages: number;
+  filmstrip: Array<{ pageNumber: number; src: string | null; flagged: boolean }>;
   onClose: () => void;
   onJobQueued: (jobId: string, pageNumber: number) => void;
   pageIsDrawing: boolean;
@@ -197,85 +202,101 @@ function PageReview({
     }
   }
 
+  const darkButton = "flex size-9 items-center justify-center border border-pulp-paper/20 text-pulp-paper transition-colors hover:bg-pulp-paper/10 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-narrator-gold";
+
   return createPortal(
     <section
       role="dialog"
       aria-modal="true"
       aria-label={`${t("Page")} ${item.page.page_number} ${t("review")}`}
-      className="fixed inset-0 z-[120] flex justify-center bg-ink-black/75 p-0 sm:p-3 md:p-6"
+      className="fixed inset-0 z-[120] flex"
       {...backdrop}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-full w-full max-w-[1800px] flex-col bg-pulp-paper lg:h-full shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black"
+        className="flex h-full w-full flex-col bg-ink-black text-pulp-paper focus-visible:outline-none"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="shrink-0 bg-bristol">
-          <header className="flex items-start justify-between gap-3 px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
-            <div className="min-w-0">
-              <h2 className="font-display text-[1.375rem] font-extrabold leading-none tracking-[-0.015em]">
-                {t("Page")} {item.page.page_number}
-              </h2>
-              <p className="mt-2 max-w-[22rem] font-meta text-[10px] leading-relaxed text-ink-muted sm:text-xs">
-                {t("Revision")} {editSourceRevision ?? comicPageRevision}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-              <nav aria-label={t("Review navigation")} className="flex gap-1">
-                <button type="button" className="flex size-11 items-center justify-center bg-pulp-paper text-ink-black transition-colors hover:bg-ink-black hover:text-bristol disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-pulp-paper disabled:hover:text-ink-black" aria-label={t("PREVIOUS PAGE")} title={t("PREVIOUS PAGE")} disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>
-                  <ReviewChevronLeft size={20} aria-hidden="true" />
-                </button>
-                <button type="button" className="flex size-11 items-center justify-center bg-pulp-paper text-ink-black transition-colors hover:bg-ink-black hover:text-bristol disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-pulp-paper disabled:hover:text-ink-black" aria-label={t("NEXT PAGE")} title={t("NEXT PAGE")} disabled={nextPage == null} onClick={() => nextPage != null && onNavigate(nextPage)}>
-                  <ReviewChevronRight size={20} aria-hidden="true" />
-                </button>
-              </nav>
-              <button type="button" className="flex size-11 items-center justify-center text-ink-muted transition-colors hover:bg-pulp-paper hover:text-ink-black" onClick={onClose} aria-label={t("Close page review")} title={t("CLOSE")}>
-                <ReviewClose size={20} aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-          <div className="flex flex-wrap items-center justify-between gap-x-4 bg-surface-container px-4 sm:px-6">
+        <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-pulp-paper/10 px-3 py-2 sm:px-5">
+          <button type="button" onClick={onClose} className="flex h-9 items-center gap-1.5 pr-1 font-meta text-[0.8125rem] text-on-chrome-muted transition-colors hover:text-pulp-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-narrator-gold">
+            <ReviewChevronLeft size={16} aria-hidden="true" />{t("Pages")}
+          </button>
+          <span aria-hidden="true" className="hidden h-5 w-px bg-pulp-paper/15 sm:block" />
+          <h2 className="font-display text-[1.625rem] font-black uppercase leading-none tracking-[-0.03em]">
+            {t("Page")} {item.page.page_number}
+          </h2>
+          <p className="font-meta text-[0.8125rem] text-on-chrome-muted">
+            {totalPages > 0 && <>{t("of {total}", { total: String(totalPages) })} · </>}<span>{t("Revision")} {editSourceRevision ?? comicPageRevision}</span>
+          </p>
+          <p className="hidden min-w-0 flex-1 truncate text-[0.8125rem] text-pulp-paper/80 xl:block" title={item.page.rhythm_intent}>{item.page.rhythm_intent}</p>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <RoomTabs
-            ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
-            className="min-w-0 max-w-full gap-1 py-2 [&>button]:border-0 [&>button]:px-3 [&>button]:tracking-normal sm:[&>button]:px-4"
-            tabs={[
-              {
-                key: "page",
-                label: t("Page"),
-                active: shownView === "page",
-                onClick: () => selectView("page"),
-              },
-              ...(editableLettering ? [{
-                key: "lettering",
-                label: t("Lettering"),
-                active: shownView === "lettering",
-                onClick: () => selectView("lettering"),
-                disabled: editSourceRevision == null,
-              }] : []),
-              {
-                key: "history",
-                label: t("History"),
-                active: shownView === "history",
-                onClick: () => selectView("history"),
-              },
-            ]}
-          />
-            {nextUnresolved != null && <button type="button" className="mb-2 flex min-h-11 items-center gap-2 font-meta text-[11px] font-bold tracking-[0.04em] text-ink-black underline decoration-ink-black/30 underline-offset-4 transition-colors hover:text-hero-red disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-ink-black sm:mb-0" disabled={nextUnresolved == null} onClick={() => nextUnresolved != null && onNavigate(nextUnresolved)}>
-              {t("NEXT UNRESOLVED")} <ReviewChevronRight size={16} aria-hidden="true" />
-            </button>}
+              ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
+              className="gap-0 border border-pulp-paper/20 [&>button]:h-9 [&>button]:min-h-0 [&>button]:border-0 [&>button]:bg-transparent [&>button]:px-3 [&>button]:font-meta [&>button]:text-[0.8125rem] [&>button]:font-medium [&>button]:normal-case [&>button]:tracking-normal [&>button]:text-on-chrome-muted [&>button:hover]:text-pulp-paper [&>button[aria-selected=true]]:bg-pulp-paper [&>button[aria-selected=true]]:text-ink-black [&>button[aria-pressed=true]]:bg-pulp-paper [&>button[aria-pressed=true]]:text-ink-black"
+              tabs={[
+                { key: "page", label: t("Page"), active: shownView === "page", onClick: () => selectView("page") },
+                ...(editableLettering ? [{
+                  key: "lettering", label: t("Lettering"), active: shownView === "lettering",
+                  onClick: () => selectView("lettering"), disabled: editSourceRevision == null,
+                }] : []),
+                { key: "history", label: t("History"), active: shownView === "history", onClick: () => selectView("history") },
+              ]}
+            />
+            <nav aria-label={t("Review navigation")} className="flex gap-1">
+              <button type="button" className={darkButton} aria-label={t("PREVIOUS PAGE")} title={t("PREVIOUS PAGE")} disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>
+                <ReviewChevronLeft size={18} aria-hidden="true" />
+              </button>
+              <button type="button" className={darkButton} aria-label={t("NEXT PAGE")} title={t("NEXT PAGE")} disabled={nextPage == null} onClick={() => nextPage != null && onNavigate(nextPage)}>
+                <ReviewChevronRight size={18} aria-hidden="true" />
+              </button>
+            </nav>
+            {nextUnresolved != null && (
+              <button type="button" className="flex h-9 items-center gap-2 border border-pulp-paper/20 px-3 font-meta text-[0.8125rem] font-medium text-pulp-paper transition-colors hover:bg-pulp-paper/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-narrator-gold" onClick={() => onNavigate(nextUnresolved)}>
+                <span aria-hidden="true" className="size-2 border border-ink-black bg-narrator-gold" />
+                {t("Next that needs you · {page}", { page: String(nextUnresolved) })}
+              </button>
+            )}
+            <button type="button" className={darkButton} onClick={onClose} aria-label={t("Close page review")} title={t("CLOSE")}>
+              <ReviewClose size={18} aria-hidden="true" />
+            </button>
           </div>
-        </div>
-        <div ref={bodyRef} className={`min-h-0 flex-1 overflow-y-auto ${shownView === "lettering" ? "lettering-modal-body" : ""}`}>
-          {/* On wide screens the page and history views fill the window and their columns scroll on their own. */}
-          <div className={`space-y-7 p-4 lg:p-6 ${shownView === "lettering" ? "" : "lg:flex lg:h-full lg:flex-col"}`}>
+        </header>
+        <div className="flex min-h-0 flex-1">
+          {filmstrip.length > 1 && (
+            <nav aria-label={t("Pages")} className="hidden w-[6.5rem] shrink-0 overflow-y-auto bg-[#141510] py-4 lg:block">
+              <ol className="flex flex-col items-center gap-3.5">
+                {filmstrip.map((entry) => {
+                  const current = entry.pageNumber === item.page.page_number;
+                  return (
+                    <li key={entry.pageNumber}>
+                      <button type="button" aria-current={current ? "page" : undefined}
+                        aria-label={`${t("Page")} ${entry.pageNumber}${entry.flagged ? `, ${t("Needs you")}` : ""}`}
+                        ref={current ? (node) => node?.scrollIntoView?.({ block: "nearest" }) : undefined}
+                        onClick={() => !current && onNavigate(entry.pageNumber)}
+                        className={cn("group relative block w-[4.5rem] text-center font-meta text-[0.6875rem] font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold", current ? "text-narrator-gold" : "text-on-chrome-muted hover:text-pulp-paper")}>
+                        {entry.src
+                          ? <img src={entry.src} alt="" loading="lazy" decoding="async" className={cn("aspect-[2/3] w-full object-cover outline outline-1 outline-pulp-paper/15 transition-opacity", current ? "opacity-100 outline-2 outline-offset-2 outline-narrator-gold" : "opacity-60 group-hover:opacity-100")} />
+                          : <span className="block aspect-[2/3] w-full bg-pulp-paper/5 outline outline-1 outline-pulp-paper/15" />}
+                        {entry.flagged && <span aria-hidden="true" className="absolute right-1 top-1 size-2.5 border border-ink-black bg-narrator-gold" />}
+                        <span className="mt-1 block">{entry.pageNumber}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
+          )}
+          <div ref={bodyRef} className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto", shownView === "lettering" && "lettering-modal-body")}>
             {(renderStale || !!item.redraw?.changed_references.length) && !pageIsDrawing && (
-              <StaleRenderRedraw project={project} pageNumber={item.page.page_number}
-                changedLooks={renderStale || !item.redraw ? undefined : describeRedrawChanges(item.redraw.changed_references, t)}
-                onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)} />
+              <div className="shrink-0 bg-pulp-paper p-4 text-ink-black lg:px-6">
+                <StaleRenderRedraw project={project} pageNumber={item.page.page_number}
+                  changedLooks={renderStale || !item.redraw ? undefined : describeRedrawChanges(item.redraw.changed_references, t)}
+                  onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)} />
+              </div>
             )}
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
-            <div hidden={shownView !== "page"} role="region" aria-label={t("Page")} className="lg:min-h-0 lg:flex-1">
+            <div hidden={shownView !== "page"} role="region" aria-label={t("Page")} className="min-h-0 lg:flex-1">
               {editSourceRevision != null ? (
                 <RevisionDraft
                   key={`${project}:${item.page.page_number}:${comicPageRevision}:${editSourceRevision}`}
@@ -311,15 +332,17 @@ function PageReview({
                   )}
                 />
               ) : (
-                <Surface padding="lg" border="soft" shadow="none">
-                  <p>{t("This page has not been drawn yet.")}</p>
-                </Surface>
+                <div className="p-6">
+                  <Surface padding="lg" border="soft" shadow="none">
+                    <p className="text-ink-black">{t("This page has not been drawn yet.")}</p>
+                  </Surface>
+                </div>
               )}
             </div>
 
             {shownView === "history" && (
               <div role="region" aria-label={t("History")}
-                className="grid gap-8 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] lg:grid-rows-[minmax(0,1fr)]">
+                className="grid min-h-full gap-8 bg-pulp-paper p-4 text-ink-black lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] lg:grid-rows-[minmax(0,1fr)] lg:p-6">
                 <div className="min-w-0 lg:min-h-0">
                   <PageVersions
                     key={`${project}:${item.page.page_number}`}
@@ -334,12 +357,58 @@ function PageReview({
               </div>
             )}
 
-            {shownView === "lettering" && editSourceRevision != null && !renderStale && <Suspense fallback={<p role="status">{t("Opening lettering…")}</p>}><LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/></Suspense>}
+            {shownView === "lettering" && editSourceRevision != null && !renderStale && (
+              <div className="min-h-full bg-pulp-paper p-4 text-ink-black lg:p-6">
+                <Suspense fallback={<p role="status">{t("Opening lettering…")}</p>}><LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/></Suspense>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </section>,
     document.body,
+  );
+}
+
+/** The room's quiet reference documents, kept behind one button. */
+function PageToolsMenu({ items, onOpen }: {
+  items: Array<{ kind: "adaptation" | "page-plan"; label: string; disabled: boolean }>;
+  onOpen: (kind: "adaptation" | "page-plan") => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function close(event: MouseEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div ref={rootRef} className="relative">
+      <button type="button" data-page-tools aria-expanded={open} aria-haspopup="true" aria-label={t("Page documents")} title={t("Page documents")}
+        onClick={() => setOpen((value) => !value)}
+        className="flex size-8 items-center justify-center text-ink-muted transition-colors hover:bg-surface-container hover:text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
+        <MoreHorizontal size={18} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-52 border border-ink-black/12 bg-bristol py-1 shadow-float">
+          {items.map((item) => (
+            <button key={item.kind} type="button" data-reading-kind={item.kind} disabled={item.disabled}
+              onClick={() => { setOpen(false); onOpen(item.kind); }}
+              className="flex h-9 w-full items-center px-3 text-left font-meta text-[0.8125rem] font-medium text-ink-black transition-colors hover:bg-sidebar-tint disabled:cursor-not-allowed disabled:text-ink-soft disabled:hover:bg-transparent">
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -369,6 +438,7 @@ export function PagesRoom() {
   const review: ReviewView = reviewParam === "lettering" || reviewParam === "history" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
+  const layout: "spreads" | "grid" = searchParams.get("layout") === "grid" ? "grid" : "spreads";
   const readingParam = searchParams.get("reading");
   const reading: DrawerKind | null = readingParam === "adaptation" || readingParam === "page-plan" ? readingParam : null;
   const readingAvailable = reading !== null && canReadDocument(reading, status);
@@ -490,7 +560,8 @@ export function PagesRoom() {
       onClose={() => {
         updateContext({ reading: null });
         requestAnimationFrame(() => {
-          document.querySelector<HTMLButtonElement>(`[data-reading-kind="${reading}"]`)?.focus();
+          (document.querySelector<HTMLButtonElement>(`[data-reading-kind="${reading}"]`)
+            ?? document.querySelector<HTMLButtonElement>("[data-page-tools]"))?.focus();
         });
       }} />;
   }
@@ -625,6 +696,11 @@ export function PagesRoom() {
     || (filter === "needs-review" && needsReview(item))
     || (filter === "drawing" && drawingPages.has(item.page.page_number))
     || (filter === "failed" && failedPages.has(item.page.page_number)));
+  const showSpreads = filter === "all" && layout === "spreads";
+  // Pages holding an export blocker: the bar sends you to the first one instead of to Book.
+  const blockingIds = new Set(data.issue_summary.blocking_issue_ids);
+  const blockedPages = pages.filter((item) => item.issues.some((issue) => blockingIds.has(issue.id)));
+  const firstBlockedPage = blockingIds.size > 0 ? (blockedPages[0]?.page.page_number ?? unresolvedPages[0]?.page.page_number) : undefined;
   const reviewIndex = pages.findIndex((item) => item.page.page_number === selected);
   const nextUnresolved = [...unresolvedPages.filter((item) => item.page.page_number > (selected ?? 0)),
     ...unresolvedPages.filter((item) => item.page.page_number < (selected ?? 0))][0]?.page.page_number;
@@ -707,6 +783,155 @@ export function PagesRoom() {
     });
   }
 
+  function renderPage(item: CompletePageSummary, side?: "left" | "right") {
+    const { revision, drawing: pageIsDrawing, failure: pageFailure, failurePhase, badge, openIssues: openIssueCount, canRetryGeneration } = states.get(item.page.page_number)!;
+    const failureCopy = pageFailure && !revision && !pageIsDrawing
+      ? getImageFailureCopy(
+          t,
+          failurePhase === "analysis" ? "analysis_error" : pageFailure.classification,
+          failurePhase === "analysis" ? undefined : pageFailure.user_message,
+          failurePhase === "analysis" ? undefined : pageFailure.error,
+        )
+      : null;
+    const pageActionError = pageActionErrors[item.page.page_number];
+    return (
+      <article key={item.page.page_number} aria-label={`${t("Page")} ${item.page.page_number}`} className="relative flex min-w-0 flex-col">
+        <div className="relative shadow-[0_1px_2px_rgb(27_28_21/0.18),0_18px_34px_-18px_rgb(27_28_21/0.45)]">
+        <ImageGenerationPreview project={projectId} target={`page:${item.page.page_number}`} active={pageIsDrawing} keepChildren={!!revision} aspect="2 / 3"
+          aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
+          finalSrc={revision ? (pageDisplayImage(projectId, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")) : undefined}
+          label={t("DRAWING PAGE…")} caption={t("Queued in the page press")}>
+        {revision ? (
+          <button
+            type="button"
+            onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
+            aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision}`}
+            className="group relative block w-full text-left transition-[translate,box-shadow] duration-[var(--motion-settle)] ease-[var(--ease-press)] hover:z-10 hover:-translate-x-px hover:-translate-y-px hover:shadow-press focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+          >
+            <div className="relative aspect-[2/3] overflow-hidden bg-surface-container outline outline-0 outline-ink-black group-hover:outline-2">
+              <PageThumbnail
+                src={pageDisplayImage(projectId, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")}
+                alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
+                reveal={revealedPage === item.page.page_number}
+                onRevealEnd={() => setRevealedPage(null)}
+              />
+              {/* The fold of the open book darkens the inner edge of each facing page. */}
+              {side && <span aria-hidden="true" className={cn("pointer-events-none absolute inset-y-0 w-6", side === "left" ? "right-0 bg-gradient-to-l" : "left-0 bg-gradient-to-r", "from-ink-black/30 to-transparent")} />}
+              <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between bg-gradient-to-t from-ink-black/80 to-transparent px-2.5 pb-2 pt-6 font-meta text-xs font-medium text-pulp-paper opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {t("Open page")}<span>→</span>
+              </span>
+            </div>
+          </button>
+        ) : (
+          <div className="benday-paper aspect-[2/3] overflow-hidden">
+            {failureCopy ? (
+              <div role="alert" className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center">
+                <div className="my-auto flex flex-col items-center">
+                  <Layers size={28} aria-hidden="true" className="text-hero-red" />
+                  <strong className="mt-4 font-meta text-xs text-hero-red">
+                    {failureCopy.title}
+                  </strong>
+                  <p className="mt-3 font-body text-xs leading-5 text-ink-black/75">
+                    {failureCopy.message}
+                  </p>
+                  {failureCopy.guidance && (
+                    <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
+                      {failureCopy.guidance}
+                    </p>
+                  )}
+                  {pageActionError && !paidIntent && (
+                    <ErrorNotice error={pageActionError} operation="generate" />
+                  )}
+                </div>
+                {pageFailure?.classification === "provider_blocked"
+                  || (pageFailure?.recoverable && failurePhase !== "analysis"
+                    && (pageFailure.classification === "generation_error"
+                      || pageFailure.classification === "empty_response")) ? (
+                  <div className="mt-5 grid shrink-0 gap-2">
+                    <Button
+                      size="xs"
+                      fullWidth
+                      onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "less_graphic" })}
+                      disabled={generate.isPending || !status?.style_selected}
+                    >
+                      {t("DRAW LESS GRAPHIC VERSION")}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      fullWidth
+                      onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                      disabled={generate.isPending || !status?.style_selected}
+                    >
+                      {t("TRY AGAIN UNCHANGED")}
+                    </Button>
+                  </div>
+                ) : canRetryGeneration ? (
+                  <Button
+                    className="mt-5 shrink-0"
+                    size="xs"
+                    fullWidth
+                    onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                    disabled={generate.isPending || !status?.style_selected}
+                  >
+                    {t("TRY AGAIN")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center text-ink-muted">
+                <div className="my-auto flex flex-col items-center gap-4">
+                  <Layers size={28} aria-hidden="true" />
+                  <span className="font-meta text-xs font-semibold">{t("Ready to draw")}</span>
+                  <span className="font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
+                  {pageActionError && !paidIntent && (
+                    <ErrorNotice error={pageActionError} operation="generate" />
+                  )}
+                </div>
+                {drawStatus !== "pending" && (
+                  <Button
+                    className="mt-5 shrink-0"
+                    size="xs"
+                    fullWidth
+                    onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                    disabled={!status?.style_selected}
+                  >
+                    {t("Draw page")}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        </ImageGenerationPreview>
+        {/* Comic caption box and stamp: the page's identity rides on the art. */}
+        <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-wrap items-start justify-between gap-1">
+          <span aria-hidden="true" className="flex h-[22px] min-w-6 items-center justify-center border border-ink-black bg-pulp-paper px-1.5 font-meta text-[0.6875rem] font-bold leading-none tracking-[0.08em] text-ink-black">
+            {item.page.page_number}
+          </span>
+            {badge === "revising" ? (
+              <StatusPill className="border border-ink-black" tone="ink">{t("New revision drawing")}</StatusPill>
+            ) : badge === "stale" ? (
+              <StatusPill className="border border-ink-black" tone="red">{t("Re-planned · redraw")}</StatusPill>
+            ) : badge === "earlier-look" ? (
+              <StatusPill className="border border-ink-black" tone="gold">{t("Earlier look · redraw")}</StatusPill>
+            ) : badge === "confirm-fix" ? (
+              <StatusPill className="border border-ink-black" tone="gold">{t("Confirm fix")}</StatusPill>
+            ) : badge === "flagged" ? (
+              <StatusPill className="border border-ink-black" tone="gold">{t("{count, plural, one {# check} other {# checks}}", { count: openIssueCount })}</StatusPill>
+            ) : badge === "placement" ? (
+              <StatusPill className="border border-ink-black" tone="gold">{t("Needs placement")}</StatusPill>
+            ) : null}
+        </div>
+        </div>
+        <p className={cn("mt-2.5 flex min-w-0 gap-2 font-body text-xs leading-[17px] text-ink-soft", side === "left" && "pr-4", side === "right" && "pl-1")}>
+          <span aria-hidden="true" className={cn("shrink-0 font-meta font-bold text-ink-black", needsReview(item) && "bg-narrator-gold px-1")}>{item.page.page_number}</span>
+          <span className="truncate" title={item.page.rhythm_intent}>{item.page.rhythm_intent}</span>
+        </p>
+      </article>
+    );
+  }
+
   return (
     <RoomShell project={id}>
       <RoomHeader
@@ -744,35 +969,35 @@ export function PagesRoom() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-transparent text-ink-muted hover:text-ink-black"
-              data-reading-kind="adaptation"
-              disabled={!canReadDocument("adaptation", status)}
-              onClick={() => updateContext({ reading: "adaptation" })}
-            >
-              {t("Adaptation")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-transparent text-ink-muted hover:text-ink-black"
-              data-reading-kind="page-plan"
-              disabled={!canReadDocument("page-plan", status)}
-              onClick={() => updateContext({ reading: "page-plan" })}
-            >
-              {t("Page plan")}
-            </Button>
-            {unresolvedPages.length > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "page" })}>
-                {t("Review {count} flagged", { count: unresolvedPages.length })}
-              </Button>
-            ) : drawnPages.length > 0 && (
+            {filter === "all" && (
+              <div role="group" aria-label={t("Page layout")} className="inline-flex border border-ink-black/55 bg-bristol">
+                {([
+                  ["spreads", t("Spreads"), Columns2],
+                  ["grid", t("Grid"), LayoutGrid],
+                ] as const).map(([value, label, Icon]) => (
+                  <button key={value} type="button" aria-pressed={layout === value}
+                    onClick={() => updateContext({ layout: value === "spreads" ? null : value })}
+                    className={cn(
+                      "flex h-8 items-center gap-1.5 px-3 font-meta text-[0.8125rem] font-medium transition-colors [&+&]:shadow-[inset_1px_0_0_rgb(27_28_21/0.12)]",
+                      layout === value ? "bg-ink-black text-pulp-paper" : "text-ink-muted hover:bg-sidebar-tint hover:text-ink-black",
+                    )}>
+                    <Icon size={15} aria-hidden="true" />{label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {drawnPages.length > 0 && (
               <Button variant="outline" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}>
-                <BookOpen size={15} aria-hidden="true" />{t("Start reading")}
+                <BookOpen size={15} aria-hidden="true" />{t("Read")}
               </Button>
             )}
+            <PageToolsMenu
+              items={[
+                { kind: "adaptation", label: t("Adaptation"), disabled: !canReadDocument("adaptation", status) },
+                { kind: "page-plan", label: t("Page plan"), disabled: !canReadDocument("page-plan", status) },
+              ]}
+              onOpen={(kind) => updateContext({ reading: kind })}
+            />
           </div>
         </div>
         {drawStatus === "failed" && (status?.stages.draw?.error || status?.stages.draw?.error_code) && (
@@ -870,145 +1095,22 @@ export function PagesRoom() {
         <WholeBookReveal
           ready={filter === "all" && pages.length > 1 && drawnPages.length === pages.length && drawingPages.size === 0}
           editionKey={editionKeyFor(projectId, pages.map((item) => item.page))}
-          className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,200px),1fr))] gap-x-3 gap-y-5"
+          className={showSpreads
+            ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,27rem),1fr))] gap-x-11 gap-y-10 pt-1"
+            : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,176px),1fr))] gap-x-5 gap-y-7 pt-1"}
         >
-          {visiblePages.map((item) => {
-            const { revision, drawing: pageIsDrawing, failure: pageFailure, failurePhase, badge, openIssues: openIssueCount, canRetryGeneration } = states.get(item.page.page_number)!;
-            const failureCopy = pageFailure && !revision && !pageIsDrawing
-              ? getImageFailureCopy(
-                  t,
-                  failurePhase === "analysis" ? "analysis_error" : pageFailure.classification,
-                  failurePhase === "analysis" ? undefined : pageFailure.user_message,
-                  failurePhase === "analysis" ? undefined : pageFailure.error,
-                )
-              : null;
-            const pageActionError = pageActionErrors[item.page.page_number];
-            return (
-              <article key={item.page.page_number} aria-label={`${t("Page")} ${item.page.page_number}`} className="relative min-w-0">
-                <ImageGenerationPreview project={id} target={`page:${item.page.page_number}`} active={pageIsDrawing} keepChildren={!!revision} aspect="2 / 3"
-                  aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
-                  finalSrc={revision ? (pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")) : undefined}
-                  label={t("DRAWING PAGE…")} caption={t("Queued in the page press")}>
-                {revision ? (
-                  <button
-                    type="button"
-                    onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
-                    aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision}`}
-                    className="group block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
-                  >
-                    <div className="aspect-[2/3] overflow-hidden bg-surface-container outline outline-1 outline-ink-black/12 transition-[outline-color,box-shadow,translate] duration-[var(--motion-press)] group-hover:-translate-x-px group-hover:-translate-y-px group-hover:shadow-press group-hover:outline-2 group-hover:outline-ink-black">
-                      <PageThumbnail
-                        src={pageDisplayImage(id, { pageNumber: item.page.page_number, revision: revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")}
-                        alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
-                        reveal={revealedPage === item.page.page_number}
-                        onRevealEnd={() => setRevealedPage(null)}
-                      />
-                    </div>
-                  </button>
-                ) : (
-                  <div className="benday-paper aspect-[2/3] overflow-hidden outline outline-1 outline-ink-black/12">
-                    {failureCopy ? (
-                      <div role="alert" className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center">
-                        <div className="my-auto flex flex-col items-center">
-                          <Layers size={28} aria-hidden="true" className="text-hero-red" />
-                          <strong className="mt-4 font-meta text-xs text-hero-red">
-                            {failureCopy.title}
-                          </strong>
-                          <p className="mt-3 font-body text-xs leading-5 text-ink-black/75">
-                            {failureCopy.message}
-                          </p>
-                          {failureCopy.guidance && (
-                            <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
-                              {failureCopy.guidance}
-                            </p>
-                          )}
-                          {pageActionError && !paidIntent && (
-                            <ErrorNotice error={pageActionError} operation="generate" />
-                          )}
-                        </div>
-                        {pageFailure?.classification === "provider_blocked"
-                          || (pageFailure?.recoverable && failurePhase !== "analysis"
-                            && (pageFailure.classification === "generation_error"
-                              || pageFailure.classification === "empty_response")) ? (
-                          <div className="mt-5 grid shrink-0 gap-2">
-                            <Button
-                              size="xs"
-                              fullWidth
-                              onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "less_graphic" })}
-                              disabled={generate.isPending || !status?.style_selected}
-                            >
-                              {t("DRAW LESS GRAPHIC VERSION")}
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              fullWidth
-                              onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                              disabled={generate.isPending || !status?.style_selected}
-                            >
-                              {t("TRY AGAIN UNCHANGED")}
-                            </Button>
-                          </div>
-                        ) : canRetryGeneration ? (
-                          <Button
-                            className="mt-5 shrink-0"
-                            size="xs"
-                            fullWidth
-                            onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                            disabled={generate.isPending || !status?.style_selected}
-                          >
-                            {t("TRY AGAIN")}
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="flex h-full flex-col overflow-y-auto px-3 pb-3 pt-10 text-center text-ink-muted">
-                        <div className="my-auto flex flex-col items-center gap-4">
-                          <Layers size={28} aria-hidden="true" />
-                          <span className="font-meta text-xs font-semibold">{t("Ready to draw")}</span>
-                          <span className="font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
-                          {pageActionError && !paidIntent && (
-                            <ErrorNotice error={pageActionError} operation="generate" />
-                          )}
-                        </div>
-                        {drawStatus !== "pending" && (
-                          <Button
-                            className="mt-5 shrink-0"
-                            size="xs"
-                            fullWidth
-                            onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                            disabled={!status?.style_selected}
-                          >
-                            {t("Draw page")}
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                </ImageGenerationPreview>
-                {/* Comic caption box and stamp: the page's identity rides on the art. */}
-                <div className="pointer-events-none absolute inset-x-1.5 top-1.5 z-10 flex flex-wrap items-start justify-between gap-1">
-                  <span className="border border-ink-black bg-pulp-paper px-1.5 py-0.5 font-meta text-[0.6875rem] font-bold uppercase leading-none tracking-[0.12em] text-ink-black">
-                    {t("Page")} {item.page.page_number}
-                  </span>
-                    {badge === "revising" ? (
-                      <StatusPill className="border border-ink-black" tone="ink">{t("New revision drawing")}</StatusPill>
-                    ) : badge === "stale" ? (
-                      <StatusPill className="border border-ink-black" tone="red">{t("Re-planned · redraw")}</StatusPill>
-                    ) : badge === "earlier-look" ? (
-                      <StatusPill className="border border-ink-black" tone="gold">{t("Earlier look · redraw")}</StatusPill>
-                    ) : badge === "confirm-fix" ? (
-                      <StatusPill className="border border-ink-black" tone="gold">{t("Confirm fix")}</StatusPill>
-                    ) : badge === "flagged" ? (
-                      <StatusPill className="border border-ink-black" tone="gold">{t("{count, plural, one {# check} other {# checks}}", { count: openIssueCount })}</StatusPill>
-                    ) : badge === "placement" ? (
-                      <StatusPill className="border border-ink-black" tone="gold">{t("Needs placement")}</StatusPill>
-                    ) : null}
-                </div>
-              </article>
-            );
-          })}
+          {showSpreads
+            ? gallerySpreads(visiblePages).map((spread) => (
+              <section key={spread.key} aria-label={spread.slots.filter(Boolean).length > 1
+                ? t("Pages {first} and {second}", { first: String(spread.slots[0]!.page.page_number), second: String(spread.slots[1]!.page.page_number) })
+                : `${t("Page")} ${spread.slots.find(Boolean)!.page.page_number}`}
+                className={cn("grid min-w-0 grid-cols-2", spread.kind === "wide" && "grid-cols-1")}>
+                {spread.slots.map((slot, index) => slot
+                  ? <div key={slot.page.page_number} className="min-w-0">{renderPage(slot, spread.kind === "facing" && spread.slots.every(Boolean) ? (index === 0 ? "left" : "right") : undefined)}</div>
+                  : <div key={`blank-${index}`} aria-hidden="true" />)}
+              </section>
+            ))
+            : visiblePages.map((item) => renderPage(item))}
         </WholeBookReveal>
       </section>
 
@@ -1016,6 +1118,12 @@ export function PagesRoom() {
       {selectedItem && (
         <PageReview
           deliberateView={deliberatePage === String(selectedItem.page.page_number)}
+          totalPages={pages.length}
+          filmstrip={pages.map((entry) => ({
+            pageNumber: entry.page.page_number,
+            src: entry.active_render ? pageDisplayImage(projectId, { pageNumber: entry.page.page_number, revision: entry.active_render.render.revision, hybrid: entry.lettering_mode === "hybrid", letteringRevision: entry.lettering_revision }, "thumbnail") : null,
+            flagged: needsReview(entry),
+          }))}
           key={`${id}:${selectedItem.page.page_number}`}
           project={id}
           item={selectedItem}
@@ -1069,24 +1177,31 @@ export function PagesRoom() {
         <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>
       )}
 
-      {reviewIndex < 0 && !projectWorkActive && drawingPages.size === 0 && !run.isPending && !generate.isPending && <ApprovalBar
-        next={t("Run Finish preflight and export the book")}
-        primaryLabel={t("Continue to Book")}
-        onPrimary={continueToBook}
-        primaryDisabled={
-          approve.isPending
-          || (drawStatus !== "awaiting_review" && drawStatus !== "complete")
-          || data.issue_summary.blocking_issue_ids.length > 0
-          || data.pages.some((item) => !item.active_render)
-        }
-        busy={approve.isPending}
-        secondary={rerunAdaptation}
-        note={
-          data.issue_summary.unresolved_issue_ids.length > 0
-            ? `${data.issue_summary.unresolved_issue_ids.length} ${t("page findings available to review")}`
-            : undefined
-        }
-      />}
+      {reviewIndex < 0 && !projectWorkActive && drawingPages.size === 0 && !run.isPending && !generate.isPending && (
+        firstBlockedPage != null ? <ApprovalBar
+          next={t("{count, plural, one {# page needs you before export} other {# pages need you before export}}", { count: Math.max(1, blockedPages.length) })}
+          primaryLabel={t("Review page {page}", { page: String(firstBlockedPage) })}
+          onPrimary={() => updateContext({ page: String(firstBlockedPage), review: "page" })}
+          secondary={rerunAdaptation}
+          note={t("{ready} of {total} ready", { ready: String(pages.length - blockedPages.length), total: String(pages.length) })}
+        /> : <ApprovalBar
+          next={t("Export your book")}
+          primaryLabel={t("Continue to Book")}
+          onPrimary={continueToBook}
+          primaryDisabled={
+            approve.isPending
+            || (drawStatus !== "awaiting_review" && drawStatus !== "complete")
+            || data.pages.some((item) => !item.active_render)
+          }
+          busy={approve.isPending}
+          secondary={rerunAdaptation}
+          note={
+            data.issue_summary.unresolved_issue_ids.length > 0
+              ? `${data.issue_summary.unresolved_issue_ids.length} ${t("page findings available to review")}`
+              : undefined
+          }
+        />
+      )}
       <ArchivedArtwork project={id} />
     </RoomShell>
   );
