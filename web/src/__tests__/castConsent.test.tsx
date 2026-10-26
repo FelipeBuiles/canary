@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type * as Composites from "../components/composites";
-import { act, render, screen, within } from "@testing-library/react";
+import { fireEvent, act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +37,13 @@ vi.mock("../components/composites", async (importOriginal) => {
 import { CastFailureNotice, CastRoom } from "../pages/rooms/CastRoom";
 import { CAST_REVIEW_BLOCKER } from "../lib/castCheckpoint";
 
+/** Cast's failure sits behind one notice chip; opening it shows the list. */
+function openFailures() {
+  const notice = screen.getByRole("alert", { name: "Cast stopped" });
+  fireEvent.click(within(notice).getByRole("button", { expanded: false }));
+  return notice;
+}
+
 function renderCast() {
   return render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter>);
 }
@@ -53,10 +60,10 @@ describe("cast consent", () => {
       label: "Kaitlin — Naked, suit gone", classification: "provider_blocked", attempts: 1, message,
     }];
     renderCast();
-    const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+    const notice = openFailures();
     expect(within(notice).getByRole("link", { name: "Kaitlin — Naked, suit gone" }).getAttribute("href")).toBe("#cast-character-kaitlin");
     expect(within(notice).getByText(message)).toBeTruthy();
-    expect(screen.getByText(approvalBlocker)).toBeTruthy();
+    expect(screen.getByText("1 reference didn't finish. Resume to draw it.")).toBeTruthy();
   });
 
   it("names the likely wording behind a decline and offers ways to unblock it", async () => {
@@ -69,7 +76,7 @@ describe("cast consent", () => {
     };
     render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast"
       element={<CastFailureNotice failures={[failure]} onLessGraphic={onLessGraphic} />} /></Routes></I18nProvider></MemoryRouter>);
-    const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+    const notice = openFailures();
     expect(within(notice).getByText("bare womanly torso").parentElement!.textContent).toContain("nudity in its description");
     expect(within(notice).getByRole("link", { name: "Reword its description" }).getAttribute("href"))
       .toBe("/project/demo/story?edit=props:sphinx");
@@ -85,7 +92,7 @@ describe("cast consent", () => {
       label: "Kaitlin — Naked, suit gone", classification: "provider_blocked", attempts: 1, message: "Declined.",
     }];
     renderCast();
-    expect(screen.queryByRole("alert", { name: "CAST STOPPED" })).toBeNull();
+    expect(screen.queryByRole("alert", { name: "Cast stopped" })).toBeNull();
   });
 
   it("says open Character Check notes are advice and keeps Continue enabled", () => {
@@ -182,10 +189,10 @@ it("links each failed reference to its own card and offers one confirmed resume 
     { item_id: "key", asset_type: "prop", entity_id: "key", state_id: null, label: "Brass Key", classification: "provider_error", attempts: 1, message: "Timed out." },
   ];
   renderCast();
-  const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+  const notice = openFailures();
   expect(within(notice).getByRole("link", { name: "Great Hall" }).getAttribute("href")).toBe("#cast-location-hall");
   expect(within(notice).getByRole("link", { name: "Brass Key" }).getAttribute("href")).toBe("#cast-prop-key");
-  await userEvent.click(within(notice).getByRole("button", { name: "RESUME CAST" }));
+  await userEvent.click(within(notice).getByRole("button", { name: "Resume cast" }));
   expect(run).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeTruthy();
 });

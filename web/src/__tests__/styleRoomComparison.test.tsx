@@ -299,7 +299,8 @@ it("starts additional styles at directions until the new batch supplies its own 
   state.jobs = [previousBatch];
   const expectStep = (label: string) => {
     const progress = screen.getByRole("region", { name: "Style generation progress" });
-    expect(within(progress).getByText("GENERATING ADDITIONAL STYLES")).toBeTruthy();
+    const chip = within(progress).getByRole("button", { name: /^Drawing more styles/ });
+    if (chip.getAttribute("aria-expanded") === "false") fireEvent.click(chip);
     const steps = within(progress).getByRole("list", { name: "Style generation steps" });
     const current = within(steps).getAllByRole("listitem").find((step) => step.getAttribute("aria-current") === "step");
     expect(current?.textContent).toContain(label);

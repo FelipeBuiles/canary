@@ -16,3 +16,4 @@ export { SceneSidebar } from "./SceneSidebar";
 export { StagePlaceholder } from "./StagePlaceholder";
 export { StaleStageNotice } from "./StaleStageNotice";
 export { ErrorNotice } from "./ErrorNotice";
+export { RoomNotice, RoomNoticeRow, type RoomNoticeTone } from "./RoomNotice";

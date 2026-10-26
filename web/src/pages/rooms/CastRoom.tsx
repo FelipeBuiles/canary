@@ -22,7 +22,7 @@ import { useRunAction } from "../../hooks/useRunAction";
 import { Button } from "../../components/ui/Button";
 import type { CastFailure, ContentTrigger } from "../../types/api";
 import { useI18n } from "../../i18n";
-import { StaleStageNotice } from "../../components/composites";
+import { RoomNotice, RoomNoticeRow, StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction, isCastReviewBlocker } from "../../lib/castCheckpoint";
 import { missingVisualAnchors, type MissingVisualAnchor } from "../../lib/visualAnchor";
 import { OutdatedReferences } from "../../components/story/OutdatedReferences";
@@ -123,16 +123,17 @@ export function CastFailureNotice({ failures, onResume, resumeDisabled = false, 
     if (failure.entity_id) return `#cast-${section}-${failure.entity_id}`;
     return failure.asset_type === "character" ? "#cast-characters" : failure.asset_type === "location" ? "#cast-places" : "#cast-props";
   };
+  const first = failures[0].label;
   return (
-    <section role="alert" aria-labelledby="cast-failures-title" className="border border-hero-red/70 bg-bristol p-4 shadow-[3px_3px_0_0_var(--color-hero-red)] md:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 id="cast-failures-title" className="font-meta text-xs font-bold tracking-[0.12em] text-hero-red">{t("CAST STOPPED")}</h2>
-          <p className="mt-2 font-body text-sm text-ink-black">{t("These references did not finish. Everything else is kept.")}</p>
-        </div>
+    <RoomNotice tone="danger" role="alert" title={t("Cast stopped")}
+      label={failures.length === 1
+        ? t("Cast stopped · {name} didn't finish", { name: first })
+        : t("Cast stopped · {count} references didn't finish", { count: String(failures.length) })}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="min-w-0 flex-1 font-body text-sm text-ink-black">{t("These references did not finish. Everything else is kept.")}</p>
         {onResume && (
-          <Button variant="outline" size="sm" disabled={resumeDisabled} onClick={onResume}>
-            {t("RESUME CAST")}
+          <Button variant="secondary" size="sm" disabled={resumeDisabled} onClick={onResume}>
+            {t("Resume cast")}
           </Button>
         )}
       </div>
@@ -185,7 +186,7 @@ export function CastFailureNotice({ failures, onResume, resumeDisabled = false, 
           {t("A less graphic version opens the reference with suggested direction and its cost; nothing is generated until you confirm. Rewording the description changes it everywhere the entry appears.")}
         </p>
       )}
-    </section>
+    </RoomNotice>
   );
 }
 
@@ -412,8 +413,7 @@ export function CastRoom() {
     return first ? `${t("First seen")}: ${first}` : t("Prop");
   };
 
-  const hasNotices = isStageStuck || (!stageRegenerating && missingAnchors.length > 0) || !!resetError || !status?.style_selected
-    || (!stageRegenerating && !status?.is_running && failures.length > 0);
+  const hasNotices = isStageStuck || (!stageRegenerating && missingAnchors.length > 0) || !!resetError || !status?.style_selected;
 
   const toolbar = (
     <div className="relative flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-5 py-2.5">
@@ -475,32 +475,30 @@ export function CastRoom() {
             />
           )}
           {!stageRegenerating && missingAnchors.length > 0 && <MissingAnchorsNotice projectId={id} missing={missingAnchors} />}
-          {!stageRegenerating && !status?.is_running && (
-            <CastFailureNotice
-              failures={failures}
-              onShow={(kind, entityId) => { setSearch(""); show(kind, entityId); }}
-              onLessGraphic={(failure) => suggest({
-                kind: failure.asset_type!, entityId: failure.entity_id!, stateId: failure.state_id, text: t(LESS_GRAPHIC_DIRECTION),
-              })}
-              onResume={checkpointAction === "resume" ? () => setConfirmCast(true) : undefined}
-              resumeDisabled={isPipelineRunning || !status?.style_selected || !castResumeEstimate}
-            />
-          )}
           {resetError && <ErrorNotice error={resetError} operation="save" />}
           {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}
         </div>
       )}
       {/* A queued run is already updating them; is_running covers queued as well as running jobs. */}
       {!stageRegenerating && !status?.is_running && (
-        <div className="px-4 pt-4 empty:hidden sm:px-6 studio-desktop:px-5">
+        <RoomNoticeRow className="empty:hidden">
+          <CastFailureNotice
+            failures={failures}
+            onShow={(kind, entityId) => { setSearch(""); show(kind, entityId); }}
+            onLessGraphic={(failure) => suggest({
+              kind: failure.asset_type!, entityId: failure.entity_id!, stateId: failure.state_id, text: t(LESS_GRAPHIC_DIRECTION),
+            })}
+            onResume={checkpointAction === "resume" ? () => setConfirmCast(true) : undefined}
+            resumeDisabled={isPipelineRunning || !status?.style_selected || !castResumeEstimate}
+          />
           <OutdatedReferences project={id} bible={bible} castStatus={stageStatus}
             onResume={() => setConfirmCast(true)} resumeDisabled={isPipelineRunning || !status?.style_selected} ready={!!status} />
-        </div>
+        </RoomNoticeRow>
       )}
 
       <CastUpdatingContext.Provider value={updating}>
       <CastSuggestionContext.Provider value={suggestionContext}>
-        <div className="mt-4 flex min-h-[34rem] flex-1 flex-col border-t border-ink-black/12 studio-desktop:min-h-0 studio-desktop:flex-row">
+        <div className={cn("flex min-h-[34rem] flex-1 flex-col studio-desktop:min-h-0 studio-desktop:flex-row", hasNotices && "mt-4 border-t border-ink-black/12")}>
           {view === "focus" && (
             <CastRoster project={id} groups={groups} subOf={subOf} selectedKey={selected ? entryKey(selected) : null}
               stageRegenerating={stageRegenerating} attentionOf={attentionOf}
@@ -546,7 +544,9 @@ export function CastRoom() {
           : recheckOnly
           ? t("Scenewright checks your corrected cast, then adapts the book and plans every page")
           : checkpointAction === "resume"
-          ? stageInfo?.approval_blocker ?? t("Some references didn't finish. Resume to draw the missing images.")
+          ? failures.length > 0
+            ? t("{count, plural, one {# reference didn't finish. Resume to draw it.} other {# references didn't finish. Resume to draw them.}}", { count: failures.length })
+            : stageInfo?.approval_blocker ?? t("Some references didn't finish. Resume to draw the missing images.")
           : needsApproval && openCastNotes > 0
           ? t("{count, plural, one {# character note is open} other {# character notes are open}}. You can still continue; notes are advice.", { count: openCastNotes })
           : needsApproval
