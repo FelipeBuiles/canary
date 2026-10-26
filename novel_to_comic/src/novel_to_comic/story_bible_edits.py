@@ -571,40 +571,39 @@ def edit_impact(config, root: Path, kind: str, entity_id: str, *, merge_into: st
 
 
 _ARTICLES = frozenset({"the", "a", "an"})
-_TITLES = frozenset({"mr", "mrs", "ms", "miss", "dr", "sir", "lady", "lord", "captain", "old", "young"})
 
 
 def _name_tokens(name: str) -> tuple[str, ...]:
-    words = re.findall(r"\w+", name.casefold())
+    # Keep possessives intact: "Ammi's" is not the name "Ammi".
+    words = re.findall(r"\w+(?:'\w+)*", name.casefold().replace("’", "'"))
     while words and words[0] in _ARTICLES:
         words = words[1:]
     return tuple(words)
 
 
 def possible_duplicates(bible: StoryBible, citations: dict[str, list[str]], limit: int = 12) -> list[dict[str, Any]]:
-    """Pairs that look like one entry found twice: shared names, or one name inside the other.
+    """Suggest complete primary-name matches, including explicit aliases.
 
-    A suggestion only; the author compares the two before merging. A pair
-    where adapted parts cite both entries is left out, since neither can go.
+    Partial overlap can describe ownership, relatives or a place within another
+    place. Shared aliases alone are also insufficient: extraction retains
+    contextual references such as "the boys" and "his house" for distinct
+    entities. At least one side must be the entry's complete primary name.
+    Suggestions never merge automatically. Omit pairs where both are cited,
+    since neither entry can be removed.
     """
+    if limit <= 0:
+        return []
     found: list[dict[str, Any]] = []
     for kind in _MODELS:
         entities = _entities(bible, kind)
+        primary = {item.id: _name_tokens(item.name) for item in entities}
         names = {item.id: {_name_tokens(n) for n in (item.name, *item.aliases)} - {()} for item in entities}
         for index, first in enumerate(entities):
             for second in entities[index + 1:]:
                 if citations.get(first.id) and citations.get(second.id):
                     continue
-                shared = names[first.id] & names[second.id]
-                contained = not shared and any(
-                    len(short) < len(long) and set(short) <= set(long)
-                    and any(len(word) >= 3 and word not in _TITLES for word in short)
-                    for a in names[first.id] for b in names[second.id]
-                    for short, long in ((a, b), (b, a))
-                )
-                if shared or contained:
-                    found.append({"kind": kind, "ids": [first.id, second.id],
-                                  "reason": "same_name" if shared else "name_within"})
+                if primary[first.id] in names[second.id] or primary[second.id] in names[first.id]:
+                    found.append({"kind": kind, "ids": [first.id, second.id], "reason": "same_name"})
                     if len(found) >= limit:
                         return found
     return found

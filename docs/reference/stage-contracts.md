@@ -182,8 +182,9 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
   newest edit as a new revision while nothing else (another edit or an
   extraction) has changed the Bible since; it never takes away what an adapted
   part cites, and waits for running Adapt and Plan work. The editor response
-  carries `undo` and `possible_duplicates` (shared or contained names, a
-  suggestion only).
+  carries `undo` and `possible_duplicates` (complete primary-name matches, including a primary
+  name matching an explicit alias; shared aliases and partial word overlap are
+  insufficient). These are suggestions only and never merge entries automatically.
 - An added entry (`origin: author`) joins only scenes in parts whose Adapt
   hasn't started. `POST /story-bible/{kind}/draft` proposes its details from
   the passages that mention the name, under a credit hold
