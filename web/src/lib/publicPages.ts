@@ -1,4 +1,5 @@
 import type { LanguageCode } from "../locales/languages";
+import { SHOWCASE_SHELF } from "./showcaseShelf";
 
 /** Build-time public origin; mirrors the server's SCENEWRIGHT_PUBLIC_URL. */
 export const PUBLIC_ORIGIN = (import.meta.env.VITE_PUBLIC_URL as string | undefined)?.replace(/\/$/, "") || "https://scenewright.ink";
@@ -11,9 +12,9 @@ export interface PublicPageMetadata {
   language: LanguageCode;
 }
 export const publicPages: Record<string, PublicPageMetadata> = {
-  "/": { title: "AI Comic Studio for Authors | Scenewright", description: "Turn an EPUB, PDF, or TXT excerpt into comic pages with Scenewright. Direct the style and cast, review each page, and export PDF or CBZ.", language: "en" },
-  "/es": { title: "Estudio de cómics con IA para autores | Scenewright", description: "Convierte un fragmento EPUB, PDF o TXT en páginas de cómic. Dirige el estilo y los personajes, revisa cada página y exporta PDF o CBZ.", language: "es" },
-  "/fr": { title: "Studio de bande dessinée avec IA pour auteurs | Scenewright", description: "Transformez un extrait EPUB, PDF ou TXT en pages de BD. Dirigez le style et les personnages, révisez chaque page et exportez en PDF ou CBZ.", language: "fr" },
+  "/": { title: "Turn Your Novel into a Comic with AI | Scenewright", description: "Turn a chapter or a whole novel into a finished comic. Choose the look and cast, review every page, and export PDF or CBZ. EPUB, PDF or TXT in.", language: "en" },
+  "/es": { title: "Convierte tu novela en cómic con IA | Scenewright", description: "Convierte un capítulo o una novela entera en un cómic terminado. Elige el estilo y los personajes, revisa cada página y exporta PDF o CBZ.", language: "es" },
+  "/fr": { title: "Transformez votre roman en BD avec l’IA | Scenewright", description: "Transformez un chapitre ou un roman entier en BD terminée. Choisissez le style et les personnages, révisez chaque page et exportez en PDF ou CBZ.", language: "fr" },
   "/how-it-works": { title: "How to Turn Your Story into Comic Pages | Scenewright", description: "Learn the Scenewright workflow: choose a scene, direct its style and cast, review comic pages, and export a PDF or CBZ book.", language: "en" },
   "/pricing": { title: "Pricing and Generation Credits | Scenewright", description: "Scenewright uses prepaid generation credits, with packs from US$12 and no subscription. Review credit estimates before generating or redrawing pages.", language: "en" },
   "/guides/turn-a-novel-into-a-comic": { title: "How to Turn a Novel into a Comic: A Practical Guide | Scenewright", description: "Choose a manageable scene, turn prose into visual beats, establish character references, review continuity and lettering, and export your comic.", language: "en" },
@@ -46,6 +47,10 @@ export function publicSchema(path: string) {
   if (isPublicHome(path)) graph.push({ "@type": "WebApplication", "@id": `${PUBLIC_ORIGIN}/#application`, name: "Scenewright", url: PUBLIC_ORIGIN,
     applicationCategory: "DesignApplication", operatingSystem: "Web browser", description: page.description,
     creator: { "@id": organization["@id"] }, featureList: ["EPUB, PDF and TXT input", "Style and cast direction", "Comic page review", "PDF and CBZ export"] });
+  if (isPublicHome(path)) graph.push({ "@type": "ItemList", "@id": `${PUBLIC_ORIGIN}${path}#books`, name: "Books made with Scenewright",
+    itemListElement: SHOWCASE_SHELF.map((book, index) => ({ "@type": "ListItem", position: index + 1, item: {
+      "@type": "Book", name: book.title, url: `${PUBLIC_ORIGIN}/read/${book.id}`, image: PUBLIC_ORIGIN + book.cover,
+      numberOfPages: book.pages, author: { "@type": "Person", name: book.author }, bookFormat: "https://schema.org/GraphicNovel" } })) });
   graph.push({ "@type": path.startsWith("/guides/") ? "Article" : "WebPage", "@id": `${PUBLIC_ORIGIN}${path}#page`, url: PUBLIC_ORIGIN + path,
     name: page.title, ...(path.startsWith("/guides/") ? { headline: page.title, author: { "@id": organization["@id"] } } : {}),
     description: page.description, inLanguage: page.language, isPartOf: { "@id": `${PUBLIC_ORIGIN}/#website` } });

@@ -15,7 +15,7 @@ it("updates server head nodes once and clears book metadata on navigation", () =
   view.rerender(<Page path="/read/def" />);
   expect(document.querySelector('link[rel="canonical"]')?.getAttribute("href")).toBe("https://scenewright.ink/read/def");
   view.unmount();
-  expect(document.title).toBe("AI Comic Studio for Authors | Scenewright");
+  expect(document.title).toBe("Turn Your Novel into a Comic with AI | Scenewright");
   expect(document.querySelector('link[rel="canonical"]')?.getAttribute("href")).toBe("https://scenewright.ink/");
   expect(document.querySelector('meta[property="og:type"]')?.getAttribute("content")).toBe("website");
   document.head.innerHTML = "";

@@ -52,7 +52,7 @@ describe("public homepage routing", () => {
     expect(
       await screen.findByRole("heading", {
         level: 1,
-        name: "Your story. Its first comic scene.",
+        name: "Turn your novel into a comic",
       }),
     ).toBeTruthy();
   });

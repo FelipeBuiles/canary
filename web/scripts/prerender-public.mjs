@@ -1,7 +1,6 @@
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createHash } from 'node:crypto'
 import { build } from 'vite'
 
 const output = resolve('node_modules/.tmp/public-render')
@@ -28,18 +27,10 @@ try {
     visit(page)
     return [...styles].filter(file => !template.includes(`/${file}`)).map(file => `<link rel="stylesheet" href="/${file}">`).join('')
   }
-  const source = resolve('../novel_to_comic/src/novel_to_comic/sample_stories')
-  const entries = JSON.parse(await readFile(resolve(source, 'catalog.json'), 'utf8'))
-  const stories = await Promise.all(entries.map(async ({ filename, ...entry }) => {
-    if (filename !== `${entry.code}.txt`) throw new Error('Invalid public story filename')
-    const text = await readFile(resolve(source, filename))
-    if (createHash('sha256').update(text).digest('hex') !== entry.sha256) throw new Error(`Unverified sample: ${entry.code}`)
-    return { ...entry, words: text.toString().trim().split(/\s+/u).length, source_kind: 'curated' }
-  }))
   await mkdir('dist/public', { recursive: true })
   const paths = {}
   for (const [path, metadata] of Object.entries(publicPages)) {
-    const bootstrap = { prerendered: true, language: metadata.language, ...(isPublicHome(path) ? { stories } : {}) }
+    const bootstrap = { prerendered: true, language: metadata.language }
     let markup = await renderPublicPage(path, bootstrap)
     let preloads = ''
     markup = markup.replace(/<link\b[^>]*rel="preload"[^>]*>/g, node => { preloads += node; return '' })

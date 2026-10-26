@@ -47,7 +47,7 @@ it.skipIf(!existsSync(resolve(`dist/public/${file}.html`)))(`hydrates ${path} wi
   expect(screen.queryByText("OPENING SCENEWRIGHT…")).toBeNull();
   if (home) {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: language === "en" ? "FR" : "EN" })));
-    expect(await screen.findByRole("heading", { level: 1, name: language === "en" ? "Votre récit. Sa première scène de BD." : "Your story. Its first comic scene." })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: language === "en" ? "Transformez votre roman en BD" : "Turn your novel into a comic" })).toBeTruthy();
     expect(window.location.pathname).toBe(language === "en" ? "/fr" : "/");
   }
   client.clear();

@@ -3,7 +3,10 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { HomePage } from "../pages/HomePage";
+import { SHOWCASE_SHELF } from "../lib/showcaseShelf";
 
 const storageValues = new Map<string, string>();
 const storage: Storage = {
@@ -51,111 +54,79 @@ describe("Scenewright homepage", () => {
   });
 
 
-  it("places finished books immediately after the scene sample", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [{
-        id: "sample", title: "A complete story", author: "An author", description: "A finished edition.",
-        pages: [{ number: 1, url: "/page.jpg", width: 120, height: 180 }],
-      }],
-    }));
-    renderHomePage();
-    const heading = await screen.findByRole("heading", { name: "Read a finished book" });
-    const section = heading.closest("section");
-    expect(section?.previousElementSibling?.id).toBe("continuity");
-    expect(section?.nextElementSibling?.classList.contains("landing-story-shelf")).toBe(true);
-    expect(section?.nextElementSibling?.nextElementSibling?.id).toBe("process");
-    expect(screen.getByRole("link", { name: /Explore all stories/ }).getAttribute("href")).toBe("/samples");
-    expect(screen.getByRole("link", { name: "Read book" }).getAttribute("href")).toBe("/read/sample");
-  });
-
   it("leads with the product outcome and a real signup path", () => {
     renderHomePage();
 
-    expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "Your story. Its first comic scene.",
-      }),
-    ).toBeTruthy();
-
-    const sampleLink = screen.getAllByRole("link", { name: /Create my first scene/ })[0];
-    expect(sampleLink.getAttribute("href")).toBe("/signup");
-    expect(screen.getByText(/AI-assisted visual adaptation/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Turn your novel into a comic" })).toBeTruthy();
+    const start = screen.getAllByRole("link", { name: /Start your comic/ });
+    expect(start.length).toBeGreaterThanOrEqual(3);
+    for (const link of start) expect(link.getAttribute("href")).toBe("/signup");
+    expect(screen.getByRole("link", { name: /Read a finished book/ }).getAttribute("href")).toBe("#books");
+    expect(screen.getByText(/EPUB, PDF or TXT in/)).toBeTruthy();
     expect(screen.queryByText(/500 free credits/i)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/landing\./);
   });
 
-  it("shows licensed source stories separately from finished comic books", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => ({
-      ok: true,
-      json: async () => String(url).endsWith("/projects/short-stories") ? [{
-        code: "kaitlin-out-of-space", title: "Kaitlin Out of Space", author: "Krishan Coupland",
-        words: 3117, genres: ["sci-fi"], description: "An older woman welcomes a visitor.",
-      }] : [],
-    })));
+  it("puts every showcase book on the shelf as a link to its reader", () => {
     renderHomePage();
-    expect(await screen.findByRole("heading", { name: "Kaitlin Out of Space" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Read and choose/ }).getAttribute("href")).toBe("/samples?story=kaitlin-out-of-space");
-    expect(screen.queryByRole("heading", { name: "Read a finished book" })).toBeNull();
+
+    const shelf = screen.getByRole("region", { name: "Read a book made with Scenewright" });
+    const books = within(shelf).getAllByRole("listitem");
+    expect(books).toHaveLength(SHOWCASE_SHELF.length);
+    const monkey = within(shelf).getByRole("link", { name: /The Monkey's Paw.*W\. W\. Jacobs.*20 pages/ });
+    expect(monkey.getAttribute("href")).toBe("/read/b32d070d85f942278577140e7f55778b");
+    expect(within(shelf).getByRole("link", { name: /Browse the sample stories/ }).getAttribute("href")).toBe("/samples");
+    expect(within(shelf).getByText(/Not customer work; results vary/)).toBeTruthy();
   });
 
-  it("makes provisional development pages readable without claiming customer or production proof", () => {
-    renderHomePage();
-
-    expect(screen.getByText(/H. P. Lovecraft, page 40 .* Not customer work; results vary/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
-    expect(screen.getAllByRole("link", { name: "Read page 40 at full size" })[0].getAttribute("href")).toBe("/marketing/cthulhu-page-40.webp");
-    expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
-    expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
+  it("matches the shelf to the showcase manifests", () => {
+    const root = resolve(__dirname, "../../../showcase/books");
+    const manifests = readdirSync(root).filter(name => existsSync(join(root, name, "book.json"))).sort()
+      .map(name => JSON.parse(readFileSync(join(root, name, "book.json"), "utf8")) as { id: string; title: string; author: string; pages: unknown[] });
+    expect(SHOWCASE_SHELF.map(({ id, author, pages }) => ({ id, author, pages })))
+      .toEqual(manifests.map(({ id, author, pages }) => ({ id, author, pages: pages.length })));
+    for (const book of SHOWCASE_SHELF) expect(existsSync(resolve(__dirname, `../../public${book.cover}`))).toBe(true);
   });
 
-  it("localizes the new entry point and sample links in French", async () => {
+  it("walks through the five stations and marks the four approvals", () => {
     renderHomePage();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "FR" })); });
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: /Créer ma première scène/ })[0].getAttribute("href")).toBe("/signup");
-    expect(screen.getAllByRole("link", { name: "Lire la page 12 en taille réelle" })[0].getAttribute("href")).toBe("/marketing/elm-and-keep-page-12.webp");
-    expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
+    const steps = within(screen.getByRole("region", { name: "From manuscript to finished book" })).getAllByRole("listitem")
+      .filter(item => item.classList.contains("home-step"));
+    expect(steps.map(step => within(step).getByRole("heading", { level: 3 }).textContent))
+      .toEqual(["Approve the brief", "Choose the look", "Meet the cast", "Review every page", "Export and share"]);
+    expect(steps.filter(step => step.textContent?.includes("You approve"))).toHaveLength(4);
   });
 
   it("links rights language to the public terms and states the copyright caveat", () => {
     renderHomePage();
 
-    const rightsLink = screen.getByRole("link", {
-      name: /Read the full rights and copyright terms/,
-    });
+    const rightsLink = screen.getByRole("link", { name: /Read the full rights and copyright terms/ });
     expect(rightsLink.getAttribute("href")).toBe("/legal/terms");
     expect(screen.getByText(/Purely generated imagery may have limited copyright protection/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /See pricing/ }).getAttribute("href")).toBe("/pricing");
   });
 
-  it("lets public visitors switch the marketing page to Spanish", async () => {
+  it("lets public visitors switch the marketing page to Spanish and French", async () => {
     renderHomePage();
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "ES" })); });
-
-    expect(
-      await screen.findByRole("heading", {
-        level: 1,
-        name: "Tu historia. Su primera escena de cómic.",
-      }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Convierte tu novela en un cómic" })).toBeTruthy();
     expect(document.documentElement.lang).toBe("es");
-  });
+    expect(screen.getByRole("region", { name: "Lee un libro hecho con Scenewright" })).toBeTruthy();
 
-  it("sells custom styles in the Look step", () => {
-    renderHomePage();
-
-    expect(screen.getByRole("heading", { level: 3, name: "Describe it, show it, or ask for six" })).toBeTruthy();
-    expect(screen.getByText(/let Scenewright pitch six directions made for your story/)).toBeTruthy();
-    expect(screen.queryByText(/Pick a visual direction/)).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "FR" })); });
+    expect(await screen.findByRole("heading", { level: 1, name: "Transformez votre roman en BD" })).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: /Commencer votre BD/ })[0].getAttribute("href")).toBe("/signup");
+    expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/landing\./);
   });
 
   it("shows the film as a poster and loads the privacy-enhanced player only on play", () => {
     const { container } = renderHomePage();
-    expect(screen.getByRole("heading", { name: "See a story become a comic." })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Watch" }).getAttribute("href")).toBe("#film");
-    expect(container.querySelector(".landing-film iframe")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Your novel. Any style." })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Styles" }).getAttribute("href")).toBe("#styles");
+    expect(container.querySelector(".home-film iframe")).toBeNull();
     expect(screen.getByRole("link", { name: /Watch on YouTube/ }).getAttribute("href")).toBe("https://www.youtube.com/watch?v=W-1bPTQXQaQ");
 
     fireEvent.click(screen.getByRole("button", { name: /Play the Scenewright film/ }));
@@ -171,7 +142,7 @@ describe("Scenewright homepage", () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     const { container } = renderHomePage();
 
-    const video = container.querySelector(".landing-hero video") as HTMLVideoElement;
+    const video = container.querySelector(".home-hero video") as HTMLVideoElement;
     // The poster can paint without competing with a multi-megabyte video.
     expect(video.getAttribute("src")).toBeNull();
     expect(video.getAttribute("poster")).toBe("/marketing/masque-flipbook-poster.webp");
@@ -184,8 +155,7 @@ describe("Scenewright homepage", () => {
 
     Object.defineProperty(video, "paused", { configurable: true, value: false });
     fireEvent.playing(video);
-    const toggle = screen.getByRole("button", { name: "Pause" });
-    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(pause).toHaveBeenCalledOnce();
     fireEvent.pause(video);
     expect(screen.getByRole("button", { name: "Play" }).getAttribute("aria-pressed")).toBe("true");
@@ -220,52 +190,30 @@ describe("Scenewright homepage", () => {
     const { container } = renderHomePage();
 
     expect(container.querySelector("video")).toBeNull();
-    expect(container.querySelector(".landing-hero img")?.getAttribute("src")).toBe("/marketing/masque-flipbook-poster.webp");
+    expect(container.querySelector(".home-hero .home-sheet img")?.getAttribute("src")).toBe("/marketing/masque-flipbook-poster.webp");
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
 
   it("compares three real editions of one story with their license", () => {
     renderHomePage();
 
-    const strip = screen.getByRole("region", { name: "One story, three books." });
-    const links = within(strip).getAllByRole("link", { name: /at full size/ }).map((link) => link.getAttribute("href"));
-    expect(new Set(links)).toEqual(new Set([
+    const styles = screen.getByRole("region", { name: "Your novel. Any style." });
+    const links = within(styles).getAllByRole("link", { name: /at full size/ }).map((link) => link.getAttribute("href"));
+    expect(links).toEqual([
       "/marketing/janitor-riso-page-01.webp",
       "/marketing/janitor-gouache-page-01.webp",
       "/marketing/janitor-oil-page-01.webp",
-    ]));
-    expect(within(strip).getByText(/JanitorCakeworth, SCP Wiki, CC BY-SA 3.0/)).toBeTruthy();
-    expect(within(strip).getByText(/Not customer work; results vary/)).toBeTruthy();
-    expect(strip.closest("section#continuity")).toBeTruthy();
-  });
-
-  it("links a sample story to the showcase book it became", () => {
-    renderHomePage();
-
-    const sample = screen.getByRole("region", { name: "Read the story. Then read the book it became." });
-    expect(within(sample).getByRole("link", { name: /Read the original story/ }).getAttribute("href")).toBe("/samples?story=kaitlin-out-of-space");
-    expect(within(sample).getAllByRole("img")).toHaveLength(3);
-    expect(within(sample).getByText(/Krishan Coupland \(CC0\)/)).toBeTruthy();
+    ]);
+    expect(within(styles).getByText(/JanitorCakeworth, SCP Wiki, CC BY-SA 3.0/)).toBeTruthy();
+    expect(within(styles).getByText(/Not customer work; results vary/)).toBeTruthy();
   });
 
   it("keeps credits and costs out of the showcase media", () => {
     renderHomePage();
 
-    for (const name of ["One story, three books.", "Read the story. Then read the book it became."]) {
-      expect(screen.getByRole("region", { name }).textContent).not.toMatch(/credit|cost|free|US\$/i);
+    for (const name of ["Read a book made with Scenewright", "Your novel. Any style.", "From manuscript to finished book"]) {
+      expect(screen.getByRole("region", { name }).textContent).not.toMatch(/\bcredits?\b|\bcosts?\b|\bfree\b|US\$/i);
     }
-    expect(document.querySelector(".landing-hero__visual")?.textContent).not.toMatch(/credit|cost|free/i);
-  });
-
-  it("localizes the new showcase blocks in Spanish and French", async () => {
-    renderHomePage();
-
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "ES" })); });
-    expect(await screen.findByRole("heading", { level: 3, name: "Descríbelo, muéstralo o pide seis" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Una historia, tres libros." })).toBeTruthy();
-
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "FR" })); });
-    expect(await screen.findByRole("heading", { level: 3, name: "Décrivez-le, montrez-le ou demandez-en six" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Lisez la nouvelle. Puis lisez le livre qu’elle est devenue." })).toBeTruthy();
+    expect(document.querySelector(".home-hero__visual")?.textContent).not.toMatch(/credit|cost|free/i);
   });
 });
