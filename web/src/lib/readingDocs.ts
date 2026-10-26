@@ -62,3 +62,23 @@ export const ROLE_LABELS: Record<PageContent["panel_role"], string> = {
   establishing: "Establishing", standard: "", detail: "Detail", reaction: "Reaction", action: "Action",
   transition: "Transition", splash: "Splash", inset: "Inset",
 };
+
+/**
+ * Rough tiers for sketching an undrawn page: splashes and wide establishing
+ * panels take a row of their own, the rest pair up in reading order. It is a
+ * reading aid, not the drawn layout.
+ */
+export function sketchTiers(panels: PageContent[]): PageContent[][] {
+  const tiers: PageContent[][] = [];
+  let pending: PageContent[] = [];
+  const flush = () => { if (pending.length) tiers.push(pending); pending = []; };
+  for (const panel of panels) {
+    const wide = panel.panel_role === "splash" || panel.panel_role === "establishing"
+      || panel.camera?.shot === "wide" || panel.camera?.shot === "extreme_wide";
+    if (wide) { flush(); tiers.push([panel]); continue; }
+    pending.push(panel);
+    if (pending.length === 2) flush();
+  }
+  flush();
+  return tiers;
+}

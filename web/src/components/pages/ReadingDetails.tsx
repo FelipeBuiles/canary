@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, MapPin, Package } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { PlanSketch } from "./PlanSketch";
 import { cn } from "../../lib/cn";
 import { pageDisplayImage } from "../../lib/pageState";
 import {
@@ -106,7 +107,7 @@ export function AdaptationDetails({ project, adaptation, pages, focusBeat, onOpe
 
   return (
     <div className="flex min-h-0 flex-1 flex-col studio-desktop:flex-row">
-      <aside aria-label={t("Throughline")} className="shrink-0 border-b border-ink-black/10 bg-bristol px-5 py-6 studio-desktop:w-[21rem] studio-desktop:overflow-y-auto studio-desktop:border-b-0 studio-desktop:border-r">
+      <aside aria-label={t("Throughline")} className="relative shrink-0 border-b border-ink-black/10 bg-bristol px-5 py-6 studio-desktop:w-[21rem] studio-desktop:overflow-y-auto studio-desktop:border-b-0 studio-desktop:border-r">
         <h2 className="font-display text-lg font-black uppercase tracking-[-0.02em]">{t("Throughline")}</h2>
         {spine.length > 0 ? (
           <ol className="relative mt-4 space-y-4 before:absolute before:bottom-2 before:left-[0.6875rem] before:top-2 before:w-px before:bg-ink-black/20">
@@ -149,7 +150,7 @@ export function AdaptationDetails({ project, adaptation, pages, focusBeat, onOpe
         )}
       </aside>
 
-      <div ref={scroller} className="benday-paper min-w-0 flex-1 px-3 py-5 sm:px-6 sm:py-7 studio-desktop:overflow-y-auto">
+      <div ref={scroller} className="benday-paper relative min-w-0 flex-1 px-3 py-5 sm:px-6 sm:py-7 studio-desktop:overflow-y-auto">
         <article className="mx-auto max-w-[48rem] border border-ink-black/14 bg-bristol shadow-[0_18px_40px_-24px_rgba(27,28,21,0.35)]">
           {beats.length === 0 && <p className="px-6 py-10 font-body text-sm text-ink-muted">{t("No adapted beats are available yet.")}</p>}
           {groups.map((group, index) => {
@@ -157,12 +158,14 @@ export function AdaptationDetails({ project, adaptation, pages, focusBeat, onOpe
             const thumb = pageImage(project, item, "thumbnail");
             return (
               <section key={`${group.page}-${index}`} data-beat-page={group.page ?? undefined} className="scroll-mt-4 border-b border-ink-black/12 last:border-0">
-                <header className="flex items-center gap-4 bg-surface-container/60 px-5 py-3 sm:px-8">
+                {/* Before Plan has placed any beat, the beats read as one list. */}
+                {placed.size > 0 && <header className="flex items-center gap-4 bg-surface-container/60 px-5 py-3 sm:px-8">
                   {group.page !== null ? (
                     <button type="button" onClick={() => onOpenPage(group.page!)} aria-label={t("Open page {number} in the plan", { number: String(group.page) })}
                       className="group/page flex min-w-0 flex-1 items-center gap-4 text-left">
                       <span className="flex h-14 w-10 shrink-0 items-center justify-center overflow-hidden border border-ink-black/30 bg-pulp-paper benday-paper">
-                        {thumb && <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                        {thumb ? <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
+                          : item && <PlanSketch page={item.page} size="thumb" />}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block font-display text-base font-black uppercase tracking-[-0.01em]">{t("Page {number}", { number: String(group.page) })}</span>
@@ -171,7 +174,7 @@ export function AdaptationDetails({ project, adaptation, pages, focusBeat, onOpe
                       <span className="hidden shrink-0 items-center gap-1 font-meta text-xs font-medium text-ink-soft group-hover/page:text-ink-black sm:inline-flex">{t("Open in plan")}<ArrowRight size={13} aria-hidden="true" /></span>
                     </button>
                   ) : <span className="font-display text-base font-black uppercase">{t("Not placed on a page")}</span>}
-                </header>
+                </header>}
                 <ol>
                   {group.beats.map((beat) => {
                     const lettering = (beat.lettering ?? []).filter((line) => line.text) as Array<{ id: string; kind?: string; text: string; speaker?: string | null }>;
@@ -259,7 +262,7 @@ export function PagePlanDetails({ project, plan, pages, names, detailsLoading, d
 
   return (
     <div className="flex min-h-0 flex-1 flex-col studio-desktop:flex-row">
-      <nav ref={list} aria-label={t("Planned pages")} className="hidden w-60 shrink-0 overflow-y-auto border-r border-ink-black/10 bg-bristol studio-desktop:block">
+      <nav ref={list} aria-label={t("Planned pages")} className="relative hidden w-60 shrink-0 overflow-y-auto border-r border-ink-black/10 bg-bristol studio-desktop:block">
         {plan.rhythm_summary && (
           <div className="border-b border-ink-black/10 px-4 py-4">
             <p className={eyebrow}>{t("Book rhythm")}</p>
@@ -281,7 +284,8 @@ export function PagePlanDetails({ project, plan, pages, names, detailsLoading, d
                   className={cn("grid w-full grid-cols-[2.25rem_minmax(0,1fr)] gap-3 border-l-[3px] px-3 py-2.5 text-left transition-colors",
                     active ? "border-hero-red bg-ink-black text-pulp-paper" : "border-transparent hover:bg-surface-container")}>
                   <span className={cn("flex h-12 w-9 items-center justify-center overflow-hidden border benday-paper", active ? "border-pulp-paper/40" : "border-ink-black/25")}>
-                    {thumb && <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                    {thumb ? <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      : entry && <PlanSketch page={entry.page} size="thumb" />}
                   </span>
                   <span className="min-w-0">
                     <span className="flex items-baseline gap-2 font-meta text-xs font-bold">
@@ -301,10 +305,17 @@ export function PagePlanDetails({ project, plan, pages, names, detailsLoading, d
         {image ? (
           <img key={image} src={image} alt={t("Page {number}", { number: String(current) })}
             className="max-h-full max-w-full object-contain shadow-[0_24px_60px_-20px_rgba(0,0,0,0.75)] studio-desktop:max-h-[calc(100%-1rem)]" />
+        ) : item && item.page.content.length > 0 ? (
+          <div className="flex h-full min-h-[24rem] w-full flex-col items-center gap-3 pb-5">
+            <p className="inline-flex shrink-0 items-center gap-2 font-meta text-xs text-pulp-paper/70">
+              <span aria-hidden="true" className="size-2 border border-pulp-paper/60" />
+              {t("Not drawn yet · planned panels in reading order")}
+            </p>
+            <div className="flex min-h-0 w-full flex-1 items-center justify-center"><PlanSketch page={item.page} names={names} size="stage" /></div>
+          </div>
         ) : (
           <div className="flex aspect-[2/3] h-[min(70%,32rem)] flex-col items-center justify-center gap-3 border border-dashed border-pulp-paper/30 text-center">
             <p className="font-display text-lg font-black uppercase text-pulp-paper">{t("Not drawn yet")}</p>
-            {item && <p className="font-meta text-xs text-pulp-paper/60">{t("{count, plural, one {# panel planned} other {# panels planned}}", { count: item.page.content.length })}</p>}
           </div>
         )}
         <button type="button" onClick={() => step(-1)} disabled={index <= 0} aria-label={t("Previous page")}
@@ -314,7 +325,7 @@ export function PagePlanDetails({ project, plan, pages, names, detailsLoading, d
         <p className="absolute bottom-3 left-1/2 -translate-x-1/2 font-meta text-xs tabular-nums text-pulp-paper/60">{index + 1} / {planned.length}</p>
       </div>
 
-      <aside aria-label={t("Page {number}", { number: String(current) })} className="shrink-0 border-l border-ink-black/10 bg-bristol studio-desktop:w-[27rem] studio-desktop:overflow-y-auto">
+      <aside aria-label={t("Page {number}", { number: String(current) })} className="relative shrink-0 border-l border-ink-black/10 bg-bristol studio-desktop:w-[27rem] studio-desktop:overflow-y-auto">
         <div className="space-y-4 px-6 pb-5 pt-6">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-display text-[1.625rem] font-black uppercase leading-none tracking-[-0.03em]">{t("Page {number}", { number: String(current) })}</h2>
