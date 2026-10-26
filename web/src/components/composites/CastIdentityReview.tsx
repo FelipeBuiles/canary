@@ -18,7 +18,8 @@ export function CastIdentityReview({ projectId, characters, locations = [], onSh
   characters: { id: string; name: string }[];
   /** Plates the check compares with the selected Style proof. */
   locations?: { id: string; name: string }[];
-  onShowCharacter: () => void;
+  /** Puts the named reference on the stage. */
+  onShowCharacter: (kind: Subject["kind"], id: string) => void;
   /** Opens the reference's Review & adjust with the suggestion prefilled; never spends. */
   onUseSuggestion: (kind: Subject["kind"], id: string, suggestion: string) => void;
   onResume: () => void;
@@ -53,7 +54,7 @@ export function CastIdentityReview({ projectId, characters, locations = [], onSh
     : t("No identity problems were flagged. Check the references yourself before approving; this is not a guarantee of visual accuracy.");
 
   return (
-    <section aria-label={t("Character identity review")} className="mb-7 bg-surface-container text-ink-black">
+    <section aria-label={t("Character identity review")} className="text-ink-black">
       {issues.length > 0 ? (
         <details className="group">
           <summary className="relative flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-2 p-4 pr-11 [&::-webkit-details-marker]:hidden">
@@ -73,7 +74,7 @@ export function CastIdentityReview({ projectId, characters, locations = [], onSh
                 <li key={`${subjectsOf(issue).map((subject) => subject.id).join("-")}-${index}`}>
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
                     {subjectsOf(issue).map(({ kind, id }) => (
-                      <a key={id} href={`#cast-${kind}-${id}`} onClick={onShowCharacter}
+                      <a key={id} href={`#cast-${kind}-${id}`} onClick={(event) => { event.preventDefault(); onShowCharacter(kind, id); }}
                         className="inline-flex min-h-11 items-center font-display text-base font-bold underline underline-offset-4 hover:text-hero-red">
                         {names.get(id) ?? id}
                       </a>

@@ -66,37 +66,46 @@ function mount() {
   </Routes></I18nProvider></MemoryRouter></QueryClientProvider>);
   return client;
 }
+const name = "Professor Angell’s office";
+const pane = () => screen.getByTestId("cast-stage");
+const stageImage = () => pane().querySelector("img")!;
+const lookTile = () => within(screen.getByRole("group", { name: "Looks" })).getByRole("button", { name: "At night" });
+/** The office is the only reference, so it starts on the stage; the alternate is its night look. */
+async function open(alternate: boolean) {
+  const user = userEvent.setup();
+  await screen.findByRole("complementary", { name });
+  // Let the initial idle refresh settle; it reloads the stage image once.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  if (alternate) await user.click(lookTile());
+}
+
 it.each([false, true])("keeps two versions and moves selection across repeated restores (alternate: %s)", async (alternate) => {
   const user = userEvent.setup();
   mount();
-  const open = await screen.findByRole("button", { name: "Review & adjust · Professor Angell’s office" });
-  if (alternate) await user.click(screen.getByRole("button", { name: "Open image · At night" }));
-  else await user.click(open);
-  const dialog = screen.getByRole("dialog");
+  await open(alternate);
   const history = await screen.findByRole("region", { name: "Versions" });
   const current = within(history).getByRole("button", { name: "Selected version v2", pressed: true });
   expect(current).toHaveProperty("disabled", true);
-  expect(within(current).getByText("Selected")).toBeTruthy();
-  expect(within(dialog).queryByRole("button", { name: "Restore v2" })).toBeNull();
+  expect(within(current).getByText(/In use/)).toBeTruthy();
+  expect(within(history).queryByRole("button", { name: "Restore v2" })).toBeNull();
   await user.click(current);
   expect(server.writes).toEqual([]);
   const suffix = alternate ? "&state_id=night" : "";
   expect(server.reads).toContain(`/projects/demo/location-plate-versions?loc_id=office${suffix}`);
   for (const version of [1, 2, 1, 2]) {
-    const pane = screen.getByTestId("image-modal-image-pane");
-    const beforeImage = pane.querySelector("img")!.getAttribute("src");
-    const beforeThumbnail = alternate ? screen.getByAltText("At night reference").getAttribute("src") : null;
+    const beforeImage = stageImage().getAttribute("src");
+    const beforeThumbnail = alternate ? lookTile().querySelector("img")!.getAttribute("src") : null;
     await user.click(within(screen.getByRole("region", { name: "Versions" })).getByRole("button", { name: `Restore v${version}` }));
     const selected = await screen.findByRole("button", { name: `Selected version v${version}`, pressed: true });
     expect(selected).toHaveProperty("disabled", true);
     const updatedHistory = screen.getByRole("region", { name: "Versions" });
-    expect(within(updatedHistory).getByText("Versions (2)")).toBeTruthy();
+    expect(within(updatedHistory).getByRole("heading").textContent).toBe("Versions · 2");
     expect(within(updatedHistory).getAllByRole("button")).toHaveLength(2);
     expect(within(updatedHistory).getAllByRole("button", { pressed: true })).toHaveLength(1);
-    expect(within(updatedHistory).queryByText("v3")).toBeNull();
+    expect(within(updatedHistory).queryByText(/v3/)).toBeNull();
     expect(within(updatedHistory).getByRole("button", { name: `Restore v${version === 1 ? 2 : 1}` })).toHaveProperty("disabled", false);
-    await waitFor(() => expect(pane.querySelector("img")!.getAttribute("src")).not.toBe(beforeImage));
-    if (alternate) expect(screen.getByAltText("At night reference").getAttribute("src")).not.toBe(beforeThumbnail);
+    await waitFor(() => expect(stageImage().getAttribute("src")).not.toBe(beforeImage));
+    if (alternate) expect(lookTile().querySelector("img")!.getAttribute("src")).not.toBe(beforeThumbnail);
   }
   expect(server.writes).toEqual([1, 2, 1, 2].map((version) => `/projects/demo/location-plate-versions/restore?loc_id=office&version=${version}${suffix}`));
   expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -107,19 +116,18 @@ it.each([false, true])("shows image progress and the new version without restori
   server.currentVersion = 1;
   server.archivedVersions = 0;
   const client = mount();
-  const open = await screen.findByRole("button", { name: "Review & adjust · Professor Angell’s office" });
-  if (alternate) await user.click(screen.getByRole("button", { name: "Open image · At night" }));
-  else await user.click(open);
-  const pane = () => screen.getByTestId("image-modal-image-pane");
-  const originalSrc = pane().querySelector("img")!.getAttribute("src");
+  await open(alternate);
+  const drawingLabel = `Drawing ${alternate ? "At night" : name}…`;
+  const originalSrc = stageImage().getAttribute("src");
   let admit!: (value: unknown) => void;
   server.submit.mockReturnValue(new Promise((resolve) => { admit = resolve; }));
-  await user.type(screen.getByRole("textbox"), "Replace the desk with a round table.");
-  await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
-  expect(within(pane()).getByRole("status").textContent).toBe("DRAWING…");
+  await user.type(screen.getByRole("textbox", { name: "Make a change" }), "Replace the desk with a round table.");
+  await user.click(await screen.findByRole("button", { name: /Redraw with change.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw with change" }));
+  expect(within(pane()).getByRole("status").textContent).toBe(drawingLabel);
   expect(pane().getAttribute("aria-busy")).toBe("true");
-  expect(pane().querySelector("img")!.getAttribute("src")).toBe(originalSrc);
+  // A redraw keeps the current image on the stage until the new one lands.
+  expect(stageImage().getAttribute("src")).toBe(originalSrc);
 
   const job: GenerationJob = {
     id: "location-change", project_name: "demo", kind: "location_plate_regen", label: "Office",
@@ -128,15 +136,16 @@ it.each([false, true])("shows image progress and the new version without restori
   };
   server.jobs = [job];
   await act(async () => { admit({ job }); });
-  await waitFor(() => expect(within(pane()).getByRole("status").textContent).toBe("QUEUED"));
-  await user.keyboard("{Escape}");
-  if (alternate) await user.click(screen.getByRole("button", { name: "Open image · At night" }));
-  else await user.click(open);
-  expect(within(pane()).getByRole("status").textContent).toBe("QUEUED");
+  await waitFor(() => expect(within(pane()).getByRole("status").textContent).toBe("Queued"));
+  // Leaving the view and coming back keeps the job's state.
+  const strip = within(screen.getByRole("group", { name: "Looks" }));
+  await user.click(strip.getByRole("button", { name: alternate ? "Main" : "At night" }));
+  await user.click(alternate ? lookTile() : strip.getByRole("button", { name: "Main" }));
+  expect(within(pane()).getByRole("status").textContent).toBe("Queued");
 
   server.jobs = [{ ...job, status: "running", queue_position: null }];
   await act(async () => { await client.invalidateQueries({ queryKey: ["project", "demo", "generation-jobs"] }); });
-  await waitFor(() => expect(within(pane()).getByRole("status").textContent).toBe("DRAWING…"));
+  await waitFor(() => expect(within(pane()).getByRole("status").textContent).toBe(drawingLabel));
   server.currentVersion = 2;
   server.archivedVersions = 1;
   server.jobs = [{ ...job, status: "complete", queue_position: null, finished_at: new Date().toISOString() }];
@@ -148,14 +157,14 @@ it.each([false, true])("shows image progress and the new version without restori
   expect(current.querySelector("img")!.getAttribute("src")).toContain(alternate ? "/plates/office/states/night.png?" : "/plates/office.png?");
   expect(pane().getAttribute("aria-busy")).toBe("false");
   expect(within(pane()).queryByRole("status")).toBeNull();
-  expect(pane().querySelector("img")!.getAttribute("src")).not.toBe(originalSrc);
+  expect(stageImage().getAttribute("src")).not.toBe(originalSrc);
   expect(server.writes).toHaveLength(1);
   expect(server.writes[0]).toContain("instructed");
 });
 it("keeps history available after a restore failure and lets the user retry", async () => {
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: "Review & adjust · Professor Angell’s office" }));
+  await open(false);
   server.fail = true;
   await user.click(await screen.findByRole("button", { name: "Restore v1" }));
   expect((await screen.findByRole("alert")).textContent).toContain("could not be restored");
@@ -165,34 +174,27 @@ it("keeps history available after a restore failure and lets the user retry", as
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("recovers a missing location card and modal using the successful live probe URL", async () => {
+it("recovers a missing location image using the successful live probe URL", async () => {
   const client = mount();
-  const name = "Professor Angell’s office";
-  const image = await screen.findByAltText(name);
-  // Let the initial idle refresh settle before recording the failed request.
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await open(false);
+  const image = screen.getByAltText(name);
   const failedSrc = image.getAttribute("src");
   fireEvent.error(image);
-  expect(screen.getByText("NO PLATE IMAGE")).toBeTruthy();
+  expect(within(pane()).getByText("No image yet")).toBeTruthy();
 
   server.running = true;
   await act(async () => { await client.invalidateQueries({ queryKey: ["project", "demo", "status"] }); });
-  const card = screen.getByRole("button", { name: `Open image · ${name}` });
-  await waitFor(() => expect(card.querySelector("img")).not.toBeNull());
-  const probe = card.querySelector("img")!;
+  await waitFor(() => expect(pane().querySelector("img")).not.toBeNull());
+  const probe = pane().querySelector("img")!;
   vi.useFakeTimers();
   try {
     fireEvent.error(probe);
     act(() => vi.advanceTimersByTime(5_000));
-    const successfulSrc = card.querySelector("img")!.getAttribute("src");
+    const successfulSrc = pane().querySelector("img")!.getAttribute("src");
     expect(successfulSrc).not.toBe(failedSrc);
-    fireEvent.load(card.querySelector("img")!);
-    expect(screen.getByAltText(name).getAttribute("src")).toBe(successfulSrc);
-    fireEvent.load(screen.getByAltText(name));
-    fireEvent.click(card);
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).queryByText("NO PLATE IMAGE")).toBeNull();
-    expect(within(dialog).getByAltText(name).getAttribute("src")).toBe(successfulSrc);
+    fireEvent.load(pane().querySelector("img")!);
+    expect(within(pane()).queryByText("No image yet")).toBeNull();
+    expect(within(pane()).getByAltText(name).getAttribute("src")).toBe(successfulSrc);
   } finally {
     vi.useRealTimers();
   }

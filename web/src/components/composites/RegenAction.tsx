@@ -95,7 +95,7 @@ export function RegenAction({
     ? { ...estimate, estimate_credits: estimate.estimate_credits + looks.estimate_credits }
     : estimate;
   const looksChoice = looks && hasImage ? (
-    <div className="flex items-start gap-3 border-[2px] border-ink-black/10 bg-bristol px-3 py-2">
+    <div className="flex items-start gap-3 border border-ink-black/15 bg-bristol px-3 py-2">
       <input id={looksId} type="checkbox" checked={includeLooks} onChange={(event) => setIncludeLooks(event.target.checked)}
         className="mt-1 h-5 w-5 shrink-0 accent-ink-black" />
       <label htmlFor={looksId} className="font-body text-[0.8rem] leading-5 text-ink-black">
@@ -108,30 +108,21 @@ export function RegenAction({
 
   return (
     <section aria-label={`${t("REGENERATE IMAGE")} · ${assetLabel}`}>
-      <div className="font-meta text-xs tracking-[0.08em] text-ink-muted">
-        {hasImage ? t("MAKE A CHANGE") : t("CREATE IMAGE")}
-      </div>
-      <p className="mt-1 text-[0.78rem] leading-5 text-ink-black/60">
-        {hasImage
-          ? t("Describe a visual change, or try another version from the same brief.")
-          : t("Generate this missing image from its saved visual brief.")}
-      </p>
-
       {lastInstruction && (
-        <details className="mt-3 border-[2px] border-archive-sage/35 bg-archive-sage/8">
-          <summary className="min-h-11 cursor-pointer px-3 py-3 font-meta text-xs tracking-[0.08em] text-ready">
-            {t("LAST CHANGE APPLIED")}
+        <details className="mb-3 border border-archive-sage/35 bg-archive-sage/8">
+          <summary className="min-h-10 cursor-pointer px-3 py-2.5 font-meta text-xs font-medium text-ready">
+            {t("Last change applied")}
           </summary>
-          <p className="break-words px-3 pb-3 text-[0.75rem] leading-5 text-ink-black/70">
+          <p className="break-words px-3 pb-3 text-[0.8125rem] leading-5 text-ink-black/75">
             {lastInstruction}
           </p>
         </details>
       )}
 
-      {allowInstruction && onRegenerateWithInstruction && (
-        <div className="mt-3">
-          <label htmlFor={instructionId} className="mb-1.5 block font-meta text-xs tracking-[0.08em] text-ink-muted">
-            {t("WHAT SHOULD CHANGE?")}
+      {allowInstruction && onRegenerateWithInstruction ? (
+        <div>
+          <label htmlFor={instructionId} className="block font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+            {t("Make a change")}
           </label>
           <textarea
             id={instructionId}
@@ -145,59 +136,65 @@ export function RegenAction({
             disabled={disabled || busy}
             aria-invalid={!!instructionError}
             aria-describedby={instructionError ? instructionErrorId : undefined}
-            className="w-full resize-y border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.86rem] leading-6 text-ink-black outline-none transition-colors focus:border-ink-black disabled:opacity-55"
+            className="mt-2 block w-full resize-y border border-ink-black/45 bg-bristol px-3 py-2.5 font-body text-sm leading-5 text-ink-black outline-none transition-colors placeholder:text-ink-soft focus:border-ink-black disabled:opacity-55"
             placeholder={instructionPlaceholder ?? t("For example: darker lighting, rain on the window, keep the face unchanged…")}
           />
-          <div className="mt-1 flex items-start justify-between gap-3">
-            <p
-              id={instructionErrorId}
-              className={`min-h-5 text-xs leading-5 ${instructionError ? "text-hero-red" : "text-ink-muted"}`}
-              aria-live="polite"
-            >
-              {instructionError ?? `${instruction.length}/500`}
-            </p>
-          </div>
+          <p
+            id={instructionErrorId}
+            className={`mt-1 min-h-4 text-right font-meta text-[0.6875rem] tabular-nums ${instructionError ? "text-left text-hero-red" : "text-ink-soft"}`}
+            aria-live="polite"
+          >
+            {instructionError ?? (instruction.length > 0 ? `${instruction.length}/500` : "")}
+          </p>
           {instructionControls}
           <Button
+            variant="secondary"
             className="mt-1 w-full"
-            size="sm"
+            size="md"
             onClick={requestInstructionRegen}
             disabled={instructionUnavailable || !instruction.trim()}
           >
-            {busy ? (busyLabel ?? t("STARTING…")) : (
+            {busy ? (busyLabel ?? t("Starting…")) : (
               <>
-                {t("REGENERATE WITH CHANGE")} <span aria-hidden="true">·</span>{" "}
+                {t("Redraw with change")} <span aria-hidden="true" className="opacity-60">·</span>{" "}
                 {instructionCost
                   ? <CreditAmount value={instructionCost.estimate_credits} approximate label={t("credits")} />
-                  : t("COST CALCULATING…")}
+                  : t("cost calculating…")}
               </>
             )}
           </Button>
         </div>
+      ) : (
+        <p className="font-body text-sm leading-5 text-ink-muted">
+          {hasImage
+            ? t("Try another version from the same brief.")
+            : t("Draw this missing image from its saved visual brief.")}
+        </p>
       )}
 
       <Button
-        variant="outline"
-        className={`${allowInstruction ? "mt-2" : "mt-3"} w-full`}
-        size="sm"
+        variant={hasImage ? "outline" : "secondary"}
+        className="mt-2 w-full"
+        size="md"
         onClick={() => setConfirmMode("same")}
         disabled={unavailable}
       >
-        {busy ? (busyLabel ?? t("STARTING…")) : (
+        {busy ? (busyLabel ?? t("Starting…")) : (
           <>
-            {hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")} <span aria-hidden="true">·</span>{" "}
+            {hasImage ? t("Try another version") : t("Draw this image")} <span aria-hidden="true" className="opacity-60">·</span>{" "}
             {cost
               ? <CreditAmount value={cost.estimate_credits} approximate label={t("credits")} />
-              : t("COST CALCULATING…")}
+              : t("cost calculating…")}
           </>
         )}
       </Button>
+      {hasImage && <p className="mt-2 font-body text-xs text-ink-muted">{t("The current image stays in Versions.")}</p>}
 
       {error && <ErrorNotice error={error} operation="generate" />}
 
       <ConfirmDrawer
         open={confirmMode !== null}
-        title={confirmMode === "instruction" ? t("Regenerate with change") : hasImage ? t("Try another version") : t("Generate image")}
+        title={confirmMode === "instruction" ? t("Redraw with change") : hasImage ? t("Try another version") : t("Draw this image")}
         body={confirmMode === "instruction"
           ? t("Scenewright will apply your visual change and create a new image. The current version stays in history.")
           : hasImage
@@ -205,14 +202,14 @@ export function RegenAction({
             : t("Scenewright will create this image from its saved visual brief.")}
         extraBody={confirmMode === "instruction" || looksChoice ? (
           <div className="space-y-3">
-            {confirmMode === "instruction" && <div>{instructionSummary}<blockquote className="break-words border-[2px] border-ink-black/10 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
+            {confirmMode === "instruction" && <div>{instructionSummary}<blockquote className="break-words border border-ink-black/15 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
               “{instruction.trim()}”
             </blockquote></div>}
             {looksChoice}
           </div>
         ) : undefined}
         cost={withLooksCost(confirmMode === "instruction" ? instructionCost : cost)}
-        confirmLabel={confirmMode === "instruction" ? t("REGENERATE WITH CHANGE") : hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")}
+        confirmLabel={confirmMode === "instruction" ? t("Redraw with change") : hasImage ? t("Try another version") : t("Draw this image")}
         onConfirm={confirm}
         onClose={() => setConfirmMode(null)}
         busy={busy}

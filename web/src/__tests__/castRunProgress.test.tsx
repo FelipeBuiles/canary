@@ -41,8 +41,8 @@ function renderCast() {
 function loadExistingImages() {
   for (const image of document.querySelectorAll("img")) fireEvent.load(image);
 }
-const card = (name: string) => screen.getByRole("heading", { name }).closest("article")!;
-const drawing = (name: string) => card(name).querySelector('[aria-busy="true"]') !== null;
+/** The roster row is busy while its reference draws. */
+const drawing = (name: string) => screen.getByRole("button", { name }).getAttribute("aria-busy") === "true";
 
 it("shows the run's progress in the Cast room and keeps changed references drawing until their new image lands", async () => {
   const client = renderCast();
@@ -58,7 +58,7 @@ it("shows the run's progress in the Cast room and keeps changed references drawi
   server.cat = "current";
   await act(() => client.refetchQueries({ queryKey: ["project", "fixture", "cast-freshness"] }));
   await waitFor(() => expect(screen.queryByText(/changed reference still to redraw/)).toBeNull());
-  // The card swaps to the new image's URL; load whichever image is mounted when it lands.
+  // The row swaps to the new image's URL; load whichever image is mounted when it lands.
   await waitFor(() => {
     loadExistingImages();
     expect(drawing("Companion")).toBe(false);

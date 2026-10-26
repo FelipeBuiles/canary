@@ -94,7 +94,7 @@ describe("cast consent", () => {
       { character_ids: ["a"], concern: "presentation", evidence: "Too tall", suggestion: "Shrink" }] };
     renderCast();
     expect(screen.getByText("1 character note is open. You can still continue; notes are advice.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Continue to Pages" }).hasAttribute("disabled")).toBe(false);
   });
 
   it.each(["character redraw", "project job"])("hides Continue while a %s is active", (job) => {
@@ -102,7 +102,7 @@ describe("cast consent", () => {
     if (job === "character redraw") redrawing = new Set(["a"]);
     else isRunning = true;
     renderCast();
-    expect(screen.queryByRole("button", { name: "LOOKS RIGHT — CONTINUE →" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to Pages" })).toBeNull();
     expect(document.querySelector("footer")).toBeNull();
     expect(approve).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe("cast consent", () => {
     stageStatus = "awaiting_review";
     renderCast();
     expect(screen.queryByRole("button", { name: "START CAST" })).toBeNull();
-    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Continue to Pages" }).hasAttribute("disabled")).toBe(false);
     expect(run).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
@@ -121,7 +121,7 @@ describe("cast consent", () => {
     stageStatus = "awaiting_review";
     approve.mockImplementation((_vars, options) => options.onError(new Error("Wait for all project jobs to finish before changing this project.")));
     renderCast();
-    const continueButton = screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" });
+    const continueButton = screen.getByRole("button", { name: "Continue to Pages" });
     await user.click(continueButton);
     expect(approve).toHaveBeenCalledWith({ project: "demo", stage: "cast" }, expect.anything());
     const alert = within(continueButton.closest("footer")!).getByRole("alert");
@@ -134,11 +134,11 @@ describe("cast consent", () => {
     const user = userEvent.setup();
     renderCast();
     expect(run).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "START CAST" }));
+    await user.click(screen.getByRole("button", { name: "Start cast" }));
     expect(run).not.toHaveBeenCalled();
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText(/Temporary hold/)).toBeTruthy();
-    await user.click(within(dialog).getByRole("button", { name: "START CAST" }));
+    await user.click(within(dialog).getByRole("button", { name: "Start cast" }));
     expect(run).toHaveBeenCalledWith("demo", "cast", expect.objectContaining({ actionLabel: "Start cast characters & places" }));
   });
 
@@ -146,7 +146,7 @@ describe("cast consent", () => {
     const user = userEvent.setup();
     selectedStyle = false;
     renderCast();
-    await user.click(screen.getByRole("button", { name: "START CAST" }));
+    await user.click(screen.getByRole("button", { name: "Start cast" }));
     expect(run).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
@@ -155,8 +155,8 @@ describe("cast consent", () => {
     const user = userEvent.setup();
     stageStatus = "failed";
     renderCast();
-    await user.click(screen.getByRole("button", { name: /RESUME CAST/ }));
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "RESUME CAST" }));
+    await user.click(screen.getByRole("button", { name: /^Resume cast/ }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Resume cast" }));
     act(() => run.mock.calls[0][2].onError(new Error("Provider unavailable")));
     expect(screen.getByRole("alert").textContent).toContain("Provider unavailable");
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -168,9 +168,9 @@ it("replaces premature Continue with a confirmed resume for an incomplete checkp
   stageStatus = "awaiting_review";
   approvalBlocker = "Resume Cast to finish the missing work";
   renderCast();
-  expect(screen.queryByRole("button", { name: "LOOKS RIGHT — CONTINUE →" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Continue to Pages" })).toBeNull();
   expect(screen.getByText(approvalBlocker)).toBeTruthy();
-  await userEvent.click(screen.getByRole("button", { name: /RESUME CAST/ }));
+  await userEvent.click(screen.getByRole("button", { name: /^Resume cast/ }));
   expect(run).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeTruthy();
 });
@@ -194,9 +194,9 @@ it("continues after corrections in one step: the server re-checks the cast, then
   stageStatus = "awaiting_review";
   approvalBlocker = CAST_REVIEW_BLOCKER;
   renderCast();
-  expect(screen.queryByRole("button", { name: /RESUME CAST|RE-CHECK/ })).toBeNull();
-  expect(screen.getByText("Scenewright checks your corrected cast, then adapts the book and plans complete pages — automatically")).toBeTruthy();
-  await userEvent.click(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }));
+  expect(screen.queryByRole("button", { name: /RESUME CAST|Resume cast|RE-CHECK/ })).toBeNull();
+  expect(screen.getByText("Scenewright checks your corrected cast, then adapts the book and plans every page")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Continue to Pages" }));
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(run).toHaveBeenCalledOnce();
   expect(run.mock.calls[0][1]).toBe("cast");

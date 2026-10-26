@@ -42,78 +42,79 @@ function renderCast() {
   return mount(client);
 }
 
-it("finds references across types and keeps cards and unsaved corrections mounted when filtering", async () => {
+const panel = (name: string) => screen.getByRole("complementary", { name });
+const changeBox = (name: string) => within(panel(name)).getByRole("textbox", { name: "Make a change" }) as HTMLTextAreaElement;
+
+it("finds references across types and keeps the selection and unsaved corrections when filtering", async () => {
   const user = userEvent.setup();
   renderCast();
   const search = await screen.findByRole("searchbox", { name: "Find a reference" });
-  const card = screen.getByRole("heading", { name: "Companion" }).closest("article")!;
-  await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
-  await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "Keep the whiskers longer.");
-  await user.keyboard("{Escape}");
+  const roster = screen.getByRole("complementary", { name: "Cast list" });
+  // The first character starts on the stage.
+  expect(within(roster).getByRole("button", { name: "Companion" }).getAttribute("aria-current")).toBe("true");
+  await user.type(changeBox("Companion"), "Keep the whiskers longer.");
   await user.type(search, "  HALL  ");
-  expect(screen.getByRole("button", { name: "Review & adjust · Great Hall" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Review & adjust · Companion" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Review & adjust · Brass Key" })).toBeNull();
+  expect(within(roster).getByRole("button", { name: "Great Hall" })).toBeTruthy();
+  expect(within(roster).queryByRole("button", { name: "Companion" })).toBeNull();
+  expect(within(roster).queryByRole("button", { name: "Brass Key" })).toBeNull();
   expect(screen.getByText("1 references found")).toBeTruthy();
   await user.clear(search);
   await user.type(search, "brass");
-  expect(screen.getByRole("button", { name: "Review & adjust · Brass Key" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Review & adjust · Great Hall" })).toBeNull();
+  expect(within(roster).getByRole("button", { name: "Brass Key" })).toBeTruthy();
+  expect(within(roster).queryByRole("button", { name: "Great Hall" })).toBeNull();
   await user.clear(search);
   await user.type(search, "nonexistent");
   expect(screen.getByText("No matching references. Try another name or clear your search.")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /^Review & adjust ·/ })).toBeNull();
+  // Filtering never drops what is on the stage.
+  expect(changeBox("Companion").value).toBe("Keep the whiskers longer.");
   await user.click(screen.getByRole("button", { name: "Clear search" }));
   expect((search as HTMLInputElement).value).toBe("");
-  expect(screen.getAllByRole("button", { name: /^Review & adjust ·/ })).toHaveLength(3);
-  expect(screen.getByRole("heading", { name: "Companion" }).closest("article")).toBe(card);
-  await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
-  expect((within(screen.getByRole("dialog")).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Keep the whiskers longer.");
+  expect(within(roster).getAllByRole("button")).toHaveLength(3);
   expect(server.submit).not.toHaveBeenCalled();
 });
 
-it("offers section destinations and explicit review controls without starting generation", async () => {
+it("puts each reference on the stage from the roster or the sheet without starting generation", async () => {
   const user = userEvent.setup();
   renderCast();
-  const search = await screen.findByRole("searchbox", { name: "Find a reference" });
-  for (const name of ["Characters 1", "Places 1", "Props 1"]) {
-    const link = screen.getByRole("link", { name });
-    expect(document.querySelector(link.getAttribute("href")!)).toBeTruthy();
-    await user.type(search, "nonexistent");
-    await user.click(link);
-    expect((search as HTMLInputElement).value).toBe("");
-    expect(screen.getAllByRole("button", { name: /^Review & adjust ·/ })).toHaveLength(3);
-  }
+  const roster = await screen.findByRole("complementary", { name: "Cast list" });
   for (const name of ["Companion", "Great Hall", "Brass Key"]) {
-    await user.click(screen.getByRole("button", { name: `Review & adjust · ${name}` }));
-    expect(screen.getByRole("dialog", { name: name.toUpperCase() })).toBeTruthy();
-    expect(within(screen.getByRole("dialog")).getByRole("textbox")).toBeTruthy();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    await user.keyboard("{Escape}");
+    await user.click(within(roster).getByRole("button", { name }));
+    expect(within(roster).getByRole("button", { name }).getAttribute("aria-current")).toBe("true");
+    expect(within(panel(name)).getByRole("heading", { name })).toBeTruthy();
+    expect(changeBox(name)).toBeTruthy();
   }
-  expect(server.submit).not.toHaveBeenCalled();
-});
-
-it("opens Review & adjust with a Character check suggestion prefilled and spends nothing", async () => {
-  const user = userEvent.setup();
-  server.review = { status: "current", issues: [{ character_ids: ["cat"], concern: "scale", evidence: "Too large", suggestion: "Make the cat smaller beside adults." }] };
-  renderCast();
-  await user.click(await screen.findByText("1 note to review"));
-  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
-  const dialog = screen.getByRole("dialog", { name: "COMPANION" });
-  expect((within(dialog).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Make the cat smaller beside adults.");
-  await user.keyboard("{Escape}");
-  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
-  expect((within(screen.getByRole("dialog")).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Make the cat smaller beside adults.");
+  await user.click(screen.getByRole("button", { name: "Sheet" }));
+  expect(screen.queryByRole("complementary", { name: "Cast list" })).toBeNull();
+  await user.click(within(screen.getByRole("region", { name: "Places" })).getByRole("button"));
+  expect(screen.getByRole("button", { name: "Focus" }).getAttribute("aria-pressed")).toBe("true");
+  expect(panel("Great Hall")).toBeTruthy();
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(server.submit).not.toHaveBeenCalled();
 });
 
-it("aligns each card's sections and names where a prop first appears in reader terms", async () => {
+it("puts a Character check suggestion in the reference's change box and spends nothing", async () => {
+  const user = userEvent.setup();
+  server.review = { status: "current", issues: [{ character_ids: ["cat"], concern: "scale", evidence: "Too large", suggestion: "Make the cat smaller beside adults." }] };
   renderCast();
-  const heading = await screen.findByRole("heading", { name: "Brass Key" });
-  const card = heading.closest("article")!;
-  expect(card.classList.contains("grid-rows-subgrid")).toBe(true);
-  expect(within(card).getByText("First seen: The Brass Door")).toBeTruthy();
-  expect(within(card).getByText("Three brass teeth.")).toBeTruthy();
+  await user.click(await screen.findByRole("button", { name: "Great Hall" }));
+  await user.click(await screen.findByRole("button", { name: "Character check · 1 note" }));
+  await user.click(screen.getByText("1 note to review"));
+  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
+  expect(changeBox("Companion").value).toBe("Make the cat smaller beside adults.");
+  await user.clear(changeBox("Companion"));
+  await user.click(screen.getByRole("button", { name: "Character check · 1 note" }));
+  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
+  expect(changeBox("Companion").value).toBe("Make the cat smaller beside adults.");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(server.submit).not.toHaveBeenCalled();
+});
+
+it("names where a prop first appears in reader terms", async () => {
+  const user = userEvent.setup();
+  renderCast();
+  const row = await screen.findByRole("button", { name: "Brass Key" });
+  expect(row.textContent).toContain("First seen: The Brass Door");
+  await user.click(row);
+  expect(within(panel("Brass Key")).getByText("The Brass Door")).toBeTruthy();
+  expect(within(panel("Brass Key")).getByText("Three brass teeth.")).toBeTruthy();
 });
