@@ -12,6 +12,8 @@ interface RoomShellProps {
   emptyTitle?: string;
   emptyDescription?: string;
   fullHeight?: boolean;
+  /** The room draws edge to edge and fills the workbench height. */
+  bleed?: boolean;
   // When the room is loading because the stage hasn't run yet (pending), is
   // currently running, or failed, pass the stage info to render the rich
   // StagePlaceholder (stage badge + progress, or the CreditsGate panel when
@@ -31,6 +33,7 @@ export function RoomShell({
   emptyTitle = "NOT AVAILABLE",
   emptyDescription = "This room is not ready yet.",
   fullHeight,
+  bleed,
   loadingStage,
   loadingStageStatus,
   loadingStageItemsDone,
@@ -68,5 +71,6 @@ export function RoomShell({
     );
   }
 
+  if (bleed) return <div data-bleed className="flex min-h-0 flex-1 flex-col">{children}</div>;
   return <div className={fullHeight ? "h-full" : "space-y-6"}>{children}</div>;
 }

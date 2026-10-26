@@ -50,65 +50,70 @@ function render(ui: ReactNode) {
   return renderWithoutQueries(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
 }
 
-function proof(label: string) {
-  const heading = screen.getByRole("heading", { name: label, level: 3 });
-  return within(heading.closest("article")!);
+const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+  <Route path="/projects/:id/style" element={<StyleRoom />} />
+  <Route path="/project/:id/cast" element={<p>Cast room</p>} />
+</Routes></MemoryRouter></I18nProvider>;
+
+function strip() {
+  return within(screen.getByRole("list", { name: "All proofs" }));
+}
+
+async function open(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(strip().getByRole("button", { name: label }));
 }
 
 describe("StyleRoom comparison", () => {
   it("guides the first addition, keeps three choices without eviction, and allows replacement after removal", async () => {
     const user = userEvent.setup();
-    const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-      <Route path="/projects/:id/style" element={<StyleRoom />} />
-    </Routes></MemoryRouter></I18nProvider>;
     const view = render(room());
-    await user.click(proof("Ink").getByRole("button", { name: "COMPARE" }));
-    expect(screen.getByText("One proof added. Choose another to start comparing.")).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "COMPARE PROOFS" })).toBeNull();
-    await user.click(proof("Watercolor").getByRole("button", { name: "COMPARE" }));
-    expect(screen.getByRole("region", { name: "COMPARE PROOFS" })).toBeTruthy();
-    await user.click(proof("Noir").getByRole("button", { name: "COMPARE" }));
-    const fourth = proof("Graphic").getByRole("button", { name: "COMPARE" });
+    await user.click(screen.getByRole("button", { name: "Compare · Ink" }));
+    expect(screen.getByRole("button", { name: "Compare · add one more" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("region", { name: "Compare proofs" })).toBeNull();
+    await open(user, "Watercolor");
+    await user.click(screen.getByRole("button", { name: "Compare · Watercolor" }));
+    await open(user, "Noir");
+    await user.click(screen.getByRole("button", { name: "Compare · Noir" }));
+    await open(user, "Graphic");
+    const fourth = screen.getByRole("button", { name: "Compare · Graphic" });
     expect(fourth).toHaveProperty("disabled", true);
     await user.click(fourth);
+    await user.click(screen.getByRole("button", { name: "Compare 3" }));
+    const comparison = within(screen.getByRole("region", { name: "Compare proofs" }));
     for (const label of ["Ink", "Watercolor", "Noir"]) {
-      expect(screen.getByRole("button", { name: `Remove from comparison · ${label}` })).toBeTruthy();
+      expect(comparison.getByRole("button", { name: `Remove from comparison · ${label}` })).toBeTruthy();
     }
-    expect(screen.getByText("Three proofs added. Remove one to compare another.")).toBeTruthy();
-    await user.click(proof("Watercolor").getByRole("button", { name: "COMPARING" }));
+    await user.click(comparison.getByRole("button", { name: "Remove from comparison · Watercolor" }));
     expect(screen.queryByRole("button", { name: "Remove from comparison · Watercolor" })).toBeNull();
-    await user.click(proof("Graphic").getByRole("button", { name: "COMPARE" }));
+    await open(user, "Graphic");
+    await user.click(screen.getByRole("button", { name: "Compare · Graphic" }));
+    await user.click(screen.getByRole("button", { name: "Compare 3" }));
     expect(screen.getByRole("button", { name: "Remove from comparison · Graphic" })).toBeTruthy();
     state.labels = ["Etching", "Pastel", "Woodcut"];
     view.rerender(room());
-    await user.click(proof("Etching").getByRole("button", { name: "COMPARE" }));
-    expect(screen.getByText("One proof added. Choose another to start comparing.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Remove from comparison · Etching" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Compare proofs" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Compare · Etching" }));
+    expect(screen.getByRole("button", { name: "Compare · add one more" })).toBeTruthy();
     expect(state.mutation.mutate).not.toHaveBeenCalled();
   });
 });
 
 it("shows estimate failures with a retry instead of claiming generation is running", async () => {
-    state.labels = [];
-    state.estimateError = new Error("A job cannot mix API-funded and Codex-subscription operations");
-    render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-      <Route path="/projects/:id/style" element={<StyleRoom />} />
-    </Routes></MemoryRouter></I18nProvider>);
-    expect(screen.getByRole("alert").textContent).toContain(state.estimateError.message);
-    expect(screen.queryByText("PREPARING DIRECTIONS…")).toBeNull();
-    expect(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" })).toHaveProperty("disabled", true);
-    await userEvent.setup().click(screen.getByRole("button", { name: "TRY AGAIN" }));
-    expect(state.retryEstimate).toHaveBeenCalledOnce();
-    expect(state.mutation.mutate).not.toHaveBeenCalled();
- });
+  state.labels = [];
+  state.estimateError = new Error("A job cannot mix API-funded and Codex-subscription operations");
+  render(room());
+  expect(screen.getByRole("alert").textContent).toContain(state.estimateError.message);
+  expect(screen.queryByText("Preparing directions…")).toBeNull();
+  expect(screen.getByRole("button", { name: "Create six directions" })).toHaveProperty("disabled", true);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
+  expect(state.retryEstimate).toHaveBeenCalledOnce();
+  expect(state.mutation.mutate).not.toHaveBeenCalled();
+});
 
 it("starts Cast with its bundled cover estimate without requesting a cover before references exist", async () => {
   state.castStatus = "pending";
   state.estimateError = null;
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-    <Route path="/project/:id/cast" element={<p>Cast room</p>} />
-  </Routes></MemoryRouter></I18nProvider>);
+  render(room());
   await userEvent.setup().click(screen.getByRole("button", { name: "Continue for 25" }));
   expect(state.handleRun).toHaveBeenCalledWith("book", "cast", { actionLabel: "Cast characters & places" });
   expect(state.generateCover).not.toHaveBeenCalled();
@@ -116,52 +121,46 @@ it("starts Cast with its bundled cover estimate without requesting a cover befor
   state.castStatus = undefined;
 });
 
-it("renders all six base proofs with their selection actions", () => {
+it("shows every proof in the strip and the sheet, with one selection action for the proof on the stage", async () => {
   state.labels = ["Ink", "Watercolor", "Noir", "Graphic", "Caricature", "Paper"];
   state.estimateError = null;
   state.castStatus = undefined;
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>);
-  const grid = screen.getByTestId("style-proof-grid");
-  expect(within(grid).getAllByRole("heading", { level: 3 })).toHaveLength(6);
-  expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
+  const user = userEvent.setup();
+  render(room());
+  expect(strip().getAllByRole("button", { name: /Ink|Watercolor|Noir|Graphic|Caricature|Paper/ })).toHaveLength(6);
+  expect(screen.getAllByRole("button", { name: "Use this style" })).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Sheet" }));
+  const sheet = screen.getByTestId("style-proof-grid");
+  expect(within(sheet).getAllByRole("heading", { level: 3 })).toHaveLength(6);
+  await user.click(within(sheet).getByRole("button", { name: "Open Noir" }));
+  expect(screen.getByRole("group", { name: "Noir, 3 / 6" })).toBeTruthy();
 });
 
-it("restores all six saved proofs when a model change replaces failed cached preview URLs", async () => {
+it("restores a saved proof when a model change replaces a failed cached preview URL", async () => {
   state.estimateError = null;
   state.suggestions = Array.from({ length: 6 }, (_, index) => ({
     id: `style-${index}`, index: index + 1, label: `Look ${index + 1}`, origin: "generated",
     template: "Ink", has_sample: true, sample_stale: false, is_active: false,
     sample_preview_url: `/api/projects/book/styles/style-${index}/proof/sample?style=current`,
   }));
-  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>;
   const view = render(room());
-  const grid = within(screen.getByTestId("style-proof-grid"));
   await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
-  grid.getAllByRole("img").forEach((image) => fireEvent.error(image));
-  expect(grid.getAllByText("PROOF IMAGE UNAVAILABLE")).toHaveLength(6);
+  fireEvent.error(screen.getByRole("img", { name: "Look 1" }));
+  expect(screen.getByText("Proof image unavailable")).toBeTruthy();
 
   state.suggestions = state.suggestions.map((item) => ({ ...item, sample_preview_url: null, sample_stale: true }));
   view.rerender(room());
-  expect(grid.queryAllByText("PROOF IMAGE UNAVAILABLE")).toHaveLength(0);
-  const images = grid.getAllByRole("img");
-  expect(images).toHaveLength(6);
-  images.forEach((image, index) => {
-    expect(image.getAttribute("src")).toContain(`/files/samples/style_${index + 1}.png?t=`);
-  });
-  expect(grid.getAllByRole("button", { name: "SELECT THIS STYLE" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
+  expect(screen.queryByText("Proof image unavailable")).toBeNull();
+  expect(screen.getByRole("img", { name: "Look 1" }).getAttribute("src")).toContain("/files/samples/style_1.png?t=");
+  expect(screen.getByRole("button", { name: "Use this style" })).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "Refresh all (6)" })).toBeTruthy();
   state.suggestions = undefined;
 });
 
 it("does not surface an unrelated historic cover failure as a style audition failure", async () => {
   state.labels = ["Ink", "Watercolor"];
   state.jobs = [{ id: "old-cover", kind: "project_cover", status: "failed", error: "Approve references before creating this cover.", payload: {}, queued_at: "2026-09-01" } as GenerationJob];
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>);
+  render(room());
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(screen.queryByText("Approve references before creating this cover.")).toBeNull();
   expect(screen.getByRole("heading", { name: "Ink" })).toBeTruthy();
@@ -177,25 +176,28 @@ it("names author directions, filters yours newest first, and tucks hidden proofs
     { id: "noir", index: 4, label: "Noir", origin: "generated", template: "Noir", has_sample: true, is_active: false, hidden: true },
   ];
   const user = userEvent.setup();
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>);
-  const grid = screen.getByTestId("style-proof-grid");
-  expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
-    .toEqual(["Midnight ink", "Claymation snowfall", "Moth-wing pastel"]);
-  expect(proof("Claymation snowfall").getByText("“claymation, falling snow”")).toBeTruthy();
+  render(room());
+  const names = () => strip().getAllByRole("button").map((button) => button.getAttribute("aria-label")).filter(Boolean);
+  expect(names()).toEqual(["Midnight ink", "Claymation snowfall", "Moth-wing pastel"]);
+  await open(user, "Claymation snowfall");
+  expect(screen.getByText("“claymation, falling snow”")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Yours 2" }));
-  expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
-    .toEqual(["Moth-wing pastel", "Claymation snowfall"]);
-  await user.click(proof("Moth-wing pastel").getByRole("button", { name: "COMPARE" }));
+  expect(names()).toEqual(["Moth-wing pastel", "Claymation snowfall"]);
+  await open(user, "Moth-wing pastel");
+  await user.click(screen.getByRole("button", { name: "Compare · Moth-wing pastel" }));
+  await open(user, "Claymation snowfall");
+  await user.click(screen.getByRole("button", { name: "Compare · Claymation snowfall" }));
+  await user.click(screen.getByRole("button", { name: "Compare 2" }));
   expect(screen.getByRole("button", { name: "Remove from comparison · Yours · Moth-wing pastel" })).toBeTruthy();
-  const hidden = screen.getByTestId("style-proof-hidden-grid");
-  expect(within(hidden).getByRole("heading", { name: "Noir" })).toBeTruthy();
-  await user.click(within(hidden).getByRole("button", { name: "Show · Noir" }));
+  await user.click(screen.getByRole("button", { name: "All 3" }));
+  await user.click(screen.getByRole("button", { name: /Hidden/ }));
+  await open(user, "Noir");
+  await user.click(screen.getByRole("button", { name: "Show · Noir" }));
   expect(state.presentation.mutate).toHaveBeenCalledWith(
     { project: "book", id: "noir", changes: { hidden: false } }, expect.any(Object),
   );
-  await user.click(proof("Claymation snowfall").getByRole("button", { name: "Rename · Claymation snowfall" }));
+  await open(user, "Claymation snowfall");
+  await user.click(screen.getByRole("button", { name: "Rename · Claymation snowfall" }));
   const input = screen.getByRole("textbox", { name: "Proof name" });
   await user.clear(input);
   await user.type(input, "Snow globe{Enter}");
@@ -206,7 +208,7 @@ it("names author directions, filters yours newest first, and tucks hidden proofs
   state.suggestions = undefined;
 });
 
-it("flips through thirty proofs by keyboard, opens the wall, and selects from the flipbook", async () => {
+it("flips through thirty proofs by keyboard, opens the sheet, and selects only from the explicit action", async () => {
   state.estimateError = null;
   state.mutation.mutate.mockReset();
   state.suggestions = Array.from({ length: 30 }, (_, index) => ({
@@ -214,23 +216,21 @@ it("flips through thirty proofs by keyboard, opens the wall, and selects from th
     template: "t", has_sample: true, is_active: false,
   }));
   const user = userEvent.setup();
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>);
-  await user.click(screen.getByRole("button", { name: "Flip" }));
-  const book = screen.getByRole("group", { name: "Look 1, 1 / 30" });
-  expect(document.activeElement).toBe(book);
-  for (let press = 0; press < 29; press++) fireEvent.keyDown(document.activeElement!, { key: "ArrowRight", repeat: press > 0 });
+  render(room());
+  for (let press = 0; press < 29; press++) {
+    fireEvent.keyDown(screen.getByRole("group", { name: new RegExp(`, ${press + 1} / 30$`) }), { key: "ArrowRight", repeat: press > 0 });
+  }
   expect(screen.getByRole("group", { name: "Look 30, 30 / 30" })).toBeTruthy();
   expect(screen.getByRole("img", { name: "Look 30" })).toBeTruthy();
-  fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  fireEvent.keyDown(screen.getByRole("group", { name: "Look 30, 30 / 30" }), { key: "ArrowRight" });
   expect(screen.getByRole("group", { name: "Look 1, 1 / 30" })).toBeTruthy();
 
-  await user.click(screen.getByRole("button", { name: "Wall" }));
-  expect(within(screen.getByRole("list", { name: "Proof wall" })).getAllByRole("button")).toHaveLength(30);
-  await user.click(screen.getByRole("button", { name: "Flip to Look 12" }));
+  await user.click(screen.getByRole("button", { name: "Sheet" }));
+  expect(within(screen.getByRole("list", { name: "Proof sheet" })).getAllByRole("button")).toHaveLength(30);
+  await user.click(screen.getByRole("button", { name: "Open Look 12" }));
   expect(screen.getByRole("group", { name: "Look 12, 12 / 30" })).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "SELECT THIS STYLE" }));
+  expect(state.mutation.mutate).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Use this style" }));
   expect(state.mutation.mutate).toHaveBeenCalledWith({ project: "book", id: "style-11" }, expect.any(Object));
   state.suggestions = undefined;
 });
@@ -239,16 +239,13 @@ it("keeps author directions open while single proofs draw and during a suggestio
   state.estimateError = null;
   state.labels = ["Ink", "Watercolor"];
   state.stylesMeta = { is_generating: true, is_suggesting: false };
-  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>;
   const view = render(room());
-  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
+  expect(screen.getAllByRole("button", { name: "New direction" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
   state.stylesMeta = { is_generating: true, is_suggesting: true };
   view.rerender(room());
   // Authors can submit a proof to the queue during the batch.
-  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
-  expect(proof("Ink").getByRole("button", { name: "TEST IN ACTION", hidden: true })).toHaveProperty("disabled", false);
+  expect(screen.getAllByRole("button", { name: "New direction" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
+  expect(screen.getByRole("button", { name: "Test" })).toHaveProperty("disabled", false);
   state.stylesMeta = {};
 });
 
@@ -264,14 +261,14 @@ it("queues every missing proof at once, even while another proof is drawing", as
     { id: "moth", index: 5, label: "Moth", origin: "generated", template: "Moth", has_sample: false, generation_status: "failed", is_active: false, hidden: true },
   ];
   const user = userEvent.setup();
-  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>);
-  expect(screen.getByText("2 PROOFS DIDN'T FINISH")).toBeTruthy();
-  expect(proof("Noir").getByRole("button", { name: "TRY SAMPLE AGAIN" })).toHaveProperty("disabled", false);
-  await user.click(screen.getByRole("button", { name: "RETRY ALL (2)" }));
+  render(room());
+  expect(screen.getByText("2 proofs didn't finish")).toBeTruthy();
+  await open(user, "Noir");
+  expect(screen.getByText("This proof didn't finish")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Try this proof again" })).toHaveProperty("disabled", false);
+  await user.click(screen.getByRole("button", { name: "Retry all (2)" }));
   const drawer = screen.getByRole("dialog", { name: "Retry the missing proofs?" });
-  await user.click(within(drawer).getByRole("button", { name: "RETRY ALL (2)" }));
+  await user.click(within(drawer).getByRole("button", { name: "Retry all (2)" }));
   expect(state.mutation.mutate).toHaveBeenCalledWith({ project: "book", ids: ["noir", "pastel"] }, expect.any(Object));
   state.suggestions = undefined;
   state.stylesMeta = {};
@@ -282,9 +279,7 @@ it.each(["queued", "running"] as const)("hides the approval footer while style s
   state.stylesMeta = { is_suggesting: true };
   state.jobs = [{ id: "style-batch", project_name: "book", kind: "style_suggest", label: "Style suggestions", payload: {}, status, queue_position: null, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null }];
   try {
-    render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-      <Route path="/projects/:id/style" element={<StyleRoom />} />
-    </Routes></MemoryRouter></I18nProvider>);
+    render(room());
     expect(screen.queryByRole("button", { name: /Continue for/ })).toBeNull();
   } finally {
     state.stylesMeta = previousMeta;
@@ -302,9 +297,6 @@ it("starts additional styles at directions until the new batch supplies its own 
     started_at: "2026-10-03T10:00:01Z", finished_at: "2026-10-03T10:02:00Z", error: null,
   };
   state.jobs = [previousBatch];
-  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
-    <Route path="/projects/:id/style" element={<StyleRoom />} />
-  </Routes></MemoryRouter></I18nProvider>;
   const expectStep = (label: string) => {
     const progress = screen.getByRole("region", { name: "Style generation progress" });
     expect(within(progress).getByText("GENERATING ADDITIONAL STYLES")).toBeTruthy();

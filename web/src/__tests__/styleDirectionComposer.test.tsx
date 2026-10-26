@@ -20,13 +20,13 @@ function renderComposer() {
 }
 
 describe("StyleDirectionComposer", () => {
-  it("does not spend until the author chooses a lane and confirms generation", async () => {
+  it("does not spend until the author confirms generation", async () => {
     const user = userEvent.setup();
     const { onAutomatic } = renderComposer();
 
     expect(onAutomatic).not.toHaveBeenCalled();
     expect(screen.getByText("~30 credits")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" }));
+    await user.click(screen.getByRole("button", { name: "Create six directions" }));
 
     expect(onAutomatic).toHaveBeenCalledOnce();
   });
@@ -35,12 +35,11 @@ describe("StyleDirectionComposer", () => {
     const user = userEvent.setup();
     const { onCustom } = renderComposer();
 
-    await user.click(screen.getByRole("radio", { name: /Bring a direction/i }));
     await user.type(
-      screen.getByLabelText("DESCRIBE THE DIRECTION"),
+      screen.getByLabelText("Describe it"),
       "Saturated tropical colors and strong black silhouettes",
     );
-    await user.click(screen.getByRole("button", { name: "CREATE MY PROOF" }));
+    await user.click(screen.getByRole("button", { name: "Create my proof" }));
 
     expect(onCustom).toHaveBeenCalledWith({
       direction: "Saturated tropical colors and strong black silhouettes",
@@ -53,10 +52,9 @@ describe("StyleDirectionComposer", () => {
     const user = userEvent.setup();
     const { onCustom } = renderComposer();
 
-    await user.click(screen.getByRole("radio", { name: /Bring a direction/i }));
-    await user.type(screen.getByLabelText("DESCRIBE THE DIRECTION"), "Luminous ink wash");
-    await user.click(screen.getByRole("radio", { name: "This direction + five neighbors" }));
-    await user.click(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" }));
+    await user.type(screen.getByLabelText("Describe it"), "Luminous ink wash");
+    await user.click(screen.getByRole("radio", { name: "Plus five variations" }));
+    await user.click(screen.getByRole("button", { name: "Create six proofs" }));
 
     expect(onCustom).toHaveBeenCalledWith({
       direction: "Luminous ink wash",
@@ -77,13 +75,12 @@ describe("StyleDirectionComposer", () => {
         />
       </I18nProvider>,
     );
-    await user.click(screen.getByRole("radio", { name: /Bring a direction/i }));
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, new File(["pixels"], "reference.png", { type: "image/png" }));
 
     expect(screen.getByText(/cannot read style references/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CREATE MY PROOF" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create my proof" })).toHaveProperty("disabled", true);
     expect(onCustom).not.toHaveBeenCalled();
   });
 
@@ -98,13 +95,12 @@ describe("StyleDirectionComposer", () => {
         />
       </I18nProvider>,
     );
-    await user.click(screen.getByRole("radio", { name: /Bring a direction/i }));
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, new File(["pixels"], "reference.png", { type: "image/png" }));
-    await user.click(screen.getByRole("radio", { name: "This direction + five neighbors" }));
+    await user.click(screen.getByRole("radio", { name: "Plus five variations" }));
 
     expect(screen.getByText(/Add a short text description/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create six proofs" })).toHaveProperty("disabled", true);
   });
 });
