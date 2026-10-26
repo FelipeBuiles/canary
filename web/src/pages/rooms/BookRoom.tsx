@@ -1,7 +1,7 @@
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { BookPublication } from "../../components/book/BookPublication";
-import { BookOpen, ArrowDown } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { MoreHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import {
@@ -18,22 +18,20 @@ import { getPageReplanEstimate, replanPage } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
 import { CreditHistoryLedger } from "../../components/credits/CreditHistoryLedger";
 import { CreditSpendSummary } from "../../components/credits/CreditSpendSummary";
-import { PageThumbnail } from "../../components/pages/PageThumbnail";
+import { BookDesk } from "../../components/book/BookDesk";
+import { cn } from "../../lib/cn";
 import { BookReader } from "../../components/BookReader";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import {
   ConfirmDrawer,
   RoomHeader,
   RoomShell,
-  SectionHeader,
   StagePlaceholder,
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
-import { StatusPill } from "../../components/ui/StatusPill";
 import { Skeleton } from "../../components/ui/Skeleton";
-import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
-import { readerPages } from "../../lib/bookReader";
+import { deskIndexForPage, deskViews, readerPages } from "../../lib/bookReader";
 import { groupRunsByDay } from "../../lib/creditsHistory";
 import { useShowDevContent } from "../../lib/devContent";
 import { groupEditionFindings } from "../../lib/editionChecks";
@@ -103,6 +101,8 @@ export function BookRoom() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [exportUrls, setExportUrls] = useState<Partial<Record<"pdf" | "cbz", string>>>({});
   const [newPackage, setNewPackage] = useState<string | null>(null);
+  const [deskIndex, setDeskIndex] = useState(0);
+  const views = useMemo(() => deskViews(bookPages, !!status?.has_cover), [bookPages, status?.has_cover]);
   const queryClient = useQueryClient();
 
   if (!id) return null;
@@ -147,6 +147,12 @@ export function BookRoom() {
   const reviewUrl = (pageNumber: number, review: "page" | "lettering") =>
     `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
   const uncheckedPages = completePages?.pages.filter((page) => page.active_render && page.analysis_recovery?.status !== "checked").length ?? 0;
+  // Pages the desk marks: anything that blocks export.
+  const flaggedPages = new Set<number>([
+    ...findings.flatMap((finding) => finding.pageNumbers),
+    ...(preflight?.pages.filter((page) => page.unresolved_editorial_issue_ids.length > 0).map((page) => page.page_number) ?? []),
+    ...(preflight?.correction_requests.map((request) => request.page_number) ?? []),
+  ]);
   const pageIssues = new Map(completePages?.pages.flatMap((page) => (page.issues ?? []).map((issue) => [issue.id, issue] as const)));
 
   function createExport(format: "pdf" | "cbz", force = false) {
@@ -165,56 +171,24 @@ export function BookRoom() {
     );
   }
 
+  const coverSrc = status?.has_cover ? `/api${projectPath(id)}/files/cover/cover.png` : pageDisplayImage(id, bookPages[0] ?? { pageNumber: 1, revision: 1 });
+  const showPage = (pageNumber: number) => setDeskIndex(deskIndexForPage(views, pageNumber));
+  const thumbOf = (pageNumber: number) => {
+    const page = bookPages.find((item) => item.pageNumber === pageNumber);
+    return page ? pageDisplayImage(id, page, "thumbnail") : undefined;
+  };
+  const statusLine = checking ? null
+    : preflight && !preflightError ? t("{ready} of {total} pages pass", { ready: String(readyPages), total: String(preflight.pages.length) })
+    : null;
+  const hasChecks = !!preflight && !checking && !preflightError
+    && (fixCount > 0 || uncheckedPages > 0 || placementReviews.length > 0 || acceptedIssues > 0);
+
   return (
-    <RoomShell project={id}>
+    <RoomShell project={id} bleed>
       <RoomHeader
         title={t("Book")}
         lead={completePages ? `${bookPages.length} ${bookPages.length === 1 ? t("page drawn") : t("pages drawn")}` : undefined}
       />
-
-      {/* Readiness first: what this edition is, whether it can leave, and the way out. */}
-      <div className="@container">
-      <section aria-label={t("Read your book")} className="grid gap-5 @min-[40rem]:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] @min-[40rem]:items-center @min-[40rem]:gap-7">
-        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[9rem] overflow-hidden border border-ink-black bg-surface-container text-ink-black shadow-[4px_4px_0_0_var(--color-narrator-gold)] transition-[translate,box-shadow] duration-[var(--motion-press)] hover:-translate-x-px hover:-translate-y-px hover:shadow-[5px_5px_0_0_var(--color-narrator-gold)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red motion-reduce:transition-none @min-[40rem]:max-w-[10rem]">
-          {status?.has_cover
-            ? <img src={`/api${projectPath(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
-            : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageDisplayImage(id, bookPages[0])} alt={t("First page of the book")} />}
-        </button>}
-        <div className="min-w-0">
-          <h2 className="text-balance break-words font-display text-[1.75rem] font-black uppercase leading-[0.95] tracking-[-0.03em] @min-[56rem]:text-[2.25rem]">{title}</h2>
-          {!completePages && <p className="mt-2 font-meta text-xs text-ink-soft">{pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>}
-          <p role="status" className="mt-3 flex flex-wrap items-center gap-2">
-            {checking ? <StatusPill tone="ink">{t("Checking edition…")}</StatusPill>
-              : preflightError || !preflight ? <StatusPill tone="red">{t("The book could not be checked.")}</StatusPill>
-              : fixCount > 0 ? <StatusPill tone="red">{fixCount} {t("{count, plural, one {fix needed before export} other {fixes needed before export}}", { count: fixCount })}</StatusPill>
-              : <StatusPill tone="sage">{t("Ready to export")}</StatusPill>}
-            {!checking && placementReviews.length > 0 && <StatusPill tone="gold">{placementReviews.length} {t("{count, plural, one {page to check by eye} other {pages to check by eye}}", { count: placementReviews.length })}</StatusPill>}
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {bookPages.length > 0 && <Button variant="outline" onClick={() => setReaderOpen(true)}><BookOpen size={16} aria-hidden="true" />{t("Read your book")}</Button>}
-            {canExport
-              ? <a href="#book-downloads" className="inline-flex min-h-10 items-center gap-2 border-[2px] border-ink-black bg-hero-red px-4 font-meta text-[0.8125rem] font-semibold text-bristol shadow-press transition-[translate,box-shadow,background-color] hover:translate-x-px hover:translate-y-px hover:bg-hero-red-press hover:shadow-[2px_2px_0_0_var(--color-ink-black)]">{t("Download your edition")}<ArrowDown size={15} aria-hidden="true" /></a>
-              : <a href="#edition-checks" className="inline-flex min-h-10 items-center gap-2 px-2 font-meta text-[0.8125rem] font-semibold text-ink-black underline decoration-ink-black/30 underline-offset-4 hover:text-hero-red">{t("Review edition checks")}<ArrowDown size={15} aria-hidden="true" /></a>}
-          </div>
-          <p className="mt-2 font-body text-xs text-ink-soft">{t("Reading does not generate artwork or use credits.")}</p>
-        </div>
-      </section>
-      </div>
-
-      {/* The delivery path, as caption boxes: where each step lives on this page. */}
-      <nav aria-label={t("Book sections")} className="flex flex-wrap gap-2 border-y border-ink-black/12 py-2.5">
-        {([
-          ["#edition-checks", t("Resolve"), !checking && preflight ? (fixCount > 0 ? String(fixCount) : "✓") : null],
-          ["#book-downloads", t("Export"), null],
-          ["#book-share", t("Share"), null],
-          ["#book-credit-history", t("History"), null],
-        ] as const).map(([href, label, mark], index) => (
-          <a key={href} href={href} className="inline-flex h-8 items-center gap-2 border border-ink-black bg-pulp-paper px-2.5 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-ink-black transition-colors hover:bg-narrator-gold">
-            <span className="tabular-nums text-ink-soft">{index + 1}</span>{label}
-            {mark && <span className={fixCount > 0 ? "text-status-blocked-text" : "text-ready"}>{mark}</span>}
-          </a>
-        ))}
-      </nav>
 
       {readerOpen && (
         <BookReader
@@ -224,193 +198,253 @@ export function BookRoom() {
         />
       )}
 
-      <section id="edition-checks" tabIndex={-1} aria-labelledby="edition-checks-heading" className="scroll-mt-6">
-        <div id="edition-checks-heading">
-          <SectionHeader
-            variant="underline"
-            title={t("BEFORE YOU EXPORT")}
-            actions={preflight && !checking && !preflightError ? <span className="font-meta text-xs font-bold text-ink-muted">{readyPages} / {preflight.pages.length} {t("pages ready")}</span> : undefined}
-          />
-        </div>
-
-        {checking ? (
-          <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
-            <p className="font-meta text-sm font-bold">{t("Checking edition…")}</p>
-            <p className="mt-2 font-body text-sm font-semibold leading-6 text-ink-muted">
-              {t("Finish is loading the last check and will run again only if this edition changed.")}
-            </p>
-          </Surface>
-        ) : !preflight || preflightError ? (
-          <ErrorNotice error={preflightError} operation="load" title="The book could not be checked."
-            onRetry={() => void refetch()} retryDisabled={isFetching} retryLabel={t("Retry edition checks")} />
+      <div className="mt-4 flex min-h-[34rem] flex-1 flex-col border-t border-ink-black/12 studio-desktop:min-h-0 studio-desktop:flex-row">
+        {bookPages.length > 0 ? (
+          <BookDesk project={id} views={views} index={Math.min(deskIndex, Math.max(views.length - 1, 0))} onIndex={setDeskIndex}
+            coverSrc={coverSrc} flagged={flaggedPages} onRead={() => setReaderOpen(true)} />
         ) : (
-          <ul className="space-y-2">
-            {findings.map((finding) => (
-              <CheckItem key={finding.key} tone="fix"
-                title={finding.copy ? t(finding.copy.title) : finding.message}
-                pages={finding.pageNumbers}
-                detail={finding.copy ? t(finding.copy.fix) : null}
-                subjects={finding.subjects}
-                evidence={finding.evidence}>
-                {finding.copy?.replannable && finding.ownerStage === "plan" && finding.pageNumbers.map((pageNumber) => (
-                  <ReplanPageAction key={pageNumber} project={id} pageNumber={pageNumber}
-                    disabled={isFetching || retryPreflight.isPending}
-                    onReplanned={() => { void refetch(); void invalidateProject(queryClient, id); }} />
-                ))}
-                {finding.pageNumbers.length > 0 ? (
-                  <PageLinks pages={finding.pageNumbers}
-                    label={t(finding.copy?.review === "page" ? "Open page" : finding.copy?.review === "lettering" ? "Open lettering" : "Open page checks")}
-                    href={(page) => reviewUrl(page, finding.copy?.review ?? "page")} />
-                ) : (
-                  <Button size="sm" variant="outline" disabled={isFetching || retryPreflight.isPending} onClick={() => retryPreflight.mutate({ project: id })}>
-                    {t("Retry edition checks")}
-                  </Button>
-                )}
-              </CheckItem>
-            ))}
-            {preflight.pages.flatMap((page) => page.unresolved_editorial_issue_ids.map((issueId) => {
-              const issue = pageIssues.get(issueId);
-              return (
-                <CheckItem key={issueId} tone="fix" pages={[page.page_number]}
-                  title={issue?.requested_correction || t("An editorial concern needs your review.")}
-                  detail={issue?.status === "revised" ? t("Revised — not yet confirmed fixed") : t("Accept it as it is, or ask for a revision.")}>
-                  <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "page")}>
-                    {t("Review page")} {page.page_number}
-                  </Link>
-                </CheckItem>
-              );
-            }))}
-            {preflight.correction_requests.map((request) => (
-              <CheckItem key={request.id} tone="fix" pages={[request.page_number]} title={request.requested_correction}
-                detail={t("A correction was requested for this page and hasn’t been drawn yet.")}>
-                <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(request.page_number, "page")}>
-                  {t("Open page checks")} · {t("Page")} {request.page_number}
-                </Link>
-              </CheckItem>
-            ))}
-            {uncheckedPages > 0 && <li><PageCheckRecovery project={id} unchecked={uncheckedPages} onRecovered={() => void refetch()} /></li>}
-            {placementReviews.length > 0 && (
-              <CheckItem tone="optional" pages={placementReviews.map((page) => page.page_number)}
-                title={t("{count, plural, one {Lettering on # page hasn’t been checked by eye} other {Lettering on # pages hasn’t been checked by eye}}", { count: placementReviews.length })}
-                detail={t("Balloons were placed automatically. Open each page’s Lettering to check faces, reading order and quiet spaces, then mark it reviewed. Export isn’t blocked.")}>
-                <Link className="inline-flex min-h-11 items-center gap-2 border-2 border-ink-black bg-ink-black px-3 font-meta text-xs font-bold text-bristol hover:bg-hero-red"
-                  to={reviewUrl(placementReviews[0].page_number, "lettering")}>
-                  {t("Start with page")} {placementReviews[0].page_number}
-                </Link>
-                <PageLinks pages={placementReviews.map((page) => page.page_number)} label={t("Review lettering placement")}
-                  href={(page) => reviewUrl(page, "lettering")} />
-              </CheckItem>
-            )}
-            {fixCount === 0 && uncheckedPages === 0 && placementReviews.length === 0 && (
-              <CheckItem tone="done" title={t("Every page is ready to export.")} />
-            )}
-          </ul>
+          <section aria-label={t("Your book")} className="benday-ink flex min-h-[24rem] flex-1 items-center justify-center p-8 text-center">
+            <p className="font-meta text-sm text-on-chrome-muted">{pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>
+          </section>
         )}
-        {preflight && !checking && acceptedIssues > 0 && (
-          <details className="mt-4">
-            <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Accepted decisions")} ({acceptedIssues})</summary>
-            <ul className="space-y-2">
-              {preflight.pages.filter((page) => page.accepted_editorial_issue_ids.length > 0).map((page) => (
-                <li key={page.page_number}>
-                  <Link className="inline-flex min-h-11 items-center font-body text-sm font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "page")}>
-                    {t("Page")} {page.page_number} · {page.accepted_editorial_issue_ids.length} {t("accepted")}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-        {retryPreflight.error && <ErrorNotice error={retryPreflight.error} operation="generate" />}
-      </section>
 
-      <BookExportPanel project={id}
-        packages={canExport && !exportBook.isPending ? packages : []}
-        exportUrls={exportUrls} canExport={canExport} pending={exportBook.isPending}
-        pendingFormat={exportBook.variables?.format} pendingForce={exportBook.variables?.force}
-        error={exportBook.error} onCreate={createExport}
-        blockedLabel={fixCount > 0 ? `${fixCount} ${t("{count, plural, one {fix needed first} other {fixes needed first}}", { count: fixCount })}` : undefined}
-        unavailableReason={checking ? t("Checking edition…") : preflightError ? t("The book could not be checked.") : fixCount > 0 ? t("Fix what blocks export above, then create your package.") : undefined} />
-      {newPackage && !isFetching && !preflightError && <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">{t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}</p>}
+        <aside aria-label={title} className="flex shrink-0 flex-col border-t border-ink-black/12 bg-bristol text-ink-black studio-desktop:w-[24rem] studio-desktop:border-l studio-desktop:border-t-0">
+          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 pb-8 pt-5">
+            <header>
+              <h2 className="text-balance break-words font-display text-[1.625rem] font-black uppercase leading-[0.95] tracking-[-0.03em]">{title}</h2>
+              <div role="status" className={cn("mt-4 flex items-center gap-2.5 border-l-[3px] px-3 py-2.5",
+                checking ? "border-ink-black/30 bg-surface-container"
+                  : preflightError || !preflight || fixCount > 0 ? "border-hero-red bg-hero-red/[0.06]"
+                  : "border-ready bg-ready/[0.08]")}>
+                <span className="font-meta text-[0.8125rem] font-semibold">
+                  {checking ? t("Checking edition…")
+                    : preflightError || !preflight ? t("The book could not be checked.")
+                    : fixCount > 0 ? `${fixCount} ${t("{count, plural, one {fix needed before export} other {fixes needed before export}}", { count: fixCount })}`
+                    : t("Ready to export")}
+                </span>
+                {statusLine && <span className="ml-auto shrink-0 font-meta text-xs text-ink-muted">{statusLine}</span>}
+              </div>
+              {!checking && placementReviews.length > 0 && (
+                <p className="mt-2 font-meta text-xs text-ink-muted">
+                  <span aria-hidden="true" className="mr-1.5 inline-block size-1.5 bg-narrator-gold align-middle" />
+                  {placementReviews.length} {t("{count, plural, one {page to check by eye} other {pages to check by eye}}", { count: placementReviews.length })}
+                </p>
+              )}
+            </header>
 
-      <div id="book-share" tabIndex={-1} className="scroll-mt-6">
-        <BookPublication project={id} title={title} ready={canExport} onPreview={() => setReaderOpen(true)} />
-      </div>
+            {(!preflight || preflightError) && !checking && (
+              <ErrorNotice error={preflightError} operation="load" title="The book could not be checked."
+                onRetry={() => void refetch()} retryDisabled={isFetching} retryLabel={t("Retry edition checks")} />
+            )}
 
-      {finishDiagnostics.length ? (
-        <section aria-label={t("TECHNICAL DIAGNOSTICS")}>
-          <SectionHeader
-            variant="underline"
-            title={t("TECHNICAL DIAGNOSTICS")}
-            description={t("Internal continuity evidence for development. It does not block export or require an editorial decision.")}
-          />
-          <div className="space-y-3">
-            {finishDiagnostics.map((diagnostic) => (
-              <Surface key={diagnostic.key} tone="gold" padding="md" border="soft" shadow="none">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">
-                      {`${t("Page")} ${diagnostic.pageNumber}`}
-                    </p>
-                    <p className="mt-1 font-body text-sm font-bold leading-6">{diagnostic.message}</p>
-                  </div>
-                  {diagnostic.count > 1 && (
-                    <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
-                      ×{diagnostic.count}
-                    </span>
+            {hasChecks && preflight && (
+              <section id="edition-checks" tabIndex={-1} aria-labelledby="edition-checks-heading" className="scroll-mt-6">
+                <PanelHeading id="edition-checks-heading">{t("Before you export")}</PanelHeading>
+                <ul className="mt-3 space-y-2">
+                  {findings.map((finding) => (
+                    <CheckItem key={finding.key} tone="fix"
+                      title={finding.copy ? t(finding.copy.title) : finding.message}
+                      pages={finding.pageNumbers}
+                      thumb={finding.pageNumbers.length === 1 ? thumbOf(finding.pageNumbers[0]) : undefined}
+                      onShow={finding.pageNumbers.length > 0 ? () => showPage(finding.pageNumbers[0]) : undefined}
+                      detail={finding.copy ? t(finding.copy.fix) : null}
+                      subjects={finding.subjects}
+                      evidence={finding.evidence}>
+                      {finding.copy?.replannable && finding.ownerStage === "plan" && finding.pageNumbers.map((pageNumber) => (
+                        <ReplanPageAction key={pageNumber} project={id} pageNumber={pageNumber}
+                          disabled={isFetching || retryPreflight.isPending}
+                          onReplanned={() => { void refetch(); void invalidateProject(queryClient, id); }} />
+                      ))}
+                      {finding.pageNumbers.length > 0 ? (
+                        <PageLinks pages={finding.pageNumbers}
+                          label={t(finding.copy?.review === "page" ? "Open page" : finding.copy?.review === "lettering" ? "Open lettering" : "Open page checks")}
+                          href={(page) => reviewUrl(page, finding.copy?.review ?? "page")} />
+                      ) : (
+                        <Button size="sm" variant="outline" disabled={isFetching || retryPreflight.isPending} onClick={() => retryPreflight.mutate({ project: id })}>
+                          {t("Retry edition checks")}
+                        </Button>
+                      )}
+                    </CheckItem>
+                  ))}
+                  {preflight.pages.flatMap((page) => page.unresolved_editorial_issue_ids.map((issueId) => {
+                    const issue = pageIssues.get(issueId);
+                    return (
+                      <CheckItem key={issueId} tone="fix" pages={[page.page_number]} thumb={thumbOf(page.page_number)} onShow={() => showPage(page.page_number)}
+                        title={issue?.requested_correction || t("An editorial concern needs your review.")}
+                        detail={issue?.status === "revised" ? t("Revised — not yet confirmed fixed") : t("Accept it as it is, or ask for a revision.")}>
+                        <Link className={PANEL_LINK} to={reviewUrl(page.page_number, "page")}>
+                          {t("Review page")} {page.page_number}
+                        </Link>
+                      </CheckItem>
+                    );
+                  }))}
+                  {preflight.correction_requests.map((request) => (
+                    <CheckItem key={request.id} tone="fix" pages={[request.page_number]} thumb={thumbOf(request.page_number)} onShow={() => showPage(request.page_number)}
+                      title={request.requested_correction}
+                      detail={t("A correction was requested for this page and hasn’t been drawn yet.")}>
+                      <Link className={PANEL_LINK} to={reviewUrl(request.page_number, "page")}>
+                        {t("Open page checks")} · {t("Page")} {request.page_number}
+                      </Link>
+                    </CheckItem>
+                  ))}
+                  {uncheckedPages > 0 && <li><PageCheckRecovery project={id} unchecked={uncheckedPages} onRecovered={() => void refetch()} /></li>}
+                  {placementReviews.length > 0 && (
+                    <CheckItem tone="optional" pages={placementReviews.map((page) => page.page_number)}
+                      title={t("{count, plural, one {Lettering on # page hasn’t been checked by eye} other {Lettering on # pages hasn’t been checked by eye}}", { count: placementReviews.length })}
+                      detail={t("Balloons were placed automatically. Open each page’s Lettering to check faces, reading order and quiet spaces, then mark it reviewed. Export isn’t blocked.")}>
+                      <Link className="inline-flex min-h-9 items-center gap-2 bg-ink-black px-3 font-meta text-xs font-semibold text-bristol hover:bg-ink-black/85"
+                        to={reviewUrl(placementReviews[0].page_number, "lettering")}>
+                        {t("Start with page")} {placementReviews[0].page_number}
+                      </Link>
+                      <PageLinks pages={placementReviews.map((page) => page.page_number)} label={t("Review lettering placement")}
+                        href={(page) => reviewUrl(page, "lettering")} />
+                    </CheckItem>
                   )}
-                </div>
-                {diagnostic.evidence.length > 0 && (
-                  <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
-                    {diagnostic.evidence.join(" · ")}
-                  </p>
+                </ul>
+                {acceptedIssues > 0 && (
+                  <details className="mt-2">
+                    <summary className="min-h-9 cursor-pointer py-2 font-meta text-xs font-semibold text-ink-muted hover:text-ink-black">{t("Accepted decisions")} ({acceptedIssues})</summary>
+                    <ul className="space-y-1">
+                      {preflight.pages.filter((page) => page.accepted_editorial_issue_ids.length > 0).map((page) => (
+                        <li key={page.page_number}>
+                          <Link className={PANEL_LINK} to={reviewUrl(page.page_number, "page")}>
+                            {t("Page")} {page.page_number} · {page.accepted_editorial_issue_ids.length} {t("accepted")}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
-              </Surface>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {status?.parts && <CombinedExport project={id} parts={status.parts} />}
-
-      <section id="book-credit-history" tabIndex={-1} className="scroll-mt-6">
-        <SectionHeader
-          variant="underline"
-          title={t("CREDIT HISTORY")}
-          actions={<Link to={`/credits?project=${encodeURIComponent(splitProjectKey(id).id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
-        />
-        <CreditSpendSummary spendByStage={creditHistory?.pages[0]?.spend_by_stage} />
-        {creditHistoryError && (
-          <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4">
-            <p className="font-body text-sm">{t("Credit history could not be loaded.")}</p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchCreditHistory()}>{t("Retry credit history")}</Button>
-          </Surface>
-        )}
-        {creditHistoryLoading ? (
-          <div className="space-y-2">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-14" />)}</div>
-        ) : creditHistoryError && creditDayGroups.length === 0 ? null : creditDayGroups.length === 0 ? (
-          <Surface border="soft" shadow="none" padding="md">
-            <p className="font-body text-sm text-ink-muted">{t("No credit activity has been recorded for this book yet.")}</p>
-          </Surface>
-        ) : (
-          <>
-            <CreditHistoryLedger groups={creditDayGroups} />
-            {hasOlderCreditHistory && (
-              <Button variant="outline" size="sm" fullWidth className="mt-5" disabled={isFetchingOlderCreditHistory} onClick={() => void fetchOlderCreditHistory()}>
-                {t(isFetchingOlderCreditHistory ? "Loading history…" : "Load older history")}
-              </Button>
+              </section>
             )}
-          </>
-        )}
-      </section>
+            {retryPreflight.error && <ErrorNotice error={retryPreflight.error} operation="generate" />}
+
+            <BookExportPanel project={id}
+              packages={canExport && !exportBook.isPending ? packages : []}
+              exportUrls={exportUrls} canExport={canExport} pending={exportBook.isPending}
+              pendingFormat={exportBook.variables?.format} pendingForce={exportBook.variables?.force}
+              error={exportBook.error} onCreate={createExport}
+              blockedLabel={fixCount > 0 ? `${fixCount} ${t("{count, plural, one {fix needed first} other {fixes needed first}}", { count: fixCount })}` : undefined}
+              unavailableReason={checking ? t("Checking edition…") : preflightError ? t("The book could not be checked.") : undefined}
+              menu={(items) => <PanelMenu items={items} />}>
+              {newPackage && !isFetching && !preflightError && <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp mt-3 inline-block bg-narrator-gold px-3 py-1.5 font-meta text-xs font-bold">{t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}</p>}
+              {status?.parts && status.parts.length > 1 && (
+                <details className="mt-3 border-t border-ink-black/10 pt-1">
+                  <summary className="min-h-9 cursor-pointer py-2 font-meta text-xs font-semibold text-ink-muted hover:text-ink-black">{t("Combine parts")}</summary>
+                  <CombinedExport project={id} parts={status.parts} bare />
+                </details>
+              )}
+            </BookExportPanel>
+
+            <div id="book-share" tabIndex={-1} className="scroll-mt-6 border-t border-ink-black/10 pt-5">
+              <BookPublication project={id} title={title} ready={canExport} onPreview={() => setReaderOpen(true)} />
+            </div>
+
+            <section id="book-credit-history" tabIndex={-1} aria-label={t("Credit history")} className="scroll-mt-6 border-t border-ink-black/10 pt-5">
+              <CreditSpendSummary compact spendByStage={creditHistory?.pages[0]?.spend_by_stage} />
+              {creditHistoryError && (
+                <div role="alert" className="mt-3">
+                  <p className="font-body text-xs">{t("Credit history could not be loaded.")}</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => void refetchCreditHistory()}>{t("Retry credit history")}</Button>
+                </div>
+              )}
+              <details className="mt-2">
+                <summary className="min-h-9 cursor-pointer py-2 font-meta text-xs font-semibold text-ink-muted hover:text-ink-black">{t("History")}</summary>
+                {creditHistoryLoading ? (
+                  <div className="space-y-2">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-12" />)}</div>
+                ) : creditHistoryError && creditDayGroups.length === 0 ? null : creditDayGroups.length === 0 ? (
+                  <p className="font-body text-xs text-ink-muted">{t("No credit activity has been recorded for this book yet.")}</p>
+                ) : (
+                  <>
+                    <CreditHistoryLedger groups={creditDayGroups} />
+                    {hasOlderCreditHistory && (
+                      <Button variant="outline" size="sm" fullWidth className="mt-4" disabled={isFetchingOlderCreditHistory} onClick={() => void fetchOlderCreditHistory()}>
+                        {t(isFetchingOlderCreditHistory ? "Loading history…" : "Load older history")}
+                      </Button>
+                    )}
+                  </>
+                )}
+                <Link to={`/credits?project=${encodeURIComponent(splitProjectKey(id).id)}`} className={cn(PANEL_LINK, "mt-1")}>{t("View all credit history")}</Link>
+              </details>
+            </section>
+
+            {finishDiagnostics.length ? (
+              <section aria-label={t("TECHNICAL DIAGNOSTICS")} className="border-t border-ink-black/10 pt-5">
+                <PanelHeading>{t("TECHNICAL DIAGNOSTICS")}</PanelHeading>
+                <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{t("Internal continuity evidence for development. It does not block export or require an editorial decision.")}</p>
+                <ul className="mt-3 space-y-2">
+                  {finishDiagnostics.map((diagnostic) => (
+                    <li key={diagnostic.key} className="border border-narrator-gold/50 bg-narrator-gold/10 px-3 py-2.5">
+                      <p className="font-meta text-xs text-ink-muted">
+                        {`${t("Page")} ${diagnostic.pageNumber}`}{diagnostic.count > 1 && ` · ×${diagnostic.count}`}
+                      </p>
+                      <p className="mt-1 font-body text-sm font-semibold leading-5">{diagnostic.message}</p>
+                      {diagnostic.evidence.length > 0 && <p className="mt-1 font-body text-xs leading-5 text-ink-black/70">{diagnostic.evidence.join(" · ")}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        </aside>
+      </div>
     </RoomShell>
   );
 }
 
-/** One line of the pre-export checklist. The rule colour says whether it blocks export. */
-function CheckItem({ tone, title, pages = [], detail, subjects = [], evidence = [], children }: {
-  tone: "fix" | "optional" | "done";
+const PANEL_LINK = "inline-flex min-h-9 items-center font-meta text-xs font-semibold underline decoration-ink-black/25 underline-offset-4 hover:decoration-ink-black";
+
+function PanelHeading({ id, children }: { id?: string; children: ReactNode }) {
+  return <h3 id={id} className="font-meta text-[0.6875rem] font-bold uppercase tracking-[0.14em] text-ink-muted">{children}</h3>;
+}
+
+/** The panel's quiet extras (rebuilding a package), kept behind one button. */
+function PanelMenu({ items }: { items: Array<{ key: string; label: string; disabled?: boolean; onSelect: () => void }> }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function close(event: MouseEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div ref={rootRef} className="relative">
+      <button type="button" aria-expanded={open} aria-haspopup="true" aria-label={t("More download options")} title={t("More download options")}
+        onClick={() => setOpen((value) => !value)}
+        className="flex size-8 items-center justify-center text-ink-muted transition-colors hover:bg-surface-container hover:text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
+        <MoreHorizontal size={18} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-48 border border-ink-black/12 bg-bristol py-1 shadow-float">
+          {items.map((item) => (
+            <button key={item.key} type="button" disabled={item.disabled}
+              onClick={() => { setOpen(false); item.onSelect(); }}
+              className="flex h-9 w-full items-center px-3 text-left font-meta text-[0.8125rem] font-medium text-ink-black transition-colors hover:bg-sidebar-tint disabled:cursor-not-allowed disabled:text-ink-soft disabled:hover:bg-transparent">
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One thing to settle before export. Its stamp says whether it blocks export. */
+function CheckItem({ tone, title, pages = [], thumb, onShow, detail, subjects = [], evidence = [], children }: {
+  tone: "fix" | "optional";
   title: string;
   pages?: number[];
+  /** The page's thumbnail; selecting it turns the book to that page. */
+  thumb?: string;
+  onShow?: () => void;
   detail?: string | null;
   subjects?: string[];
   evidence?: string[];
@@ -418,27 +452,31 @@ function CheckItem({ tone, title, pages = [], detail, subjects = [], evidence = 
 }) {
   const { t } = useI18n();
   return (
-    <li className="border border-ink-black/12 bg-bristol px-4 py-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <p className="min-w-0 font-body text-sm font-bold leading-6">
-          {pages.length === 1 && <span className="mr-2 font-meta text-xs text-ink-muted">{t("Page")} {pages[0]}</span>}
-          {title}
-        </p>
-        {tone !== "done" ? (
-          <StatusPill tone={tone === "fix" ? "red" : "neutral"} className="shrink-0">
-            {tone === "fix" ? t("Blocks export") : t("Optional")}
-          </StatusPill>
-        ) : <StatusPill tone="sage" className="shrink-0">{t("Ready")}</StatusPill>}
-      </div>
-      {subjects.length > 0 && <p className="mt-1 font-body text-sm leading-6">{subjects.join(" · ")}</p>}
-      {detail && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{detail}</p>}
-      {evidence.length > 0 && (
-        <details className="mt-1 font-body text-xs leading-5 text-ink-muted">
-          <summary className="min-h-11 cursor-pointer py-3">{t("Evidence")}</summary>
-          <p className="break-words">{evidence.join(" · ")}</p>
-        </details>
+    <li className="flex gap-3 border border-ink-black/12 bg-bristol p-3">
+      {thumb && onShow && (
+        <button type="button" onClick={onShow} aria-label={`${t("Show")} · ${t("Page")} ${pages[0]}`}
+          className="relative h-[4.5rem] w-12 shrink-0 bg-ink-black outline outline-1 outline-ink-black/15 transition-[outline-color] hover:outline-ink-black focus-visible:outline-2 focus-visible:outline-hero-red">
+          <img src={thumb} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        </button>
       )}
-      {children && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">{children}</div>}
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-meta text-[0.6875rem] font-semibold">
+          {pages.length === 1 && <span className="text-ink-muted">{t("Page")} {pages[0]}</span>}
+          <span className={tone === "fix" ? "text-status-blocked-text" : "text-ink-muted"}>
+            {tone === "fix" ? t("Blocks export") : t("Optional")}
+          </span>
+        </p>
+        <p className="mt-1 font-body text-sm font-semibold leading-5">{title}</p>
+        {subjects.length > 0 && <p className="mt-1 font-body text-xs leading-5">{subjects.join(" · ")}</p>}
+        {detail && <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{detail}</p>}
+        {evidence.length > 0 && (
+          <details className="mt-1 font-body text-xs leading-5 text-ink-muted">
+            <summary className="min-h-8 cursor-pointer py-1.5">{t("Evidence")}</summary>
+            <p className="break-words">{evidence.join(" · ")}</p>
+          </details>
+        )}
+        {children && <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">{children}</div>}
+      </div>
     </li>
   );
 }
@@ -448,17 +486,17 @@ function PageLinks({ pages, label, href }: { pages: number[]; label: string; hre
   const { t } = useI18n();
   if (pages.length === 1) {
     return (
-      <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold text-hero-red underline underline-offset-4" to={href(pages[0])}>
+      <Link className={PANEL_LINK} to={href(pages[0])}>
         {label} · {t("Page")} {pages[0]}
       </Link>
     );
   }
   return (
-    <ul className="flex flex-wrap gap-1.5" aria-label={label}>
+    <ul className="flex flex-wrap gap-1" aria-label={label}>
       {pages.map((page) => (
         <li key={page}>
           <Link aria-label={`${label} · ${t("Page")} ${page}`} to={href(page)}
-            className="inline-flex h-9 min-w-9 items-center justify-center border border-ink-black/25 bg-pulp-paper px-2 font-meta text-xs tabular-nums hover:border-ink-black hover:bg-ink-black hover:text-bristol focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">
+            className="inline-flex h-8 min-w-8 items-center justify-center border border-ink-black/20 px-1.5 font-meta text-xs tabular-nums hover:border-ink-black hover:bg-ink-black hover:text-bristol focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">
             {page}
           </Link>
         </li>
