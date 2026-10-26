@@ -12,24 +12,24 @@ const PHASE_COLORS: Record<string, string> = {
 };
 
 /** Where a book's credits went, by the phases an author works through. */
-export function CreditSpendSummary({ spendByStage }: { spendByStage: Record<string, number> | undefined }) {
+export function CreditSpendSummary({ spendByStage, compact = false }: { spendByStage: Record<string, number> | undefined; compact?: boolean }) {
   const { t } = useI18n();
   const phases = spendByPhase(spendByStage);
   const total = phases.reduce((sum, phase) => sum + phase.credits, 0);
   if (total === 0) return null;
 
   return (
-    <div className="mb-6 border-[2px] border-ink-black/10 bg-bristol px-4 py-4 sm:px-5">
+    <div className={compact ? "" : "mb-6 border-[2px] border-ink-black/10 bg-bristol px-4 py-4 sm:px-5"}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="font-body text-sm font-semibold text-ink-muted">{t("Spent on this book")}</p>
-        <CreditAmount value={total} className="font-meta text-xl font-bold text-ink-black" />
+        <CreditAmount value={total} className={compact ? "font-meta text-base font-bold text-ink-black" : "font-meta text-xl font-bold text-ink-black"} />
       </div>
-      <div aria-hidden="true" className="mt-3 flex h-3 gap-[2px] overflow-hidden">
+      <div aria-hidden="true" className={compact ? "mt-2 flex h-2 gap-[2px] overflow-hidden" : "mt-3 flex h-3 gap-[2px] overflow-hidden"}>
         {phases.map((phase) => (
           <div key={phase.key} className={PHASE_COLORS[phase.key]} style={{ flexGrow: phase.credits, flexBasis: 4, minWidth: 4 }} />
         ))}
       </div>
-      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 font-body text-sm">
+      <ul className={compact ? "mt-2.5 flex flex-wrap gap-x-4 gap-y-1 font-body text-xs" : "mt-3 flex flex-wrap gap-x-5 gap-y-1.5 font-body text-sm"}>
         {phases.map((phase) => (
           <li key={phase.key} className="flex items-center gap-2">
             <span aria-hidden="true" className={`size-2.5 shrink-0 ${PHASE_COLORS[phase.key]}`} />

@@ -87,6 +87,16 @@ vi.mock("../api/pages", async (importOriginal) => ({
 
 import { BookRoom } from "../pages/rooms/BookRoom";
 
+/** The panel shows one format at a time. */
+function chooseFormat(format: "PDF" | "CBZ") {
+  fireEvent.click(screen.getByRole("radio", { name: format }));
+}
+
+function openRebuild(format: "PDF" | "CBZ") {
+  fireEvent.click(screen.getByRole("button", { name: "More download options" }));
+  return screen.getByRole("button", { name: `Rebuild ${format}` });
+}
+
 function renderRoom() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
@@ -137,7 +147,7 @@ describe("BookRoom edition decisions", () => {
       }],
     }];
     renderRoom();
-    expect(screen.getByRole("heading", { name: "CREDIT HISTORY" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Credit history" })).toBeTruthy();
     expect(screen.getByText("Spent on this book").parentElement?.textContent).toContain("29 credits");
     expect(screen.getByText("Drew page 4")).toBeTruthy();
     expect(screen.getByText("charged").parentElement?.textContent).toContain("9 credits charged");
@@ -167,8 +177,9 @@ describe("BookRoom edition decisions", () => {
   it("does not warn about placement for accepted or retained baked pages", () => {
     renderRoom();
     expect(screen.queryByText(/checked by eye/)).toBeNull();
-    expect(screen.getByText("Every page is ready to export.")).toBeTruthy();
     expect(screen.getByText("Ready to export")).toBeTruthy();
+    expect(screen.getByText("1 of 1 pages pass")).toBeTruthy();
+    expect(screen.queryByText("Before you export")).toBeNull();
   });
 
   it("explains a blocker once per page in the author's terms and names who it involves", () => {
@@ -190,7 +201,7 @@ describe("BookRoom edition decisions", () => {
       .toBe("/project/demo/pages?page=16&review=page");
     expect(screen.queryByText("Page-scoped appearance state is stale across pages.")).toBeNull();
     expect(screen.getByText("1 fix needed before export")).toBeTruthy();
-    expect(screen.getAllByText("1 fix needed first")).toHaveLength(2);
+    expect(screen.getAllByText("1 fix needed first")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
   });
 
@@ -281,6 +292,7 @@ describe("BookRoom edition decisions", () => {
     expect(screen.getByRole("link", { name: "Open page checks · Page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=page");
     expect(screen.getByRole("link", { name: "Review page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=page");
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
   });
 
@@ -294,6 +306,7 @@ describe("BookRoom edition decisions", () => {
     preflightError = new Error("The check was interrupted. Please retry.");
     renderRoom();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: "Retry edition checks" }));
     expect(retryPreflight).toHaveBeenCalledOnce();
@@ -304,6 +317,7 @@ describe("BookRoom edition decisions", () => {
     preflightLoading = true;
     renderRoom();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
   });
 
@@ -325,8 +339,9 @@ describe("BookRoom edition decisions", () => {
     preflight.packages = [{ format: "pdf", relative_path: "exports/comic.pdf", byte_size: 2048 }];
     renderRoom();
     expect(screen.getByText("Ready to download")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
+    expect(screen.getByRole("link", { name: "Download PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
     expect(screen.queryByRole("button", { name: "Create PDF" })).toBeNull();
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toBeTruthy();
     expect(exportBook).not.toHaveBeenCalled();
   });
@@ -337,11 +352,12 @@ describe("BookRoom edition decisions", () => {
       { format: "cbz", relative_path: "exports/comic.cbz", byte_size: 4096 },
     ];
     renderRoom();
-    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Download PDF" }).getAttribute("href"))
       .toBe("/api/projects/demo/export/pdf");
-    expect(screen.getByRole("link", { name: "DOWNLOAD CBZ" }).getAttribute("href"))
-      .toBe("/api/projects/demo/export/cbz");
     expect(screen.queryByRole("button", { name: "Create PDF" })).toBeNull();
+    chooseFormat("CBZ");
+    expect(screen.getByRole("link", { name: "Download CBZ" }).getAttribute("href"))
+      .toBe("/api/projects/demo/export/cbz");
     expect(screen.queryByRole("button", { name: "Create CBZ" })).toBeNull();
     expect(exportBook).not.toHaveBeenCalled();
   });
@@ -351,13 +367,13 @@ describe("BookRoom edition decisions", () => {
     preflightRefreshing = true;
     renderRoom();
     expect(screen.queryByText("Ready to download")).toBeNull();
-    expect(screen.queryByRole("link", { name: "DOWNLOAD PDF" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Download PDF" })).toBeNull();
     expect(screen.queryByText(/^1 page ready$/)).toBeNull();
     expect(screen.queryByText("Ready to package")).toBeNull();
     expect(screen.queryByText("No technical blockers")).toBeNull();
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByText("Rebuild package"));
-    expect(screen.getByRole("button", { name: "Rebuild PDF" })).toHaveProperty("disabled", true);
+    expect(openRebuild("PDF")).toHaveProperty("disabled", true);
   });
 
   it("withholds a previously saved download when the edition has a new blocker", () => {
@@ -365,9 +381,9 @@ describe("BookRoom edition decisions", () => {
     preflight.pages[0].unresolved_editorial_issue_ids = ["new-visual-concern"];
     renderRoom();
     expect(screen.queryByText("Ready to download")).toBeNull();
-    expect(screen.queryByRole("link", { name: "DOWNLOAD PDF" })).toBeNull();
-    fireEvent.click(screen.getByText("Rebuild package"));
-    expect(screen.getByRole("button", { name: "Rebuild PDF" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("link", { name: "Download PDF" })).toBeNull();
+    expect(openRebuild("PDF")).toHaveProperty("disabled", true);
+    chooseFormat("CBZ");
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
     expect(exportBook).not.toHaveBeenCalled();
   });
@@ -375,8 +391,9 @@ describe("BookRoom edition decisions", () => {
   it("names the busy format and prevents competing package requests", () => {
     pendingFormat = "cbz";
     renderRoom();
-    expect(screen.getByRole("button", { name: "Creating CBZ…" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    chooseFormat("CBZ");
+    expect(screen.getByRole("button", { name: "Creating CBZ…" })).toHaveProperty("disabled", true);
   });
 
   it("does not announce an edition ready when export returns no confirmed package", () => {
@@ -402,12 +419,12 @@ describe("BookRoom edition decisions", () => {
     const room = renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Create PDF" }));
     expect(screen.getByText("Ready to download")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/saved-edition.pdf");
+    expect(screen.getByRole("link", { name: "Download PDF" }).getAttribute("href")).toBe("/saved-edition.pdf");
     expect(screen.getByText("Edition ready · PDF").getAttribute("role")).toBe("status");
     room.unmount();
     renderRoom();
     expect(screen.getByText("Ready to download")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
+    expect(screen.getByRole("link", { name: "Download PDF" }).getAttribute("href")).toBe("/api/projects/demo/export/pdf");
   });
 
   it("can rebuild a previously packaged PDF after a second format export fails", () => {
@@ -419,15 +436,38 @@ describe("BookRoom edition decisions", () => {
     });
     renderRoom();
     expect(screen.getByRole("alert").textContent).toContain("CBZ packaging failed");
-    fireEvent.click(screen.getByText("Rebuild package"));
-    fireEvent.click(screen.getByRole("button", { name: "Rebuild PDF" }));
+    fireEvent.click(openRebuild("PDF"));
     expect(exportBook).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Rebuild PDF" }));
     expect(exportBook).toHaveBeenCalledWith(
       { project: "demo", format: "pdf", force: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
-    expect(screen.getByRole("link", { name: "DOWNLOAD PDF" }).getAttribute("href")).toBe("/rebuilt-edition.pdf");
+    expect(screen.getByRole("link", { name: "Download PDF" }).getAttribute("href")).toBe("/rebuilt-edition.pdf");
+  });
+});
+
+describe("Book desk", () => {
+  it("turns through the book's spreads and opens a flagged page from its check", () => {
+    drawnPages = [drawnPage(1), drawnPage(2, "left"), drawnPage(3, "right")];
+    preflight.pages = [1, 2, 3].map((page_number) => ({
+      page_number, comic_page_revision: 1, render_revision: 1,
+      invariant_failures: [], unresolved_editorial_issue_ids: page_number === 3 ? ["concern"] : [], accepted_editorial_issue_ids: [],
+    }));
+    renderRoom();
+    const desk = screen.getByRole("region", { name: "Your book" });
+    expect(within(desk).getByText("Page 1")).toBeTruthy();
+    expect(within(desk).getByRole("button", { name: "Previous spread" })).toHaveProperty("disabled", true);
+    // The strip marks the spread holding a page that blocks export.
+    expect(within(desk).getByRole("button", { name: "Pages 2–3 · Blocks export" })).toBeTruthy();
+    fireEvent.click(within(desk).getByRole("button", { name: "Next spread" }));
+    expect(within(desk).getByText("Pages 2–3")).toBeTruthy();
+    expect(within(desk).getByRole("button", { name: "Next spread" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(within(desk).getByText("Page 1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show · Page 3" }));
+    expect(within(desk).getByText("Pages 2–3")).toBeTruthy();
+    expect(screen.getByText("2 of 3 pages pass")).toBeTruthy();
   });
 });
 

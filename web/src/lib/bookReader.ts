@@ -98,3 +98,17 @@ export function viewLabel(
   const last = view.pages[view.pages.length - 1].pageNumber;
   return `${plural} ${first}–${last}`;
 }
+
+/** What the desk shows per turn: the cover on its own, then the book's real spreads. */
+export type DeskView = { key: string; cover: true } | (ReaderView & { cover?: false });
+
+export function deskViews(pages: ReaderPage[], hasCover: boolean): DeskView[] {
+  const views: DeskView[] = buildReaderViews(pages, "spreads");
+  return hasCover ? [{ key: "cover", cover: true }, ...views] : views;
+}
+
+/** The desk position showing a page, so a finding can turn the book to it. */
+export function deskIndexForPage(views: DeskView[], pageNumber: number): number {
+  const found = views.findIndex((view) => !view.cover && view.pages.some((page) => page.pageNumber === pageNumber));
+  return found === -1 ? 0 : found;
+}

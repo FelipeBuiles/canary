@@ -93,10 +93,10 @@ describe("public books", () => {
     expect(screen.getByRole("button", { name: "Publish book" }).hasAttribute("disabled")).toBe(true);
     fireEvent.change(author, { target: { value: "Author" } });
     fireEvent.click(screen.getByRole("button", { name: "Publish book" }));
-    await screen.findByRole("button", { name: "Edit publication" });
+    await screen.findByRole("button", { name: "Edit details" });
     expect(screen.queryByLabelText("Author credit")).toBeNull();
-    expect(screen.getByRole("link", { name: "Read book" }).getAttribute("href")).toContain(`/read/${book.id}`);
-    fireEvent.click(screen.getByRole("button", { name: "Edit publication" }));
+    expect(screen.getByRole("link", { name: "Open reader page" }).getAttribute("href")).toContain(`/read/${book.id}`);
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
     await screen.findByRole("button", { name: "Unpublish" });
     const call = vi.mocked(apiFetch).mock.calls.find(([, options]) => options?.method === "POST");
     expect(JSON.parse(call![1]!.body as string)).toEqual({ title: "Working title", author: "Author", description: "", allow_feature: false });
@@ -135,7 +135,7 @@ describe("public books", () => {
     wrapper(<BookPublication project="project~part_0002" title="Part two" ready />);
     await screen.findByText("Published part: Part one");
     expect(vi.mocked(apiFetch).mock.calls[0][0]).toBe("/projects/project/publication");
-    fireEvent.click(screen.getByRole("button", { name: "Edit publication" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
     const submit = screen.getByRole("button", { name: "Update published version" });
     expect(submit.hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByLabelText("Replace the series public book with this part"));

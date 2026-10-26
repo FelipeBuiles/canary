@@ -9,7 +9,7 @@ import { combinedExportUrl } from "../../api/parts";
 import type { PartSummary } from "../../types/api";
 
 /** One file from consecutive finished parts, without redrawing anything. */
-export function CombinedExport({ project, parts }: { project: string; parts: PartSummary[] }) {
+export function CombinedExport({ project, parts, bare = false }: { project: string; parts: PartSummary[]; /** Without its own heading, inside another panel. */ bare?: boolean }) {
   const { t } = useI18n();
   const combine = useExportParts();
   const [from, setFrom] = useState(parts[0]?.id ?? "");
@@ -22,11 +22,13 @@ export function CombinedExport({ project, parts }: { project: string; parts: Par
   const unfinished = range.filter((part) => part.stages.finish !== "complete");
   return (
     <section aria-label={t("COMBINE PARTS")} className="space-y-4">
-      <SectionHeader
-        variant="underline"
-        title={t("COMBINE PARTS")}
-        description={t("Put consecutive finished parts into one file. Each part starts on a right-hand page; nothing is redrawn.")}
-      />
+      {bare
+        ? <p className="font-body text-xs leading-5 text-ink-muted">{t("Put consecutive finished parts into one file. Each part starts on a right-hand page; nothing is redrawn.")}</p>
+        : <SectionHeader
+            variant="underline"
+            title={t("COMBINE PARTS")}
+            description={t("Put consecutive finished parts into one file. Each part starts on a right-hand page; nothing is redrawn.")}
+          />}
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <FieldLabel htmlFor="combine-from">{t("From")}</FieldLabel>
