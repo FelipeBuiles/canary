@@ -64,10 +64,10 @@ export function ProofStage({
       onKeyDown={keys}
       className="relative flex min-h-0 flex-1 items-center justify-center px-16 pb-5 pt-1 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-narrator-gold"
     >
-      <div className={`relative aspect-[4/5] h-full max-h-full max-w-full bg-ink-black shadow-[0_30px_60px_-20px_rgb(0_0_0/0.75),0_0_0_1px_rgb(252_250_237/0.12)] ${image.arrival.className}`}
+      <div className={`relative aspect-[4/5] w-[min(100%,calc(70svh*4/5))] max-w-full bg-ink-black studio-desktop:h-full studio-desktop:max-h-full studio-desktop:w-auto shadow-[0_30px_60px_-20px_rgb(0_0_0/0.75),0_0_0_1px_rgb(252_250_237/0.12)] ${image.arrival.className}`}
         onAnimationEnd={image.arrival.onAnimationEnd}>
         <ImageGenerationPreview project={projectName} target={`samples/style_${suggestion.index}.png`}
-          active={showLoading} finalSrc={suggestion.has_sample ? image.src : undefined} aspect="4 / 5" className="h-full"
+          active={showLoading} finalSrc={suggestion.has_sample ? image.src : undefined} aspect="4 / 5" surface="ink" className="h-full"
           label={queueState === "queued" ? t("Queued") : t("Drawing this proof…")}>
           {image.failed ? (
             <div className="benday-ink flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center text-pulp-paper">

@@ -181,7 +181,7 @@ export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props
                 <p className="font-meta text-[0.8125rem] text-ink-soft">{t("Every scene, in story order. Pick an entry to see where it appears.")}</p>
               )}
             </div>
-            <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-6 sm:px-5 @container">
               <StoryScenes story={story}
                 isMatch={current && current.kind !== "props" ? appears(current.kind, current.id) : undefined}
                 imageFor={(id) => imageFor("locations", id)} />
@@ -433,7 +433,7 @@ function ReferencesToUpdate({ project, editor }: { project: string; editor: Edit
   );
   return (
     <section aria-label={t("Cast images to update")} className="flex flex-wrap items-center gap-x-4 gap-y-2 border border-ink-black bg-narrator-gold/35 px-3.5 py-2">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-[1_1_16rem]">
         <h3 className="inline font-meta text-[0.8125rem] font-semibold">
           {t("{count, plural, one {# Cast image to update} other {# Cast images to update}}", { count: pending.length })}
         </h3>

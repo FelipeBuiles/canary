@@ -79,11 +79,13 @@ export function StoryScenes({ story, isMatch, imageFor }: {
   return (
     <div className="space-y-4">
       {excludedSourceMatter && <p className="text-sm text-ink-muted">{t("Author notes and other non-story material are excluded from adaptation.")}</p>}
-      <div className={grouped ? "grid auto-cols-[minmax(13.5rem,1fr)] grid-flow-col gap-4" : ""}>
+      {/* Sequences stack top to bottom and their scenes wrap, so the whole story reads with one vertical scroll. */}
+      <div className={grouped ? "divide-y divide-ink-black/12" : ""}>
         {groups.map((group) => (
-          <section key={group.key} aria-label={group.title || undefined} className="min-w-0">
+          <section key={group.key} aria-label={group.title || undefined}
+            className={cn("min-w-0", group.title && "py-4 first:pt-0 @min-[44rem]:grid @min-[44rem]:grid-cols-[13rem_minmax(0,1fr)] @min-[44rem]:gap-5")}>
             {group.title && (
-              <header className="px-0.5 pb-3 pt-1">
+              <header className="px-0.5 pb-3 pt-1 @min-[44rem]:sticky @min-[44rem]:top-0 @min-[44rem]:self-start @min-[44rem]:pb-0">
                 <div className="flex items-center gap-2">
                   {group.number > 0 && <span className="inline-flex h-[1.375rem] items-center border border-ink-black bg-narrator-gold px-1.5 font-meta text-[0.625rem] font-bold uppercase tracking-[0.1em] text-ink-black">{t("Sequence {number}", { number: group.number })}</span>}
                   <span className="font-meta text-[0.6875rem] text-ink-muted">{t("{count, plural, one {# scene} other {# scenes}}", { count: group.scenes.length })}</span>
@@ -94,7 +96,7 @@ export function StoryScenes({ story, isMatch, imageFor }: {
                 </p>}
               </header>
             )}
-            <ol className={grouped ? "space-y-2.5" : "grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2.5"}>
+            <ol className="grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2.5">
               {group.scenes.map(sceneCard)}
             </ol>
           </section>

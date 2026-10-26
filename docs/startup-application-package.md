@@ -138,9 +138,25 @@ I plan to begin model evaluation and API integration once access is available. S
 
 ### What are you hoping to achieve with the Baseten Startup Program?
 
-I'm building Scenewright, an AI comic studio that turns manuscripts into complete, lettered comic pages. I want to use the Baseten Startup Program to make that process faster, more reliable, and more affordable for authors. My initial focus would be benchmarking open-weight language models for story adaptation and page planning, followed by evaluating suitable image-generation models for character references and complete comic pages.
+I'm building Scenewright, which turns manuscripts into comics. I'd use Baseten's credits and technical support to test models for adaptation and image generation, with a focus on quality, speed, and cost. The goal is to get it into authors' hands and make producing a full comic affordable enough that they keep creating.
 
-Program credits would let me test these workloads on representative stories, while engineering support would help me choose appropriate deployment configurations and improve inference performance. I'd measure narrative fidelity, visual continuity, latency, and cost per reviewed page, including the corrections authors need. The outcome I'm aiming for is a validated Baseten integration that I can take into author pilots, with evidence of quality and operating cost before expanding usage.
+### Follow-up reply to Mae — October 26, 2026
+
+**Draft notes:** The founder reports promising Mammoth-1 testing and likely use in the review pipeline. LoRA work below is a proposed experiment. Confirm daily spend, funding, and any deadline before sending. No model-training work or dedicated deployment is claimed to exist.
+
+Hi Mae,
+
+Thanks for following up! I'm building Scenewright, which turns manuscripts into comics. Here's a bit more context:
+
+1. **Models and serving:** Today, I use hosted OpenAI and Google models for adaptation, image generation, and review. We recently tested Mammoth-1 with very promising results, and I'll most likely integrate it into our review pipeline. That's the first concrete use I'd like to pursue with Baseten. I'd also like to explore hosting open image models and possibly LoRA tuning for consistent characters and visual style across a comic.
+2. **Timeline:** The immediate goal is to move from Mammoth-1 testing to integration. The image-model experiments would follow, with deployment depending on the results. [Add any specific target date or external deadline.]
+3. **Traffic:** Average provider spend is approximately [US$X/day over the last N days], covering [development/testing and/or customer usage]. [Add input/cached-input/output tokens per day if available.]
+4. **Funding:** [Total funding raised to date; if applicable, "Bootstrapped, with $0 in external funding."]
+
+Would you recommend starting with Model APIs for Mammoth-1 and exploring dedicated deployments for the image-model experiments?
+
+Best,
+Juan
 
 ## Other common application questions
 
@@ -203,7 +219,7 @@ For a short demo, show a source passage, the approved brief and cast, several co
 
 These notes inform tailoring; they are not part of the copy to paste into forms.
 
-- Baseten's Startup Program offers platform credits and technical support for model deployment. Baseten also documents image-generation workloads. The application answer proposes evaluation and integration; it does not claim an existing Baseten deployment, established volume, or measured performance gains. [Baseten Startup Program](https://www.baseten.co/startup-program/), [Baseten image generation](https://www.baseten.co/solutions/image-generation/).
+- Baseten's Startup Program offers platform credits and technical support for model deployment. Baseten also documents image-generation workloads. The application answer proposes evaluation and integration; it does not claim an existing Baseten deployment, established volume, or measured performance gains. [Baseten Startup Program](https://www.baseten.co/startup-program/), [Baseten image generation](https://www.baseten.co/solutions/image-generation/). Mammoth-1 is available through Model APIs and dedicated deployment; positive testing results in the follow-up draft are founder-reported, not independently benchmarked here. [Mammoth-1](https://www.baseten.co/library/mammoth-1/), [Model APIs](https://docs.baseten.co/inference/model-apis/overview).
 - Together's accelerator includes serverless inference credits, and its serverless offering does not require GPU provisioning. Starting with serverless is a recommendation based on Scenewright's current API workflow and unestablished volume; it is not a hardware benchmark. [Together Startup Accelerator](https://www.together.ai/startup-accelerator), [Together serverless models](https://docs.together.ai/docs/serverless/models).
 - Runware's grant form asks for current traction, intended product work, and generative AI usage. Its platform describes reference-driven image generation and prompt-based editing; suitability for complete comic pages still needs evaluation. [Runware grant program](https://runware.ai/grant-program), [Runware documentation](https://runware.ai/docs). The proposed integration is not a claim of existing Runware use; no volume forecast is asserted.
 - AgentGrown's published package describes an MCP connection for keyword research, Search Console, GA4, and before/after measurement. The answer proposes using it with the coding agent that maintains Scenewright's website. It does not assert that Search Console, GA4, or AgentGrown are already connected. [AgentGrown package documentation](https://www.npmjs.com/package/agentgrown).

@@ -73,9 +73,9 @@ export function ApprovalBar({
             </span>
           )}
         </div>
-        <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto studio-desktop:gap-3">
+        <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 max-sm:*:grow sm:ml-auto sm:w-auto studio-desktop:gap-3">
           {secondary}
-          <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy} className="flex-1 sm:flex-none">
+          <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy} className="flex-[1_0_10rem] sm:flex-none">
             {busy ? t("WORKING…") : primaryLabel}
           </Button>
         </div>

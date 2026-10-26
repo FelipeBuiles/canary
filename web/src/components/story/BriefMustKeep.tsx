@@ -124,7 +124,7 @@ export function MustHappen({ events, onChange, story, script, onSkippedChange }:
                   </li>;
                 }
                 return <li key={display} className={cn(
-                  "group/event relative flex items-start gap-3 border-t border-ink-black/8 py-2 pr-1",
+                  "group/event relative flex flex-wrap items-start gap-x-3 border-t border-ink-black/8 py-2 pr-1",
                   stray.length > 0 && "-ml-2.5 bg-narrator-gold/12 pl-2.5 shadow-[inset_3px_0_0_var(--color-narrator-gold)]",
                 )}>
                   <span aria-hidden="true" className={cn(capClass, row.skipped && "border-dashed bg-transparent text-ink-muted")}>{number}</span>
@@ -134,11 +134,11 @@ export function MustHappen({ events, onChange, story, script, onSkippedChange }:
                     </span>
                     {stray.length > 0 && <StrayNote words={stray} onReword={() => setRewording(display)} />}
                   </span>
-                  {row.skipped ? <span className="flex shrink-0 items-center gap-1 font-meta text-xs text-ink-muted">
+                  {row.skipped ? <span className="flex shrink-0 items-center gap-1 font-meta text-xs text-ink-muted [@media(hover:none)]:basis-full [@media(hover:none)]:justify-end">
                     {t("Can be skipped")}
                     <button type="button" onClick={() => undo(display)} aria-label={t("Undo removing event {number}", { number })}
                       className="min-h-7 px-2 font-medium text-ink-black underline underline-offset-2">{t("Undo")}</button>
-                  </span> : <span className="flex shrink-0 gap-0.5 transition-opacity [@media(hover:hover)]:absolute [@media(hover:hover)]:right-0 [@media(hover:hover)]:top-1.5 [@media(hover:hover)]:bg-bristol [@media(hover:hover)]:pl-2 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:shadow-[-12px_0_12px_-4px_var(--color-bristol)] group-hover/event:opacity-100 group-focus-within/event:opacity-100">
+                  </span> : <span className="flex shrink-0 gap-0.5 transition-opacity [@media(hover:none)]:basis-full [@media(hover:none)]:justify-end [@media(hover:hover)]:absolute [@media(hover:hover)]:right-0 [@media(hover:hover)]:top-1.5 [@media(hover:hover)]:bg-bristol [@media(hover:hover)]:pl-2 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:shadow-[-12px_0_12px_-4px_var(--color-bristol)] group-hover/event:opacity-100 group-focus-within/event:opacity-100">
                     <button type="button" onClick={() => setRewording(display)} aria-label={t("Reword event {number}", { number })}
                       className="min-h-7 border border-transparent px-2 font-meta text-xs font-medium text-ink-soft hover:border-ink-black/30 hover:bg-bristol hover:text-ink-black">{t("Reword")}</button>
                     <button type="button" onClick={() => remove(display)} aria-label={t("Remove event {number}", { number })}

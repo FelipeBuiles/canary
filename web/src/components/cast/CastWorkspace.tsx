@@ -20,6 +20,8 @@ import {
 } from "./castAssets";
 import { AnchorSection, InspectorSection, OVERLINE, RefVersionHistory, ReferenceViews } from "./CastInspectorParts";
 import { useCastEntryImage } from "./useCastEntryImage";
+import { ScrollStripControls } from "../ui/ScrollStrip";
+import { useScrollStrip } from "../ui/useScrollStrip";
 
 const KIND_LABEL: Record<CastKind, string> = { character: "Character", location: "Place", prop: "Prop" };
 
@@ -77,9 +79,11 @@ function useLooks(project: string, entry: CastEntry, stageRegenerating: boolean,
 function StageFrame({ kind, status, children }: { kind: CastKind; status?: string; children: ReactNode }) {
   const ratio = ASPECT[kind];
   return (
-    <div className="relative flex min-h-[50vh] min-w-0 flex-1 items-center justify-center px-5 pb-5 pt-1 [container-type:size] sm:px-10 studio-desktop:min-h-0">
+    // Stacked layouts have no definite height for cqh to resolve against (it
+    // computes to 0), so they fit the frame to the width and a share of the screen.
+    <div className="relative flex min-w-0 flex-1 items-center justify-center px-5 pb-5 pt-1 [--stage-h:70svh] [container-type:inline-size] sm:px-10 studio-desktop:min-h-0 studio-desktop:[--stage-h:100cqh] studio-desktop:[container-type:size]">
       <div data-testid="cast-stage" aria-busy={!!status} className="relative bg-ink-black shadow-[0_30px_60px_-20px_rgb(0_0_0/0.75),0_0_0_1px_rgb(252_250_237/0.12)]"
-        style={{ width: `min(100cqw, calc(100cqh * ${ratio}))`, aspectRatio: String(ratio) }}>
+        style={{ width: `min(100cqw, calc(var(--stage-h) * ${ratio}))`, aspectRatio: String(ratio) }}>
         {children}
         {status && (
           <span role="status" className="absolute left-2.5 top-2.5 z-10 flex items-center gap-2 border border-pulp-paper/25 bg-ink-black/80 px-2.5 py-1 font-meta text-xs font-medium text-pulp-paper">
@@ -149,7 +153,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
     <StageFrame kind={kind} status={image.isGenerating ? (image.isQueued ? t("Queued") : t("Drawing {name}…", { name })) : undefined}>
       {image.probe}
       <ImageGenerationPreview project={project} target={decodeURIComponent(image.imageSrc.split("/files/")[1]?.split("?")[0] ?? "")}
-        active={image.isGenerating} keepChildren={!image.missing} finalSrc={!image.missing ? image.imageSrc : undefined} aspect={String(ASPECT[kind])} className="h-full"
+        active={image.isGenerating} keepChildren={!image.missing} finalSrc={!image.missing ? image.imageSrc : undefined} aspect={String(ASPECT[kind])} surface="ink" className="h-full"
         label={image.isQueued ? t("Queued") : t("Drawing {name}…", { name })}>
         {image.missing ? (
           <StageEmpty
@@ -173,7 +177,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
   const lookStage = look && (
     <StageFrame kind={kind} status={lookGenerating ? (lookRef.activeJob?.status === "queued" ? t("Queued") : t("Drawing {name}…", { name: look.label })) : undefined}>
       <ImageGenerationPreview project={project} target={decodeURIComponent(lookSrc.split("/files/")[1]?.split("?")[0] ?? "")}
-        active={lookGenerating} keepChildren={!lookRef.imgFailed} finalSrc={!lookRef.imgFailed ? lookSrc : undefined} aspect={String(ASPECT[kind])} className="h-full"
+        active={lookGenerating} keepChildren={!lookRef.imgFailed} finalSrc={!lookRef.imgFailed ? lookSrc : undefined} aspect={String(ASPECT[kind])} surface="ink" className="h-full"
         label={lookRef.activeJob?.status === "queued" ? t("Queued") : t("Drawing {name}…", { name: look.label })}>
         {lookRef.imgFailed ? (
           <StageEmpty title={lookFailure ? t("This look didn't finish") : t("No image yet")} hint={t("Draw it from the panel.")}
@@ -408,10 +412,13 @@ function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected
   const frame = (on: boolean) => cn("relative block overflow-hidden bg-ink-black transition-[outline-color,opacity]", art,
     on ? "outline-2 outline-offset-2 outline-narrator-gold" : "opacity-80 outline outline-1 outline-pulp-paper/20 group-hover:opacity-100 group-hover:outline-pulp-paper/50");
   const caption = (on: boolean) => cn("line-clamp-2 font-meta text-xs leading-4", on ? "font-semibold text-pulp-paper" : "text-on-chrome-muted group-hover:text-pulp-paper");
+  const { attach: stripRef, ...strip } = useScrollStrip<HTMLDivElement>();
 
   return (
-    <div role="group" aria-label={t("Looks")}
-      className="flex shrink-0 items-start gap-4 overflow-x-auto border-t border-pulp-paper/8 bg-ink-black/60 px-5 pb-4 pt-3.5">
+    <div className="relative shrink-0 border-t border-pulp-paper/8 bg-ink-black/60">
+    <ScrollStripControls strip={strip} />
+    <div ref={stripRef} role="group" aria-label={t("Looks")}
+      className="flex items-start gap-4 overflow-x-auto px-5 pb-4 pt-3.5 [scrollbar-width:none]">
       <span className="w-12 shrink-0 pt-1 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-on-chrome-muted">
         {t("Looks")}<span className="mt-0.5 block font-display text-lg font-black tracking-normal text-pulp-paper">{looks.looks.length + 1}</span>
       </span>
@@ -462,6 +469,7 @@ function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected
         </span>
         <span className={caption(false)}>{t("Add a look")}</span>
       </Link>
+    </div>
     </div>
   );
 }
