@@ -16,7 +16,7 @@ const TONE: Record<RoomNoticeTone, { chip: string; mark: string }> = {
  * pushing the work down. The chip says what happened; the panel holds the
  * list, the explanation and the actions.
  */
-export function RoomNotice({ tone, label, title, children, role, defaultOpen = false }: {
+export function RoomNotice({ tone, label, title, children, role, defaultOpen = false, align = "start" }: {
   tone: RoomNoticeTone;
   /** The chip's text: what happened, in a few words. */
   label: ReactNode;
@@ -26,6 +26,8 @@ export function RoomNotice({ tone, label, title, children, role, defaultOpen = f
   /** "alert" for failures that stop the room, "status" for progress. */
   role?: "alert" | "status";
   defaultOpen?: boolean;
+  /** "end" opens the panel leftward, for a chip at the right edge of a toolbar. */
+  align?: "start" | "end";
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
@@ -66,7 +68,7 @@ export function RoomNotice({ tone, label, title, children, role, defaultOpen = f
       </button>
       {open && (
         <div id={panelId}
-          className="absolute left-0 top-full z-40 mt-2 max-h-[min(40rem,calc(100dvh-10rem))] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto border border-ink-black bg-bristol text-ink-black shadow-float">
+          className={cn("absolute top-full z-40 mt-2 max-h-[min(40rem,calc(100dvh-10rem))] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto border border-ink-black bg-bristol text-ink-black shadow-float", align === "end" ? "right-0" : "left-0")}>
           <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-ink-black/10 bg-bristol px-4 py-2.5">
             <h2 className="font-meta text-sm font-semibold">{title}</h2>
             <button type="button" onClick={() => { setOpen(false); trigger.current?.focus(); }} aria-label={t("Close")} title={t("Close")}

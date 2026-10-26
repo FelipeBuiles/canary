@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import type { GenerationJob, ProjectStatus } from "../types/api";
 
-const mocks = vi.hoisted(() => ({ adaptation: vi.fn(), plan: vi.fn(), pages: vi.fn(), refetch: vi.fn(), credits: vi.fn() }));
-vi.mock("../api/queries", () => ({ useAdaptation: mocks.adaptation, useBookPlan: mocks.plan, useCompletePages: mocks.pages }));
+const mocks = vi.hoisted(() => ({ adaptation: vi.fn(), plan: vi.fn(), pages: vi.fn(), bible: vi.fn(() => ({ data: undefined })), refetch: vi.fn(), credits: vi.fn() }));
+vi.mock("../api/queries", () => ({ useAdaptation: mocks.adaptation, useBookPlan: mocks.plan, useCompletePages: mocks.pages, useStoryBible: mocks.bible }));
 vi.mock("../hooks/useNeedsCredits", () => ({ useNeedsCredits: mocks.credits }));
 import { ReadingWorkspace } from "../components/pages/ReadingWorkspace";
 import { StagePlaceholder } from "../components/composites/StagePlaceholder";
@@ -53,7 +53,7 @@ describe("documents before generation", () => {
     const project = status("complete");
     project.stages.plan.status = "running";
     render(tree(project));
-    expect(screen.getByRole("button", { name: "PAGE PLAN" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Page plan" })).toHaveProperty("disabled", true);
   });
   it("suppresses credit gates and start/retry controls while already queued", () => {
     render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed" activeJobs={[queued, cover]} allowPendingStart /></I18nProvider>);
