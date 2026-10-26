@@ -4,20 +4,27 @@ export interface LandingStep {
     label: string;
     title: string;
     body: string;
+    approve: boolean;
 }
 export interface LandingFaq {
     question: string;
     answer: string;
+}
+export interface LandingEdition {
+    label: string;
+    note: string;
+    alt: string;
+    link: string;
 }
 export interface LandingCopy {
     nav: {
         skip: string;
         home: string;
         navigation: string;
+        books: string;
+        styles: string;
         process: string;
-        film: string;
-        continuity: string;
-        rights: string;
+        pricing: string;
         faq: string;
         signIn: string;
         cta: string;
@@ -31,103 +38,44 @@ export interface LandingCopy {
         secondaryCta: string;
         formats: string;
         manuscriptLabel: string;
-        chapterLabel: string;
         loopTag: string;
         loopCaption: string;
         loopAlt: string;
         pauseLoop: string;
         playLoop: string;
     };
-    premise: {
+    books: {
         title: string;
         body: string;
+        samples: string;
+        read: string;
+        note: string;
     };
-    film: {
-        kicker: string;
+    styles: {
+        label: string;
         title: string;
         body: string;
-        chapters: string[];
         play: string;
         playLabel: string;
-        duration: string;
         playerTitle: string;
-        caption: string;
-        youtube: string;
         posterAlt: string;
+        filmNote: string;
+        youtube: string;
+        editions: [LandingEdition, LandingEdition, LandingEdition];
+        license: string;
     };
     process: {
         title: string;
         body: string;
+        approve: string;
         steps: LandingStep[];
+        brief: { heading: string; items: [string, string, string]; more: string };
+        review: { note: string; action: string };
+        shareLink: string;
+        samples: { title: string; body: string; link: string };
     };
-    continuity: {
+    rights: {
         title: string;
-        body: string;
-        promise: string;
-        sample: string;
-        captions: [
-            string,
-            string,
-            string
-        ];
-        details: Array<{
-            title: string;
-            body: string;
-        }>;
-        alts: [
-            string,
-            string,
-            string
-        ];
-        inspectTitle: string;
-        inspectBody: string;
-        inspectLinks: [
-            string,
-            string,
-            string
-        ];
-    };
-    editions: {
-        promise: string;
-        title: string;
-        body: string;
-        captions: [
-            string,
-            string,
-            string
-        ];
-        alts: [
-            string,
-            string,
-            string
-        ];
-        links: [
-            string,
-            string,
-            string
-        ];
-        note: string;
-    };
-    sampleBook: {
-        kicker: string;
-        title: string;
-        body: string;
-        readStory: string;
-        captions: [
-            string,
-            string,
-            string
-        ];
-        alts: [
-            string,
-            string,
-            string
-        ];
-        note: string;
-    };
-    direction: {
-        title: string;
-        body: string;
         youLabel: string;
         youItems: string[];
         toolLabel: string;
@@ -135,16 +83,15 @@ export interface LandingCopy {
         disclosure: string;
         termsLink: string;
     };
-    trust: {
+    pricing: {
         title: string;
         body: string;
         items: string[];
-        cta: string;
-        note: string;
+        link: string;
     };
     faq: {
         title: string;
-        body: string;
+        contact: string;
         items: LandingFaq[];
     };
     final: {
@@ -155,24 +102,44 @@ export interface LandingCopy {
     };
     footer: {
         line: string;
+        product: string;
+        legal: string;
         terms: string;
         privacy: string;
         acceptableUse: string;
+        workflow: string;
+        pricing: string;
+        guide: string;
+        example: string;
+        about: string;
     };
 }
+const steps = (t: Translator): LandingStep[] => [0, 1, 2, 3, 4].map(index => ({
+    number: String(index + 1).padStart(2, "0"),
+    label: t(`landing.process.steps.${index}.label`),
+    title: t(`landing.process.steps.${index}.title`),
+    body: t(`landing.process.steps.${index}.body`),
+    approve: index < 4,
+}));
+const edition = (t: Translator, index: number): LandingEdition => ({
+    label: t(`landing.styles.editions.${index}.label`),
+    note: t(`landing.styles.editions.${index}.note`),
+    alt: t(`landing.styles.editions.${index}.alt`),
+    link: t(`landing.styles.editions.${index}.link`),
+});
 /** Page structure only; all translated text lives in ICU catalogs. */
 export function landingCopy(t: Translator): LandingCopy {
-    return { nav: { process: t("landing.nav.process"),
-            film: t("landing.nav.film"),
-            continuity: t("landing.nav.continuity"),
-            rights: t("landing.nav.rights"),
+    return { nav: { skip: t("landing.nav.skip"),
+            home: t("landing.nav.home"),
+            navigation: t("landing.nav.navigation"),
+            books: t("landing.nav.books"),
+            styles: t("landing.nav.styles"),
+            process: t("landing.nav.process"),
+            pricing: t("landing.nav.pricing"),
             faq: t("landing.nav.faq"),
             signIn: t("landing.nav.signIn"),
             cta: t("landing.nav.cta"),
-            language: t("landing.nav.language"),
-            skip: t("landing.nav.skip"),
-            home: t("landing.nav.home"),
-            navigation: t("landing.nav.navigation") },
+            language: t("landing.nav.language") },
         hero: { label: t("landing.hero.label"),
             title: t("landing.hero.title"),
             body: t("landing.hero.body"),
@@ -180,133 +147,70 @@ export function landingCopy(t: Translator): LandingCopy {
             secondaryCta: t("landing.hero.secondaryCta"),
             formats: t("landing.hero.formats"),
             manuscriptLabel: t("landing.hero.manuscriptLabel"),
-            chapterLabel: t("landing.hero.chapterLabel"),
             loopTag: t("landing.hero.loopTag"),
             loopCaption: t("landing.hero.loopCaption"),
             loopAlt: t("landing.hero.loopAlt"),
             pauseLoop: t("landing.hero.pauseLoop"),
             playLoop: t("landing.hero.playLoop") },
-        premise: { title: t("landing.premise.title"),
-            body: t("landing.premise.body") },
-        film: { kicker: t("landing.film.kicker"),
-            title: t("landing.film.title"),
-            body: t("landing.film.body"),
-            chapters: [t("landing.film.chapters.0"),
-                t("landing.film.chapters.1"),
-                t("landing.film.chapters.2"),
-                t("landing.film.chapters.3")],
-            play: t("landing.film.play"),
-            playLabel: t("landing.film.playLabel"),
-            duration: t("landing.film.duration"),
-            playerTitle: t("landing.film.playerTitle"),
-            caption: t("landing.film.caption"),
-            youtube: t("landing.film.youtube"),
-            posterAlt: t("landing.film.posterAlt") },
+        books: { title: t("landing.books.title"),
+            body: t("landing.books.body"),
+            samples: t("landing.books.samples"),
+            read: t("landing.books.read"),
+            note: t("landing.books.note") },
+        styles: { label: t("landing.styles.label"),
+            title: t("landing.styles.title"),
+            body: t("landing.styles.body"),
+            play: t("landing.styles.play"),
+            playLabel: t("landing.styles.playLabel"),
+            playerTitle: t("landing.styles.playerTitle"),
+            posterAlt: t("landing.styles.posterAlt"),
+            filmNote: t("landing.styles.filmNote"),
+            youtube: t("landing.styles.youtube"),
+            editions: [edition(t, 0), edition(t, 1), edition(t, 2)],
+            license: t("landing.styles.license") },
         process: { title: t("landing.process.title"),
             body: t("landing.process.body"),
-            steps: [{ number: t("landing.process.steps.0.number"),
-                    label: t("landing.process.steps.0.label"),
-                    title: t("landing.process.steps.0.title"),
-                    body: t("landing.process.steps.0.body") },
-                { number: t("landing.process.steps.1.number"),
-                    label: t("landing.process.steps.1.label"),
-                    title: t("landing.process.steps.1.title"),
-                    body: t("landing.process.steps.1.body") },
-                { number: t("landing.process.steps.2.number"),
-                    label: t("landing.process.steps.2.label"),
-                    title: t("landing.process.steps.2.title"),
-                    body: t("landing.process.steps.2.body") },
-                { number: t("landing.process.steps.3.number"),
-                    label: t("landing.process.steps.3.label"),
-                    title: t("landing.process.steps.3.title"),
-                    body: t("landing.process.steps.3.body") }] },
-        continuity: { title: t("landing.continuity.title"),
-            body: t("landing.continuity.body"),
-            promise: t("landing.continuity.promise"),
-            sample: t("landing.continuity.sample"),
-            captions: [t("landing.continuity.captions.0"),
-                t("landing.continuity.captions.1"),
-                t("landing.continuity.captions.2")],
-            details: [{ title: t("landing.continuity.details.0.title"),
-                    body: t("landing.continuity.details.0.body") },
-                { title: t("landing.continuity.details.1.title"),
-                    body: t("landing.continuity.details.1.body") },
-                { title: t("landing.continuity.details.2.title"),
-                    body: t("landing.continuity.details.2.body") }],
-            alts: [t("landing.continuity.alts.0"),
-                t("landing.continuity.alts.1"),
-                t("landing.continuity.alts.2")],
-            inspectTitle: t("landing.continuity.inspectTitle"),
-            inspectBody: t("landing.continuity.inspectBody"),
-            inspectLinks: [t("landing.continuity.inspectLinks.0"),
-                t("landing.continuity.inspectLinks.1"),
-                t("landing.continuity.inspectLinks.2")] },
-        editions: { promise: t("landing.editions.promise"),
-            title: t("landing.editions.title"),
-            body: t("landing.editions.body"),
-            captions: [t("landing.editions.captions.0"),
-                t("landing.editions.captions.1"),
-                t("landing.editions.captions.2")],
-            alts: [t("landing.editions.alts.0"),
-                t("landing.editions.alts.1"),
-                t("landing.editions.alts.2")],
-            links: [t("landing.editions.links.0"),
-                t("landing.editions.links.1"),
-                t("landing.editions.links.2")],
-            note: t("landing.editions.note") },
-        sampleBook: { kicker: t("landing.sampleBook.kicker"),
-            title: t("landing.sampleBook.title"),
-            body: t("landing.sampleBook.body"),
-            readStory: t("landing.sampleBook.readStory"),
-            captions: [t("landing.sampleBook.captions.0"),
-                t("landing.sampleBook.captions.1"),
-                t("landing.sampleBook.captions.2")],
-            alts: [t("landing.sampleBook.alts.0"),
-                t("landing.sampleBook.alts.1"),
-                t("landing.sampleBook.alts.2")],
-            note: t("landing.sampleBook.note") },
-        direction: { title: t("landing.direction.title"),
-            body: t("landing.direction.body"),
-            youLabel: t("landing.direction.youLabel"),
-            youItems: [t("landing.direction.youItems.0"),
-                t("landing.direction.youItems.1"),
-                t("landing.direction.youItems.2"),
-                t("landing.direction.youItems.3")],
-            toolLabel: t("landing.direction.toolLabel"),
-            toolItems: [t("landing.direction.toolItems.0"),
-                t("landing.direction.toolItems.1"),
-                t("landing.direction.toolItems.2"),
-                t("landing.direction.toolItems.3")],
-            disclosure: t("landing.direction.disclosure"),
-            termsLink: t("landing.direction.termsLink") },
-        trust: { title: t("landing.trust.title"),
-            body: t("landing.trust.body"),
-            items: [t("landing.trust.items.0"),
-                t("landing.trust.items.1"),
-                t("landing.trust.items.2"),
-                t("landing.trust.items.3")],
-            cta: t("landing.trust.cta"),
-            note: t("landing.trust.note") },
+            approve: t("landing.process.approve"),
+            steps: steps(t),
+            brief: { heading: t("landing.process.brief.heading"),
+                items: [t("landing.process.brief.items.0"),
+                    t("landing.process.brief.items.1"),
+                    t("landing.process.brief.items.2")],
+                more: t("landing.process.brief.more") },
+            review: { note: t("landing.process.review.note"),
+                action: t("landing.process.review.action") },
+            shareLink: t("landing.process.shareLink"),
+            samples: { title: t("landing.process.samples.title"),
+                body: t("landing.process.samples.body"),
+                link: t("landing.process.samples.link") } },
+        rights: { title: t("landing.rights.title"),
+            youLabel: t("landing.rights.youLabel"),
+            youItems: [0, 1, 2, 3].map(index => t(`landing.rights.youItems.${index}`)),
+            toolLabel: t("landing.rights.toolLabel"),
+            toolItems: [0, 1, 2, 3].map(index => t(`landing.rights.toolItems.${index}`)),
+            disclosure: t("landing.rights.disclosure"),
+            termsLink: t("landing.rights.termsLink") },
+        pricing: { title: t("landing.pricing.title"),
+            body: t("landing.pricing.body"),
+            items: [0, 1, 2, 3].map(index => t(`landing.pricing.items.${index}`)),
+            link: t("landing.pricing.link") },
         faq: { title: t("landing.faq.title"),
-            body: t("landing.faq.body"),
-            items: [{ question: t("landing.faq.items.0.question"),
-                    answer: t("landing.faq.items.0.answer") },
-                { question: t("landing.faq.items.1.question"),
-                    answer: t("landing.faq.items.1.answer") },
-                { question: t("landing.faq.items.2.question"),
-                    answer: t("landing.faq.items.2.answer") },
-                { question: t("landing.faq.items.3.question"),
-                    answer: t("landing.faq.items.3.answer") },
-                { question: t("landing.faq.items.4.question"),
-                    answer: t("landing.faq.items.4.answer") },
-                { question: t("landing.faq.items.5.question"),
-                    answer: t("landing.faq.items.5.answer") }] },
+            contact: t("landing.faq.contact"),
+            items: [0, 1, 2, 3, 4, 5].map(index => ({ question: t(`landing.faq.items.${index}.question`),
+                answer: t(`landing.faq.items.${index}.answer`) })) },
         final: { title: t("landing.final.title"),
             body: t("landing.final.body"),
             cta: t("landing.final.cta"),
             signIn: t("landing.final.signIn") },
         footer: { line: t("landing.footer.line"),
+            product: t("landing.footer.product"),
+            legal: t("landing.footer.legal"),
             terms: t("landing.footer.terms"),
             privacy: t("landing.footer.privacy"),
-            acceptableUse: t("landing.footer.acceptableUse") } };
+            acceptableUse: t("landing.footer.acceptableUse"),
+            workflow: t("landing.footer.workflow"),
+            pricing: t("landing.footer.pricing"),
+            guide: t("landing.footer.guide"),
+            example: t("landing.footer.example"),
+            about: t("landing.footer.about") } };
 }

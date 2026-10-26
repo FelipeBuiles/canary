@@ -1,23 +1,16 @@
-import { PublicationShowcase } from "../components/book/PublicationShowcase";
-import { useShortStories } from "../api/queries";
-import { genreLabel } from "../lib/storyBrowser";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { preload } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { afterPageLoad } from "../lib/afterPageLoad";
 import { responsiveMarketingImage } from "../lib/marketingImages";
-import { Link, useNavigate } from "react-router-dom";
 import { homePaths } from "../lib/publicPages";
-import { BrandIdentity } from "../components/BrandIdentity";
+import { SHOWCASE_SHELF } from "../lib/showcaseShelf";
 import { BrandMark } from "../components/BrandMark";
 import { LANGUAGES, preloadLanguage, useI18n, type LanguageCode } from "../i18n";
-import { landingCopy, type LandingCopy, type LandingFaq, type LandingStep } from "./landingCopy";
+import { landingCopy, type LandingCopy, type LandingStep } from "./landingCopy";
 import "./HomePage.css";
 
-const MARKETING_IMAGES = {
-  pages: [
-    "/marketing/cthulhu-page-40.webp",
-    "/marketing/elm-and-keep-page-12.webp",
-  ],
+const MEDIA = {
   heroLoop: "/marketing/masque-flipbook.mp4",
   heroPoster: "/marketing/masque-flipbook-poster.webp",
   editions: [
@@ -25,16 +18,18 @@ const MARKETING_IMAGES = {
     "/marketing/janitor-gouache-page-01.webp",
     "/marketing/janitor-oil-page-01.webp",
   ],
-  film: {
-    youtubeId: "W-1bPTQXQaQ",
-    poster: "/marketing/scenewright-film-poster.webp",
-  },
-  sampleBook: [
-    "/marketing/kaitlin-page-01.webp",
-    "/marketing/kaitlin-page-12.webp",
-    "/marketing/kaitlin-page-34.webp",
-  ],
+  film: { youtubeId: "W-1bPTQXQaQ", poster: "/marketing/scenewright-film-poster.webp" },
+  lookProofs: ["/marketing/home/look-proof-a.webp", "/marketing/home/look-proof-b.webp"],
+  castSheet: "/marketing/home/cast-sheet.webp",
+  reviewPage: "/marketing/home/review-page.webp",
+  bookCover: "/marketing/home/cover-monkeys-paw.webp",
 } as const;
+
+/** The source text behind the hero loop; decorative, so it stays in the original English. */
+const MANUSCRIPT = {
+  title: "The Masque of the Red Death",
+  excerpt: "The “Red Death” had long devastated the country. No pestilence had ever been so fatal, or so hideous. Blood was its Avatar and its seal, the redness and the horror of blood…",
+};
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
@@ -52,26 +47,24 @@ function usePrefersReducedMotion() {
   );
 }
 
-function LanguageSwitcher({
-  activeLanguage,
-  label,
-  onChange,
-}: {
+function Arrow({ down = false }: { down?: boolean }) {
+  return (
+    <svg className="home-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d={down ? "M12 5v14M6 13l6 6 6-6" : "M5 12h14M13 6l6 6-6 6"} />
+    </svg>
+  );
+}
+
+function LanguageSwitcher({ activeLanguage, label, onChange }: {
   activeLanguage: LanguageCode;
   label: string;
   onChange: (language: LanguageCode) => void;
 }) {
   return (
-    <div className="landing-language" aria-label={label} role="group">
+    <div className="home-language" aria-label={label} role="group">
       {LANGUAGES.map(({ code, label: languageLabel }) => (
-        <button
-          key={code}
-          type="button"
-          className={activeLanguage === code ? "is-active" : undefined}
-          aria-pressed={activeLanguage === code}
-          title={languageLabel}
-          onClick={() => onChange(code)}
-        >
+        <button key={code} type="button" className={activeLanguage === code ? "is-active" : undefined}
+          aria-pressed={activeLanguage === code} title={languageLabel} onClick={() => onChange(code)}>
           {code.toUpperCase()}
         </button>
       ))}
@@ -84,7 +77,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [paused, setPaused] = useState(true);
   const [videoReady, setVideoReady] = useState(false);
-  preload(MARKETING_IMAGES.heroPoster, { as: "image", fetchPriority: "high" });
+  preload(MEDIA.heroPoster, { as: "image", fetchPriority: "high" });
   useEffect(() => {
     if (!reducedMotion) return afterPageLoad(() => setVideoReady(true));
   }, [reducedMotion]);
@@ -94,7 +87,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
     if (!video) return;
     if (!videoReady) {
       // Explicit Play starts immediately, even before the optional idle load.
-      video.src = MARKETING_IMAGES.heroLoop;
+      video.src = MEDIA.heroLoop;
       setVideoReady(true);
     }
     if (video.paused) {
@@ -105,51 +98,30 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
   };
 
   return (
-    <figure className="landing-folio" aria-label={copy.loopAlt}>
-      <div className="landing-manuscript" aria-hidden="true">
-        <div className="landing-manuscript__label">{copy.manuscriptLabel}</div>
-        <div className="landing-manuscript__title">{copy.chapterLabel}</div>
-        <div className="landing-manuscript__lines">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
+    <figure className="home-folio" aria-label={copy.loopAlt}>
+      <div className="home-manuscript" aria-hidden="true">
+        <span className="home-over">{copy.manuscriptLabel}</span>
+        <span className="home-manuscript__title">{MANUSCRIPT.title}</span>
+        <span className="home-manuscript__rule" />
+        <span className="home-manuscript__text">{MANUSCRIPT.excerpt}</span>
       </div>
-
-      <div className="landing-comic-sheet">
-        <div className="landing-comic-sheet__topline">
-          <span>{copy.loopTag}</span>
+      <div className="home-sheet">
+        <div className="home-sheet__top">
+          <span className="home-cap home-cap--small">{copy.loopTag}</span>
           {!reducedMotion && (
-            <button type="button" className="landing-loop-toggle" aria-pressed={paused} onClick={toggle}>
+            <button type="button" className="home-sheet__toggle" aria-pressed={paused} onClick={toggle}>
               {paused ? copy.playLoop : copy.pauseLoop}
             </button>
           )}
         </div>
-        <div className="landing-loop">
+        <div className="home-sheet__art">
           {reducedMotion ? (
-            <img src={MARKETING_IMAGES.heroPoster} alt="" width="600" height="750" decoding="async" fetchPriority="high" />
+            <img src={MEDIA.heroPoster} alt="" width="600" height="750" decoding="async" fetchPriority="high" />
           ) : (
-            <video
-              ref={videoRef}
-              src={videoReady ? MARKETING_IMAGES.heroLoop : undefined}
-              poster={MARKETING_IMAGES.heroPoster}
-              width="600"
-              height="750"
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="none"
-              onPlaying={() => setPaused(false)}
-              onPause={() => setPaused(true)}
-              onError={() => setPaused(true)}
-              aria-hidden="true"
-            />
+            <video ref={videoRef} src={videoReady ? MEDIA.heroLoop : undefined} poster={MEDIA.heroPoster}
+              width="600" height="750" autoPlay muted loop playsInline preload="none"
+              onPlaying={() => setPaused(false)} onPause={() => setPaused(true)} onError={() => setPaused(true)}
+              aria-hidden="true" />
           )}
         </div>
         <figcaption>{copy.loopCaption}</figcaption>
@@ -158,164 +130,159 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
   );
 }
 
-function PageStrip({
-  pages,
-  alts,
-  captions,
-  links,
-}: {
-  pages: readonly string[];
-  alts: readonly string[];
-  captions: readonly string[];
-  links?: readonly string[];
-}) {
+function BookShelf({ copy }: { copy: LandingCopy["books"] }) {
+  const { t } = useI18n();
   return (
-    <div className="landing-page-samples landing-page-samples--three">
-      {pages.map((src, index) => (
-        <figure key={src}>
-          <a href={src} target="_blank" rel="noopener noreferrer" aria-label={links?.[index] ?? captions[index]}>
-            <img src={src} {...responsiveMarketingImage(src, "(max-width: 680px) 90vw, (max-width: 900px) 45vw, 30vw")} alt={alts[index]} loading="lazy" decoding="async" />
-          </a>
-          <figcaption>
-            <span>{captions[index]}</span>
-            {links && <a href={src} target="_blank" rel="noopener noreferrer">{links[index]}</a>}
-          </figcaption>
-        </figure>
-      ))}
-    </div>
-  );
-}
-
-function EditionsStrip({ copy }: { copy: LandingCopy["editions"] }) {
-  return (
-    <section className="landing-editions" aria-labelledby="landing-editions-title">
-      <p className="landing-continuity__promise">{copy.promise}</p>
-      <h3 id="landing-editions-title">{copy.title}</h3>
-      <p>{copy.body}</p>
-      <PageStrip pages={MARKETING_IMAGES.editions} alts={copy.alts} captions={copy.captions} links={copy.links} />
-      <p className="landing-page-samples__note">{copy.note}</p>
-    </section>
-  );
-}
-
-function SampleBook({ copy }: { copy: LandingCopy["sampleBook"] }) {
-  return (
-    <section className="landing-sample-book" aria-labelledby="landing-sample-book-title">
-      <div className="landing-sample-book__heading">
-        <p className="landing-story-shelf__eyebrow">{copy.kicker}</p>
-        <h3 id="landing-sample-book-title">{copy.title}</h3>
-        <p>{copy.body}</p>
-        <Link to="/samples?story=kaitlin-out-of-space" className="landing-story-shelf__read">
-          {copy.readStory} <span aria-hidden="true">→</span>
-        </Link>
+    <section className="home-section" id="books" aria-labelledby="home-books-title">
+      <div className="home-wrap">
+        <div className="home-heading">
+          <div>
+            <h2 id="home-books-title" className="home-h2">{copy.title}</h2>
+            <p>{copy.body}</p>
+          </div>
+          <Link className="home-link" to="/samples">{copy.samples} <Arrow /></Link>
+        </div>
+        <ul className="home-shelf">
+          {SHOWCASE_SHELF.map(book => (
+            <li key={book.id}>
+              <Link className="home-cover" to={`/read/${book.id}`}>
+                <span className="home-cover__art">
+                  <img src={book.cover} alt="" width="476" height="636" loading="lazy" decoding="async" />
+                  <span className="home-cover__title">{book.title}</span>
+                  <span className="home-cap home-cover__read" aria-hidden="true">{copy.read}</span>
+                </span>
+                <span className="home-cover__author">{book.author}</span>
+                <span className="home-cover__pages">{t("landing.books.pages", { count: book.pages })}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <p className="home-note">{copy.note}</p>
       </div>
-      <PageStrip pages={MARKETING_IMAGES.sampleBook} alts={copy.alts} captions={copy.captions} />
-      <p className="landing-page-samples__note">{copy.note}</p>
     </section>
   );
 }
 
-function FilmSection({ copy, language }: { copy: LandingCopy["film"]; language: LanguageCode }) {
+function StylesSection({ copy, language }: { copy: LandingCopy["styles"]; language: LanguageCode }) {
   const [playing, setPlaying] = useState(false);
-  const { youtubeId, poster } = MARKETING_IMAGES.film;
+  const { youtubeId, poster } = MEDIA.film;
   // Privacy-enhanced embed, loaded only after an explicit play.
   const player = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&playsinline=1&hl=${language}`;
   return (
-    <section className="landing-film" id="film" aria-labelledby="landing-film-title">
-      <div className="landing-film__copy">
-        <p className="landing-film__kicker">{copy.kicker}</p>
-        <h2 id="landing-film-title">{copy.title}</h2>
-        <p className="landing-film__body">{copy.body}</p>
-        <ol className="landing-film__chapters">
-          {copy.chapters.map(chapter => <li key={chapter}>{chapter}</li>)}
-        </ol>
-      </div>
-      <figure className="landing-film__stage">
-        <div className="landing-film__frame">
-          {playing ? (
-            <iframe
-              src={player}
-              title={copy.playerTitle}
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              allowFullScreen
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
-          ) : (
-            <button type="button" className="landing-film__poster" onClick={() => setPlaying(true)} aria-label={copy.play}>
-              <img src={poster} {...responsiveMarketingImage(poster, "(max-width: 900px) 90vw, 55vw")} alt={copy.posterAlt} loading="lazy" decoding="async" />
-              <span className="landing-film__play" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><path d="M8 5.5v13l10.5-6.5z" /></svg>
-                {copy.playLabel}
-              </span>
-              <span className="landing-film__duration" aria-hidden="true">{copy.duration}</span>
-            </button>
-          )}
+    <section className="home-section home-ink" id="styles" aria-labelledby="home-styles-title">
+      <div className="home-wrap home-styles">
+        <div className="home-styles__copy">
+          <span className="home-cap">{copy.label}</span>
+          <h2 id="home-styles-title" className="home-h2">{copy.title}</h2>
+          <p>{copy.body}</p>
+          <div className="home-film">
+            {playing ? (
+              <iframe src={player} title={copy.playerTitle}
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin" />
+            ) : (
+              <button type="button" className="home-film__poster" onClick={() => setPlaying(true)} aria-label={copy.play}>
+                <img src={poster} {...responsiveMarketingImage(poster, "(max-width: 900px) 90vw, 400px")} alt={copy.posterAlt} loading="lazy" decoding="async" />
+                <span className="home-film__play" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+                  {copy.playLabel}
+                </span>
+              </button>
+            )}
+          </div>
+          <p className="home-note home-note--ink">
+            {copy.filmNote}{" "}
+            <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">{copy.youtube} ↗</a>
+          </p>
         </div>
-        <figcaption>
-          <span>{copy.caption}</span>
-          <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">
-            {copy.youtube} <span aria-hidden="true">↗</span>
-          </a>
-        </figcaption>
-      </figure>
+        <div className="home-styles__editions">
+          <ul className="home-editions">
+            {MEDIA.editions.map((src, index) => {
+              const edition = copy.editions[index];
+              return (
+                <li key={src}>
+                  <a className="home-edition" href={src} target="_blank" rel="noopener noreferrer" aria-label={edition.link}>
+                    <img src={src} {...responsiveMarketingImage(src, "(max-width: 760px) 30vw, 22vw")} alt={edition.alt} loading="lazy" decoding="async" />
+                    <span className="home-edition__label">{edition.label}</span>
+                    <span className="home-edition__note">{edition.note}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="home-note home-note--ink">{copy.license}</p>
+        </div>
+      </div>
     </section>
   );
 }
 
-function ProcessStep({ step }: { step: LandingStep }) {
+function StepVignette({ index, copy }: { index: number; copy: LandingCopy["process"] }) {
+  switch (index) {
+    case 0:
+      return (
+        <div className="home-vig home-vig--paper">
+          <div className="home-vig__brief">
+            <span className="home-over home-over--red">{copy.brief.heading}</span>
+            <ol>
+              {copy.brief.items.map((item, position) => <li key={item}><b>{position + 1}</b>{item}</li>)}
+            </ol>
+            <span className="home-vig__more">{copy.brief.more}</span>
+          </div>
+        </div>
+      );
+    case 1:
+      return (
+        <div className="home-vig">
+          <img className="home-vig__proof" src={MEDIA.lookProofs[0]} alt="" width="420" height="525" loading="lazy" decoding="async" />
+          <img className="home-vig__proof home-vig__proof--front" src={MEDIA.lookProofs[1]} alt="" width="420" height="525" loading="lazy" decoding="async" />
+        </div>
+      );
+    case 2:
+      return (
+        <div className="home-vig">
+          <img className="home-vig__fill" src={MEDIA.castSheet} alt="" width="720" height="479" loading="lazy" decoding="async" />
+        </div>
+      );
+    case 3:
+      return (
+        <div className="home-vig home-vig--center">
+          <span className="home-vig__page">
+            <img src={MEDIA.reviewPage} alt="" width="360" height="537" loading="lazy" decoding="async" />
+            <span className="home-vig__marker">1</span>
+          </span>
+          <span className="home-vig__note">
+            {copy.review.note}
+            <b>{copy.review.action}</b>
+          </span>
+        </div>
+      );
+    default:
+      return (
+        <div className="home-vig home-vig--paper home-vig--center">
+          <img className="home-vig__cover" src={MEDIA.bookCover} alt="" width="476" height="636" loading="lazy" decoding="async" />
+          <span className="home-vig__formats">
+            <span className="home-cap home-cap--paper">PDF</span>
+            <span className="home-cap home-cap--paper">CBZ</span>
+            <span className="home-cap home-cap--paper">{copy.shareLink}</span>
+          </span>
+        </div>
+      );
+  }
+}
+
+function ProcessStep({ step, index, copy }: { step: LandingStep; index: number; copy: LandingCopy["process"] }) {
   return (
-    <li className="landing-process-step">
-      <div className="landing-process-step__index" aria-hidden="true">
-        <span>{step.number}</span>
-        <span>{step.label}</span>
+    <li className="home-step">
+      <div aria-hidden="true"><StepVignette index={index} copy={copy} /></div>
+      <div className="home-step__meta">
+        <span className="home-step__number">{step.number}</span>
+        <span className="home-over">{step.label}</span>
+        {step.approve && <span className="home-cap home-cap--tiny">{copy.approve}</span>}
       </div>
-      <div>
-        <h3>{step.title}</h3>
-        <p>{step.body}</p>
-      </div>
+      <h3>{step.title}</h3>
+      <p>{step.body}</p>
     </li>
-  );
-}
-
-function FaqItem({ item }: { item: LandingFaq }) {
-  return (
-    <details className="landing-faq-item">
-      <summary>
-        <span>{item.question}</span>
-        <span className="landing-faq-item__mark" aria-hidden="true" />
-      </summary>
-      <p>{item.answer}</p>
-    </details>
-  );
-}
-
-function StoryShelfPreview({ copy }: { copy: LandingCopy["sampleBook"] }) {
-  const { t } = useI18n();
-  const { data: stories } = useShortStories();
-  const featured = ["kaitlin-out-of-space", "the-sea-in-me", "an-education"]
-    .flatMap((code) => stories?.find((story) => story.code === code) ?? []);
-
-  return (
-    <section className="landing-story-shelf" aria-labelledby="landing-story-shelf-title">
-      <div className="landing-story-shelf__heading">
-        <div>
-          <p className="landing-story-shelf__eyebrow">{t("THE SAMPLE SHELF")}</p>
-          <h2 id="landing-story-shelf-title">{t("Your next comic could start here.")}</h2>
-          <p>{t("Read a complete, adaptation-ready story before you begin. From a quiet alien encounter to family drama and fantasy, each sample tests a different kind of page.")}</p>
-        </div>
-        <Link to="/samples" className="landing-story-shelf__link">{t("Explore all stories")} <span aria-hidden="true">↗</span></Link>
-      </div>
-      {featured.length > 0 && <div className="landing-story-shelf__books">
-        {featured.map((story, index) => <article key={story.code} className="landing-story-shelf__book">
-          <div className="landing-story-shelf__stamp"><span>{String(index + 1).padStart(2, "0")}</span><span>{t(genreLabel(story.genres[0] ?? "Story"))}</span></div>
-          <h3>{story.title}</h3>
-          <p className="landing-story-shelf__author">{story.author} · {story.words.toLocaleString()} {t("words")}</p>
-          {story.description && <p className="landing-story-shelf__description">{t(story.description)}</p>}
-          <Link to={`/samples?story=${encodeURIComponent(story.code)}`} className="landing-story-shelf__read">{t("Read and choose")} <span aria-hidden="true">→</span></Link>
-        </article>)}
-      </div>}
-      <SampleBook copy={copy} />
-    </section>
   );
 }
 
@@ -325,233 +292,172 @@ export function HomePage() {
   const copy = landingCopy(t);
 
   return (
-    <div className="landing-page">
-      <a className="landing-skip-link" href="#landing-main">
-        {copy.nav.skip}
-      </a>
+    <div className="home-page">
+      <a className="home-skip" href="#home-main">{copy.nav.skip}</a>
 
-      <header className="landing-header">
-        <Link className="inline-flex w-fit items-center" to="/" aria-label={copy.nav.home}>
-          <BrandIdentity />
-        </Link>
-
-        <nav className="landing-header__nav" aria-label={copy.nav.navigation}>
-          <a href="#film">{copy.nav.film}</a>
-          <a href="#process">{copy.nav.process}</a>
-          <a href="#continuity">{copy.nav.continuity}</a>
-          <a href="#rights">{copy.nav.rights}</a>
-          <a href="#questions">{copy.nav.faq}</a>
-        </nav>
-
-        <div className="landing-header__actions">
-          <LanguageSwitcher
-            activeLanguage={language}
-            label={copy.nav.language}
-            onChange={next => {
+      <header className="home-header">
+        <div className="home-wrap home-header__row">
+          <Link className="home-brand" to="/" aria-label={copy.nav.home}>
+            <BrandMark className="home-brand__mark" variant="reversed" />
+            <span className="home-brand__name">Scenewright</span>
+            <span className="home-brand__beta">Beta</span>
+          </Link>
+          <nav className="home-header__nav" aria-label={copy.nav.navigation}>
+            <a href="#books">{copy.nav.books}</a>
+            <a href="#styles">{copy.nav.styles}</a>
+            <a href="#how">{copy.nav.process}</a>
+            <a href="#pricing">{copy.nav.pricing}</a>
+            <a href="#questions">{copy.nav.faq}</a>
+          </nav>
+          <div className="home-header__actions">
+            <LanguageSwitcher activeLanguage={language} label={copy.nav.language} onChange={next => {
               setLanguage(next);
               // Arrive at the translated page with its copy ready, not a re-render.
               void preloadLanguage(next).then(() => navigate(homePaths[next]));
-            }}
-          />
-          <Link className="landing-sign-in" to="/login">
-            {copy.nav.signIn}
-          </Link>
-          <Link className="landing-cta landing-cta--small" to="/signup">
-            {copy.nav.cta}
-          </Link>
+            }} />
+            <Link className="home-header__sign-in" to="/login">{copy.nav.signIn}</Link>
+            <Link className="home-btn home-btn--small" to="/signup">{copy.nav.cta}</Link>
+          </div>
         </div>
       </header>
 
-      <main id="landing-main">
-        <section className="landing-hero" aria-labelledby="landing-hero-title">
-          <div className="landing-hero__copy">
-            <div className="landing-hero__label">{copy.hero.label}</div>
-            <h1 id="landing-hero-title">{copy.hero.title}</h1>
-            <p className="landing-hero__body">{copy.hero.body}</p>
-            <div className="landing-hero__actions">
-              <Link className="landing-cta landing-cta--hero" to="/signup">
-                <span>{copy.hero.primaryCta}</span>
-                <span aria-hidden="true">↗</span>
-              </Link>
-              <a className="landing-text-link landing-text-link--light" href="#continuity">
-                {copy.hero.secondaryCta}
-                <span aria-hidden="true">↓</span>
-              </a>
+      <main id="home-main">
+        <section className="home-hero home-ink" aria-labelledby="home-hero-title">
+          <div className="home-wrap home-hero__grid">
+            <div className="home-hero__copy">
+              <span className="home-cap">{copy.hero.label}</span>
+              <h1 id="home-hero-title">{copy.hero.title}</h1>
+              <p className="home-hero__body">{copy.hero.body}</p>
+              <div className="home-hero__actions">
+                <Link className="home-btn home-btn--on-ink" to="/signup">{copy.hero.primaryCta} <Arrow /></Link>
+                <a className="home-link home-link--light" href="#books">{copy.hero.secondaryCta} <Arrow down /></a>
+              </div>
+              <p className="home-over home-hero__formats">{copy.hero.formats}</p>
             </div>
-            <p className="landing-hero__formats">{copy.hero.formats}</p>
-          </div>
-          <div className="landing-hero__visual">
-            <HeroFolio copy={copy.hero} />
+            <div className="home-hero__visual">
+              <HeroFolio copy={copy.hero} />
+            </div>
           </div>
         </section>
 
-        <section className="landing-premise" aria-label={copy.premise.title}>
-          <h2>{copy.premise.title}</h2>
-          <p>{copy.premise.body}</p>
+        <BookShelf copy={copy.books} />
+        <StylesSection copy={copy.styles} language={language} />
+
+        <section className="home-section" id="how" aria-labelledby="home-how-title">
+          <div className="home-wrap">
+            <div className="home-heading">
+              <div>
+                <h2 id="home-how-title" className="home-h2">{copy.process.title}</h2>
+                <p>{copy.process.body}</p>
+              </div>
+            </div>
+            <ol className="home-steps">
+              {copy.process.steps.map((step, index) => <ProcessStep key={step.number} step={step} index={index} copy={copy.process} />)}
+            </ol>
+            <div className="home-samples">
+              <span><b>{copy.process.samples.title}</b> {copy.process.samples.body}</span>
+              <Link className="home-link home-link--small" to="/samples">{copy.process.samples.link} <Arrow /></Link>
+            </div>
+          </div>
         </section>
 
-        <FilmSection copy={copy.film} language={language} />
-
-        <section className="landing-continuity" id="continuity" aria-labelledby="landing-continuity-title">
-          <div className="landing-continuity__intro">
-            <p className="landing-continuity__promise">{copy.continuity.promise}</p>
-            <h2 id="landing-continuity-title">{copy.continuity.title}</h2>
-            <p>{copy.continuity.body}</p>
+        <section className="home-section home-section--tight" aria-label={`${copy.rights.title} · ${copy.pricing.title}`}>
+          <div className="home-wrap home-two">
+            <div className="home-rights" id="rights">
+              <h2 className="home-h3">{copy.rights.title}</h2>
+              <div className="home-rights__columns">
+                <div>
+                  <span className="home-over home-over--red">{copy.rights.youLabel}</span>
+                  <ul>{copy.rights.youItems.map(item => <li key={item}>{item}</li>)}</ul>
+                </div>
+                <div>
+                  <span className="home-over">{copy.rights.toolLabel}</span>
+                  <ul className="home-rights__muted">{copy.rights.toolItems.map(item => <li key={item}>{item}</li>)}</ul>
+                </div>
+              </div>
+              <p className="home-rights__disclosure">
+                {copy.rights.disclosure} <Link to="/legal/terms">{copy.rights.termsLink}</Link>
+              </p>
+            </div>
+            <div className="home-pricing home-ink" id="pricing">
+              <h2 className="home-h3">{copy.pricing.title}</h2>
+              <p>{copy.pricing.body}</p>
+              <ul>{copy.pricing.items.map(item => <li key={item}>{item}</li>)}</ul>
+              <Link className="home-link home-link--gold home-link--small" to="/pricing">{copy.pricing.link} <Arrow /></Link>
+            </div>
           </div>
+        </section>
 
-          <div className="landing-page-samples">
-            {MARKETING_IMAGES.pages.map((src, index) => (
-              <figure key={src}>
-                <a href={src} target="_blank" rel="noopener noreferrer" aria-label={copy.continuity.inspectLinks[index]}>
-                  <img src={src} {...responsiveMarketingImage(src, "(max-width: 680px) 90vw, 45vw")} alt={copy.continuity.alts[index]} loading="lazy" decoding="async" />
-                </a>
-                <figcaption>
-                  <span>{copy.continuity.captions[index]}</span>
-                  <a href={src} target="_blank" rel="noopener noreferrer">{copy.continuity.inspectLinks[index]}</a>
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-          <p className="landing-page-samples__note">{copy.continuity.sample}</p>
-          <EditionsStrip copy={copy.editions} />
-          <div className="landing-reference-inspection">
+        <section className="home-section home-faq" id="questions" aria-labelledby="home-faq-title">
+          <div className="home-wrap home-faq__grid">
             <div>
-              <h3>{copy.continuity.inspectTitle}</h3>
-              <p>{copy.continuity.inspectBody}</p>
+              <h2 id="home-faq-title" className="home-h2">{copy.faq.title}</h2>
+              <p>{copy.faq.contact} <a href="mailto:hello@scenewright.ink">hello@scenewright.ink</a></p>
             </div>
-            <Link className="landing-cta" to="/signup">{copy.hero.primaryCta}</Link>
+            <div className="home-faq__items">
+              {copy.faq.items.map((item, index) => (
+                <details key={item.question} className="home-faq__item" open={index === 0 || undefined}>
+                  <summary>
+                    <span>{item.question}</span>
+                    <span className="home-faq__mark" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" focusable="false"><path d="M12 5v14M5 12h14" /></svg>
+                    </span>
+                  </summary>
+                  <p>{item.answer}</p>
+                </details>
+              ))}
+            </div>
           </div>
         </section>
 
-        <PublicationShowcase />
-        <StoryShelfPreview copy={copy.sampleBook} />
-
-        <section className="landing-process" id="process" aria-labelledby="landing-process-title">
-          <div className="landing-section-heading">
-            <h2 id="landing-process-title">{copy.process.title}</h2>
-            <p>{copy.process.body}</p>
-          </div>
-          <ol className="landing-process-list">
-            {copy.process.steps.map((step) => (
-              <ProcessStep key={step.number} step={step} />
-            ))}
-          </ol>
-        </section>
-
-        <section className="landing-direction" id="rights" aria-labelledby="landing-direction-title">
-          <div className="landing-direction__heading">
-            <h2 id="landing-direction-title">{copy.direction.title}</h2>
-            <p>{copy.direction.body}</p>
-          </div>
-
-          <div className="landing-direction__columns">
+        <section className="home-final" aria-labelledby="home-final-title">
+          <div className="home-wrap home-final__row">
             <div>
-              <h3>{copy.direction.youLabel}</h3>
-              <ul>
-                {copy.direction.youItems.map((item) => (
-                  <li key={item}>
-                    <span aria-hidden="true">◆</span>
-                    {item}
-                  </li>
-                ))}
-              </ul>
+              <h2 id="home-final-title" className="home-h2">{copy.final.title}</h2>
+              <p>{copy.final.body}</p>
             </div>
-            <div>
-              <h3>{copy.direction.toolLabel}</h3>
-              <ul>
-                {copy.direction.toolItems.map((item) => (
-                  <li key={item}>
-                    <span aria-hidden="true">→</span>
-                    {item}
-                  </li>
-                ))}
-              </ul>
+            <div className="home-final__actions">
+              <Link className="home-btn" to="/signup">{copy.final.cta} <Arrow /></Link>
+              <Link className="home-link home-link--small" to="/login">{copy.final.signIn}</Link>
             </div>
-          </div>
-
-          <div className="landing-disclosure">
-            <p>{copy.direction.disclosure}</p>
-            <Link to="/legal/terms">
-              {copy.direction.termsLink}
-              <span aria-hidden="true">↗</span>
-            </Link>
-          </div>
-        </section>
-
-        <section className="landing-trust" aria-labelledby="landing-trust-title">
-          <div className="landing-trust__copy">
-            <h2 id="landing-trust-title">{copy.trust.title}</h2>
-            <p>{copy.trust.body}</p>
-          </div>
-          <ul className="landing-trust__facts">
-            {copy.trust.items.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-          <div className="landing-trust__action">
-            <Link className="landing-cta landing-cta--gold" to="/signup">
-              {copy.trust.cta}
-              <span aria-hidden="true">↗</span>
-            </Link>
-            <p>{copy.trust.note}</p>
-          </div>
-        </section>
-
-        <section className="landing-faq" id="questions" aria-labelledby="landing-faq-title">
-          <div className="landing-faq__heading">
-            <h2 id="landing-faq-title">{copy.faq.title}</h2>
-            <p>{copy.faq.body}</p>
-          </div>
-          <div className="landing-faq__items">
-            {copy.faq.items.map((item) => (
-              <FaqItem key={item.question} item={item} />
-            ))}
-          </div>
-        </section>
-
-        <section className="landing-final" aria-labelledby="landing-final-title">
-          <BrandMark className="landing-final__mark" variant="primary" />
-          <h2 id="landing-final-title">{copy.final.title}</h2>
-          <p>{copy.final.body}</p>
-          <div>
-            <Link className="landing-cta landing-cta--final" to="/signup">
-              {copy.final.cta}
-              <span aria-hidden="true">↗</span>
-            </Link>
-            <Link className="landing-text-link" to="/login">
-              {copy.final.signIn}
-            </Link>
           </div>
         </section>
       </main>
 
-      <footer className="landing-footer">
-        <div>
-          <BrandMark className="landing-footer__mark" variant="reversed" />
-          <span>
-            <strong>Scenewright</strong>
-            <small>{copy.footer.line}</small>
-          </span>
+      <footer className="home-footer home-ink">
+        <div className="home-wrap">
+          <div className="home-footer__row">
+            <div>
+              <span className="home-brand">
+                <BrandMark className="home-brand__mark" variant="reversed" />
+                <span className="home-brand__name">Scenewright</span>
+              </span>
+              <p>{copy.footer.line}</p>
+            </div>
+            <div className="home-footer__links">
+              <nav aria-label={copy.footer.product}>
+                <span className="home-over">{copy.footer.product}</span>
+                <Link to="/how-it-works">{copy.footer.workflow}</Link>
+                <Link to="/pricing">{copy.footer.pricing}</Link>
+                <Link to="/guides/turn-a-novel-into-a-comic">{copy.footer.guide}</Link>
+                <Link to="/examples/kaitlin-out-of-space">{copy.footer.example}</Link>
+                <Link to="/about">{copy.footer.about}</Link>
+              </nav>
+              <nav aria-label={copy.footer.legal}>
+                <span className="home-over">{copy.footer.legal}</span>
+                <Link to="/legal/terms">{copy.footer.terms}</Link>
+                <Link to="/legal/privacy">{copy.footer.privacy}</Link>
+                <Link to="/legal/acceptable-use">{copy.footer.acceptableUse}</Link>
+              </nav>
+              <nav aria-label={copy.nav.language}>
+                <span className="home-over">{copy.nav.language}</span>
+                {LANGUAGES.map(({ code, label }) => <Link key={code} to={homePaths[code]} lang={code} hrefLang={code}
+                  onPointerEnter={() => void preloadLanguage(code)} onFocus={() => void preloadLanguage(code)}>{label}</Link>)}
+              </nav>
+            </div>
+          </div>
+          <p className="home-footer__legal">© 2026 Scenewright</p>
         </div>
-        <div className="landing-footer__links">
-        <nav aria-label="Legal">
-          <Link to="/legal/terms">{copy.footer.terms}</Link>
-          <Link to="/legal/privacy">{copy.footer.privacy}</Link>
-          <Link to="/legal/acceptable-use">{copy.footer.acceptableUse}</Link>
-        </nav>
-        <nav aria-label={t("landing.footer.product")}>
-          <Link to="/how-it-works">{t("landing.footer.workflow")}</Link>
-          <Link to="/pricing">{t("landing.footer.pricing")}</Link>
-          <Link to="/guides/turn-a-novel-into-a-comic">{t("landing.footer.guide")}</Link>
-          <Link to="/examples/kaitlin-out-of-space">{t("landing.footer.example")}</Link>
-          <Link to="/about">{t("landing.footer.about")}</Link>
-        </nav>
-        <nav aria-label={copy.nav.language}>
-          {LANGUAGES.map(({ code, label }) => <Link key={code} to={homePaths[code]} lang={code} hrefLang={code}
-            onPointerEnter={() => void preloadLanguage(code)} onFocus={() => void preloadLanguage(code)}>{label}</Link>)}
-        </nav>
-        </div>
-        <p>© 2026 Scenewright</p>
       </footer>
     </div>
   );
