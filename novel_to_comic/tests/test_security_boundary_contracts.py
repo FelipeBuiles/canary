@@ -76,7 +76,10 @@ def test_logout_clears_cookie_without_requiring_a_live_token(signing):
     with TestClient(app, base_url="https://testserver") as client:
         assert client.get("/private", headers={"Authorization": f"Bearer {jwt.encode(claims, key, algorithm='ES256')}"}).status_code == 200
         assert client.get("/private").status_code == 200
-        assert client.post("/api/auth/logout", headers={"Authorization": "Bearer expired"}).status_code == 204
+        logout = client.post("/api/auth/logout", headers={"Authorization": "Bearer expired"})
+        assert logout.status_code == 204
+        # Private images cached for reloads must not outlive the session.
+        assert logout.headers["clear-site-data"] == '"cache"'
         assert client.get("/private").status_code == 401
         assert client.post("/api/auth/logout").status_code == 204
 

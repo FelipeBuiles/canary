@@ -1,5 +1,4 @@
 import { isInsufficientCreditsError } from "../api/client";
-import { useCallback } from "react";
 import { useAssetRegenEstimate, useRegenRef, useRegenStateRef, useRegenLocationState, useRegenRefWithInstruction, useRegenPlate, useRegenPlateWithInstruction, useRegenProp, useRegenPropWithInstruction } from "../api/queries";
 import type { CastReferenceInput, GenerationJob } from "../types/api";
 import { useReferenceJob } from "./useReferenceJob";
@@ -16,8 +15,7 @@ export function useCastReference(project: string, kind: "character" | "location"
   const locationEdit = useRegenPlateWithInstruction();
   const propEdit = useRegenPropWithInstruction();
   const { data: estimate } = useAssetRegenEstimate(project, kind, entityId, stateId, estimateEnabled);
-  const { setTimestamp, setImgFailed } = job;
-  const refreshImage = useCallback(() => setTimestamp(Date.now()), [setTimestamp]);
+  const { refreshImage, setImgFailed } = job;
   const imageFailed = () => setImgFailed(true);
   const pending = [character, characterState, location, locationState, prop, characterEdit, locationEdit, propEdit].some(mutation => mutation.isPending);
   /** ``withLooks`` redraws a main image's looks from the new image in the same job. */

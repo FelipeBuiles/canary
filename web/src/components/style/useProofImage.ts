@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { proofImageUrl, type StyleSuggestion } from "../../api/styles";
+import { useImageToken } from "../../lib/imageRefresh";
 import { usePress } from "../ui/motion";
 
 /**
  * The displayed source of one proof. A finished redraw reloads with a fresh
- * timestamp and seats with a press; a failed source is not retried on every
+ * token and seats with a press; revisiting Style keeps the cached proof; a failed source is not retried on every
  * poll, but a changed source (a model change, a restored sample) is.
  */
 export function useProofImage(projectName: string, suggestion: StyleSuggestion, isGenerating: boolean) {
   const sampleUrl = proofImageUrl(projectName, suggestion);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
+  const [timestamp, refreshImage] = useImageToken(JSON.stringify([projectName, "style-proof", suggestion.id]));
   const src = `${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`;
   const [load, setLoad] = useState({ url: src, hasSample: suggestion.has_sample, failed: false });
   // Model changes can replace a cached preview URL with the saved raw proof.
@@ -27,10 +28,10 @@ export function useProofImage(projectName: string, suggestion: StyleSuggestion, 
     if (!wasGeneratingValue || isGenerating) return;
     const timer = window.setTimeout(() => {
       setLoad((current) => ({ ...current, failed: false }));
-      setTimestamp(Date.now());
+      refreshImage();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [isGenerating]);
+  }, [isGenerating, refreshImage]);
 
   return {
     src,

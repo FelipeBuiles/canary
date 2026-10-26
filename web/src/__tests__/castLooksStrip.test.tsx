@@ -45,7 +45,7 @@ it("keeps two places with the same look id independent on the strip and the stag
   await mount();
   for (const id of ["loc_1", "loc_2"]) {
     await user.click(screen.getByRole("button", { name: `Keep ${id.slice(-1)}` }));
-    expect(tile().querySelector("img")!.getAttribute("src")).toContain(`/api/projects/demo/files/plates/${id}/states/after_fire.png?v=`);
+    expect(tile().querySelector("img")!.getAttribute("src")).toContain(`/api/projects/demo/thumbnails/thumbnail/plates/${id}/states/after_fire.png?v=`);
     await user.click(tile());
     expect(screen.getByAltText(`Keep ${id.slice(-1)} · After the fire`).getAttribute("src"))
       .toContain(`/api/projects/demo/files/plates/${id}/states/after_fire.png?t=`);

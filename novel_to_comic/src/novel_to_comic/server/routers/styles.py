@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi.responses import Response
 from novel_to_comic.lettering.proof import render_style_proof
+from ..file_cache import PRIVATE_REVALIDATE, file_etag, not_modified
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
@@ -417,7 +418,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
 @router.get("/styles/{suggestion_id}/proof/{kind}")
 def get_style_lettering_proof(
     project_id: str, suggestion_id: str, kind: Literal["sample", "validation"],
-    project=Depends(get_project),
+    project=Depends(get_project), request: Request = None,
 ):
     # Freshness is checked against the canonical mode-specific request under the
     # artifact lock. An old baked proof never gets an accidental second overlay.
@@ -434,15 +435,19 @@ def get_style_lettering_proof(
                   else artifacts.style_validation_path(project[0], suggestion_id))
         if project_lettering_mode(TargetArtifacts(project[0]), project[1]) == "integrated":
             # Integrated proof requests already draw their lettering into the image.
-            return Response(source.read_bytes(), media_type="image/png", headers={"Cache-Control": "private, no-cache"})
+            etag = file_etag(source)
+            return not_modified(request, etag) or Response(
+                source.read_bytes(), media_type="image/png",
+                headers={"Cache-Control": PRIVATE_REVALIDATE, "ETag": etag},
+            )
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         art = source.read_bytes()
         copy = proof_copy_for_sample(style_proof_copy(project[1], _get_bible(project[0]), project[0]), source)
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
     data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
-    return Response(data, media_type="image/png", headers={
-        "Cache-Control": "private, no-cache", "ETag": f'"{identity}"',
+    return not_modified(request, f'"{identity}"') or Response(data, media_type="image/png", headers={
+        "Cache-Control": PRIVATE_REVALIDATE, "ETag": f'"{identity}"',
     })
 
 

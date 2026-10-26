@@ -138,4 +138,7 @@ def logout(request: Request):
     response.delete_cookie(SESSION_COOKIE_NAME, path="/", httponly=True,
                            secure=_cookie_secure(request), samesite="lax")
     response.headers["Cache-Control"] = "no-store"
+    # Private project images stay in the browser cache across reloads; drop
+    # them so the next person on this browser cannot read them from disk.
+    response.headers["Clear-Site-Data"] = '"cache"'
     return response

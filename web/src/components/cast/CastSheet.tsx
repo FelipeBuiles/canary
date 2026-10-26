@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
-import { ASPECT, type CastEntry, type CastKind } from "./castAssets";
+import { ASPECT, thumbnailUrl, type CastEntry, type CastKind } from "./castAssets";
 import type { CastAttention, RosterGroup } from "./CastRoster";
 import { useCastEntryImage } from "./useCastEntryImage";
 
@@ -27,7 +27,7 @@ function SheetTile({ project, entry, stageRegenerating, attention, onOpen }: {
         style={{ aspectRatio: String(ASPECT[entry.kind]) }}>
         {image.probe}
         {!image.missing && (
-          <img src={image.imageSrc} alt="" loading="lazy" onError={() => image.imageFailed()}
+          <img src={thumbnailUrl(image.imageSrc, "card")} alt="" loading="lazy" onError={() => image.imageFailed()}
             className={cn("h-full w-full object-contain", image.isGenerating && "opacity-35")} />
         )}
         {(image.missing || image.isGenerating) && (

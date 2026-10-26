@@ -7,6 +7,7 @@ import { useCastReference } from "../../hooks/useCastReference";
 import { useGenerationTracking } from "../../hooks/useGenerationTracking";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
+import { useImageTokens } from "../../lib/imageRefresh";
 import type { AppearanceState, CastReferenceInput, GenerationJob } from "../../types/api";
 import { CastRegenAction } from "../composites/CastRegenAction";
 import { ErrorNotice } from "../composites/ErrorNotice";
@@ -16,7 +17,7 @@ import { GenerationDetailsPanel } from "../ui/GenerationDetailsModal";
 import { InspectButton } from "../ui/InspectButton";
 import {
   ASPECT, CastUpdatingContext, STORY_KIND, castFailureFor, lookImageUrl, lookThumbUrl, looksOf, mainImagePath, portraitUrl,
-  updatingKey, useCastSuggestion, type CastEntry, type CastKind,
+  thumbnailUrl, updatingKey, useCastSuggestion, type CastEntry, type CastKind,
 } from "./castAssets";
 import { AnchorSection, InspectorSection, OVERLINE, RefVersionHistory, ReferenceViews } from "./CastInspectorParts";
 import { useCastEntryImage } from "./useCastEntryImage";
@@ -45,7 +46,9 @@ function useLooks(project: string, entry: CastEntry, stageRegenerating: boolean,
   const updating = useContext(CastUpdatingContext);
   const { data: freshness } = useCastFreshness(project, looks.length > 0);
   const [failed, setFailed] = useState<Record<string, boolean>>({});
-  const [restoredAt, setRestoredAt] = useState<Record<string, number>>({});
+  // A look's own token renews when it is redrawn or restored, so its tile follows.
+  const lookToken = useImageTokens();
+  const identity = kind === "character" ? "char_id" : kind === "location" ? "loc_id" : "prop_id";
   const outdated = new Set((freshness?.references ?? [])
     .filter((ref) => ref.entity_id === id && ref.state_id && ref.status === "outdated" && ref.kind === STORY_KIND[kind])
     .map((ref) => ref.state_id));
@@ -54,7 +57,7 @@ function useLooks(project: string, entry: CastEntry, stageRegenerating: boolean,
   const version = (stateId: string) => {
     const active = job(stateId);
     // The pending marker drops when the running Cast redraws this look, so the tile reloads then.
-    return encodeURIComponent(`${refreshToken}${restoredAt[stateId] ? `-restored-${restoredAt[stateId]}` : ""}${active ? `-${active.id}-${active.status}` : ""}${isUpdating(stateId) ? "-updating" : ""}`);
+    return encodeURIComponent(`${refreshToken}-${lookToken(JSON.stringify([project, identity, `${id}:${stateId}`]))}${active ? `-${active.id}-${active.status}` : ""}${isUpdating(stateId) ? "-updating" : ""}`);
   };
   const thumb = (stateId: string) => `${lookThumbUrl(project, kind, id, stateId)}?v=${version(stateId)}`;
   const generating = (stateId: string) => {
@@ -71,7 +74,6 @@ function useLooks(project: string, entry: CastEntry, stageRegenerating: boolean,
     markMissing: (src: string) => setFailed((current) => ({ ...current, [src]: true })),
     failure: (stateId: string) => generating(stateId) ? undefined : castFailureFor(status?.stages?.cast?.failures, id, stateId),
     outdated: (stateId: string) => outdated.has(stateId),
-    restored: (stateId: string) => setRestoredAt((current) => ({ ...current, [stateId]: Date.now() })),
   };
 }
 
@@ -300,7 +302,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
           {kind !== "prop" && (look ? (
             <RefVersionHistory projectName={project} assetType={kind} assetId={entity.id} stateId={look.id}
               busy={lookBusy || stageRegenerating} refreshKey={lookRef.timestamp}
-              onRestored={() => { lookRef.refreshImage(); looks.restored(look.id); }} />
+              onRestored={() => lookRef.refreshImage()} />
           ) : (
             <RefVersionHistory projectName={project} assetType={kind} assetId={entity.id}
               refreshKey={image.timestamp} busy={stageRegenerating || image.isGenerating}
@@ -424,7 +426,7 @@ function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected
       </span>
       <button type="button" aria-pressed={selected === null} onClick={() => onSelect(null)} className={tile}>
         <span className={frame(selected === null)}>
-          <img src={mainFailed ? mainFallback : mainSrc} alt="" onError={() => setMainFailed(true)}
+          <img src={thumbnailUrl(mainFailed ? mainFallback : mainSrc)} alt="" onError={() => setMainFailed(true)}
             className={cn("h-full w-full object-cover", mainDrawing && "opacity-40")} />
         </span>
         <span className={caption(selected === null)}>{t("Main")}</span>
@@ -442,7 +444,7 @@ function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected
             title={look.label} onClick={() => onSelect(look.id)} className={tile}>
             <span className={frame(on)}>
               {!missing && (
-                <img src={src} alt="" loading="lazy" onError={() => looks.markMissing(src)}
+                <img src={thumbnailUrl(src)} alt="" loading="lazy" onError={() => looks.markMissing(src)}
                   className={cn("h-full w-full object-cover", generating && "opacity-35")} />
               )}
               {(missing || generating) && (

@@ -1,4 +1,4 @@
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { useCastReference } from "../../hooks/useCastReference";
 import { useLiveStageAsset } from "../../hooks/useLiveStageAsset";
 import { CastUpdatingContext, STORY_KIND, mainImageUrl, updatingKey, type CastEntry } from "./castAssets";
@@ -13,13 +13,14 @@ export function useCastEntryImage(project: string, entry: CastEntry, stageRegene
   const reference = useCastReference(project, entry.kind, id, undefined, active);
   const pendingUpdate = useContext(CastUpdatingContext).has(updatingKey(STORY_KIND[entry.kind], id));
   const { refreshImage } = reference;
-  // Reload once this reference's new image lands, not only when the whole run ends.
+  // Reload once this reference's new image lands, not only when the whole run
+  // ends. Only the transition renews the URL: mounting keeps the cached image.
+  const awaitingRedraw = stageRegenerating && pendingUpdate;
+  const wasAwaiting = useRef(awaitingRedraw);
   useEffect(() => {
-    if (!stageRegenerating || !pendingUpdate) {
-      const timer = window.setTimeout(() => refreshImage(), 0);
-      return () => window.clearTimeout(timer);
-    }
-  }, [stageRegenerating, pendingUpdate, refreshImage]);
+    if (wasAwaiting.current && !awaitingRedraw) refreshImage();
+    wasAwaiting.current = awaitingRedraw;
+  }, [awaitingRedraw, refreshImage]);
   const live = useLiveStageAsset(mainImageUrl(project, entry.kind, id), reference.timestamp, stageRegenerating);
   // Drawing while the asset is absent, still waiting for the running Cast to
   // redraw it, or while this reference's own regeneration is in flight.

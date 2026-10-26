@@ -45,6 +45,15 @@ export function lookThumbUrl(project: string, kind: CastKind, id: string, stateI
 /** The face crop pages use for close shots; the roster shows it as the character's thumbnail. */
 export const portraitUrl = (project: string, id: string) => `${filesBase(project)}/refs/${encodeURIComponent(id)}/portrait.png`;
 
+/**
+ * The small WebP of a project image URL, for tiles that show it at a few dozen
+ * pixels (`card` for sheet-grid cards). The query token carries over, so the
+ * rendition renews exactly when the master does.
+ */
+export function thumbnailUrl(src: string, rendition: "thumbnail" | "card" = "thumbnail") {
+  return src.replace("/files/", `/thumbnails/${rendition}/`);
+}
+
 export function looksOf(entry: CastEntry): AppearanceState[] {
   if (entry.kind === "prop") return [];
   return (entry.entity.appearance_states ?? []).filter((state) => state.visually_significant);
