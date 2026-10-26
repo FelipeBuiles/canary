@@ -3861,5 +3861,8 @@
   "{count, plural, one {# beat} other {# beats}}": "{count, plural, one {# temps} other {# temps}}",
   "{count, plural, one {# panel} other {# panels}}": "{count, plural, one {# case} other {# cases}}",
   "{count, plural, one {# panel planned} other {# panels planned}}": "{count, plural, one {# case prévue} other {# cases prévues}}",
-  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# note éditoriale} other {# notes éditoriales}}"
+  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# note éditoriale} other {# notes éditoriales}}",
+  "Planned layout of page {number}": "Mise en page prévue de la page {number}",
+  "+{count} more": "+{count} de plus",
+  "Not drawn yet · planned panels in reading order": "Pas encore dessinée · cases prévues dans l’ordre de lecture"
 }

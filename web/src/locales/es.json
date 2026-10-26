@@ -3861,5 +3861,8 @@
   "{count, plural, one {# beat} other {# beats}}": "{count, plural, one {# momento} other {# momentos}}",
   "{count, plural, one {# panel} other {# panels}}": "{count, plural, one {# viñeta} other {# viñetas}}",
   "{count, plural, one {# panel planned} other {# panels planned}}": "{count, plural, one {# viñeta prevista} other {# viñetas previstas}}",
-  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# nota editorial} other {# notas editoriales}}"
+  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# nota editorial} other {# notas editoriales}}",
+  "Planned layout of page {number}": "Distribución prevista de la página {number}",
+  "+{count} more": "+{count} más",
+  "Not drawn yet · planned panels in reading order": "Aún sin dibujar · viñetas previstas en orden de lectura"
 }

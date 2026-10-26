@@ -92,9 +92,9 @@ describe("Reading document details", () => {
     expect(screen.getByText("Three tiers that slow down.")).toBeTruthy();
     expect(screen.queryByText(/Canonical staging/)).toBeNull();
     expect(screen.getByText("Establishing · Wide · Eye level")).toBeTruthy();
-    expect(screen.getByText("Wide view of the market as Mara arrives.")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Panels" })).getByText("Wide view of the market as Mara arrives.")).toBeTruthy();
     expect(within(screen.getByRole("list", { name: "In this panel" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["The Market", "Mara"]);
-    expect(screen.getByText("I will return.")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Panels" })).getByText("I will return.")).toBeTruthy();
     expect(document.body.textContent).not.toContain("p0001s0001");
     fireEvent.click(screen.getByRole("button", { name: "Beat 4" }));
     expect(onOpenBeat).toHaveBeenCalledWith("beat_0004");
@@ -131,6 +131,28 @@ describe("Reading document details", () => {
     expect(screen.getByText("Not placed on a page")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open page 1 in the plan" }));
     expect(onOpenPage).toHaveBeenCalledWith(1);
+  });
+
+  it("lists beats without page headers before the plan places them", () => {
+    const adaptation: BookAdaptation = { revision: 1, editorial_issues: [], beats: [{ id: "beat-1", order: 1, summary: "Mara makes a promise." }] };
+    render(<I18nProvider><AdaptationDetails project="demo" adaptation={adaptation} pages={undefined} onOpenPage={vi.fn()} /></I18nProvider>);
+    expect(screen.getByText("Mara makes a promise.")).toBeTruthy();
+    expect(screen.queryByText("Not placed on a page")).toBeNull();
+  });
+
+  it("sketches an undrawn page from its planned panels", () => {
+    const detail = page(1);
+    detail.page.content = ["establishing", "standard", "standard"].map((role, index) => ({
+      id: `panel-${index}`, order: index + 1, beat_ids: [], panel_role: role as "standard", visual_intent: `Panel ${index + 1} view`,
+      lettering: index === 1 ? [{ id: "l", kind: "dialogue" as const, text: "Hello there." }] : [], entity_ids: [], appearance_states: {},
+      camera: { shot: "medium", angle: "eye_level" }, acting: [],
+    }));
+    render(<Plan pages={[detail, page(2), page(3)]} />);
+    fireEvent.click(pageRows()[1]);
+    const sketch = screen.getByRole("figure", { name: "Planned layout of page 1" });
+    expect(within(sketch).getByText("Panel 2 view")).toBeTruthy();
+    expect(within(sketch).getByText("Hello there.")).toBeTruthy();
+    expect(screen.getByText("Not drawn yet · planned panels in reading order")).toBeTruthy();
   });
 
   it("states when treatment and beats are absent", () => {

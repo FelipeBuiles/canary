@@ -3861,5 +3861,8 @@
   "{count, plural, one {# beat} other {# beats}}": "{count, plural, one {# beat} other {# beats}}",
   "{count, plural, one {# panel} other {# panels}}": "{count, plural, one {# panel} other {# panels}}",
   "{count, plural, one {# panel planned} other {# panels planned}}": "{count, plural, one {# panel planned} other {# panels planned}}",
-  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# editorial note} other {# editorial notes}}"
+  "{count, plural, one {# editorial note} other {# editorial notes}}": "{count, plural, one {# editorial note} other {# editorial notes}}",
+  "Planned layout of page {number}": "Planned layout of page {number}",
+  "+{count} more": "+{count} more",
+  "Not drawn yet · planned panels in reading order": "Not drawn yet · planned panels in reading order"
 }
