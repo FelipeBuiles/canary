@@ -863,10 +863,20 @@ def test_paused_operation_stays_unstarted_until_admission_reopens(tmp_path, monk
 
     app = make_app(tmp_path)
     executed = []
+    paused, command_started = asyncio.Event(), asyncio.Event()
+    execution_paused = generation_jobs.execution_paused
+
+    def observe_pause(app, job):
+        result = execution_paused(app, job)
+        if result:
+            paused.set()
+        return result
 
     async def execute_command(_app, job):
         executed.append(job.id)
+        command_started.set()
 
+    monkeypatch.setattr(generation_jobs, "execution_paused", observe_pause)
     monkeypatch.setattr(job_execution, "execute_command", execute_command)
 
     async def exercise():
@@ -876,21 +886,30 @@ def test_paused_operation_stays_unstarted_until_admission_reopens(tmp_path, monk
         else:
             app.state.credit_leases_ready = False
         running = asyncio.create_task(generation_jobs.run_generation_job(app, job))
-        await asyncio.sleep(1.2)
-        # Unstarted work is safe to preserve across a deployment restart.
-        assert job.status == "queued" and job.started_at is None and not executed
-        if pause == "drain":
-            app.state.admission.set_draining(False)
-        else:
-            app.state.credit_leases_ready = True
-        await asyncio.wait_for(running, 5)
-        queue.worker.cancel()
-        await asyncio.gather(queue.worker, return_exceptions=True)
+        try:
+            await asyncio.wait_for(paused.wait(), 10)
+            # Unstarted work is safe to preserve across a deployment restart.
+            assert job.status == "queued" and job.started_at is None and not executed
+            if pause == "drain":
+                app.state.admission.set_draining(False)
+            else:
+                app.state.credit_leases_ready = True
+            await asyncio.wait_for(command_started.wait(), 10)
+            # Check resumption separately from the final threaded journal write.
+            # Admission's SQLite connection permits up to 30s of lock waiting.
+            await asyncio.wait_for(running, 40)
+        finally:
+            running.cancel()
+            queue.worker.cancel()
+            await asyncio.gather(running, queue.worker, return_exceptions=True)
         return job
 
     job = asyncio.run(exercise())
     assert executed == [job.id]
     assert job.status == "complete"
+    with app.state.admission.journal() as db:
+        saved = json.loads(db.execute("SELECT payload FROM jobs WHERE id=?", (job.id,)).fetchone()[0])
+    assert saved["status"] == "complete"
 
 
 def test_shutdown_while_drained_leaves_operation_queued_for_restart(tmp_path, monkeypatch):
