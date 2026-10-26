@@ -45,7 +45,6 @@ it("keeps canonical identity and a failed correction visible after closing and r
   server.submit.mockReturnValue(pending);
   let view = mount(client);
   expect(await screen.findByText(readable)).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
   // Internal model tags never appear in the author-facing identity view.
   const identity = within(screen.getByRole("region", { name: "VISUAL ANCHOR" }));
   expect(identity.getByText(readable)).toBeTruthy();
@@ -53,18 +52,16 @@ it("keeps canonical identity and a failed correction visible after closing and r
   expect(identity.queryByText("Prompt tags")).toBeNull();
   const draft = "Restore the canonical cat anatomy.";
   await user.type(screen.getByRole("textbox"), draft);
-  await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+  await user.click(await screen.findByRole("button", { name: /Redraw with change.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw with change" }));
   await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(1));
-  expect(within(screen.getByTestId("image-modal-image-pane")).getByRole("status").textContent).toBe("DRAWING…");
-  await user.keyboard("{Escape}");
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(false);
-  expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
+  expect(within(screen.getByRole("region", { name: "References" })).getByRole("status").textContent).toContain("Drawing Companion…");
+  expect(screen.getByRole("button", { name: "Companion" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.queryByText("Last change applied")).toBeNull();
   view.unmount();
   view = mount(client);
   expect(await screen.findByText(readable)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "Companion" }).hasAttribute("disabled")).toBe(false);
   const job: GenerationJob = { id: "correction", project_name: "fixture", kind: "character_ref_regen", label: "Companion", payload: { char_id: "cat", instruction: draft }, status: "queued", queue_position: 1, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null };
   server.jobs = [job];
   await act(async () => { admit({ status: "queued", char_id: "cat", job }); });
@@ -75,15 +72,14 @@ it("keeps canonical identity and a failed correction visible after closing and r
   view.unmount();
   mount(client);
   expect((await screen.findByRole("alert")).textContent).toContain(reason);
-  await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
-  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(draft);
-  expect(within(screen.getByTestId("image-modal-image-pane")).queryByRole("status")).toBeNull();
-  expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
+  expect((screen.getByRole("textbox", { name: "Make a change" }) as HTMLTextAreaElement).value).toBe(draft);
+  expect(within(screen.getByRole("region", { name: "References" })).queryByRole("status")).toBeNull();
+  expect(screen.queryByText("Last change applied")).toBeNull();
   server.submit.mockResolvedValue({ status: "queued", char_id: "cat", job: { ...job, id: "recovery", queued_at: new Date(Date.now() + 1000).toISOString() } });
-  await user.click(screen.getByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+  await user.click(screen.getByRole("button", { name: /Redraw with change.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw with change" }));
   await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
+  expect(screen.queryByText("Last change applied")).toBeNull();
 });
 
 it("queues a character change while Cast is generating other references", async () => {
@@ -94,13 +90,12 @@ it("queues a character change while Cast is generating other references", async 
   server.submit.mockResolvedValue({ status: "queued", char_id: "cat", job });
   const user = userEvent.setup();
   mount(client);
-  await screen.findByRole("button", { name: "Review & adjust · Companion" });
+  await screen.findByRole("button", { name: "Companion" });
   expect(document.querySelector("footer")).toBeNull();
   expect(screen.queryByRole("button", { name: /Rerun cast/ })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
-  await user.type(screen.getByRole("textbox"), "Give her a darker tail.");
-  await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+  await user.type(screen.getByRole("textbox", { name: "Make a change" }), "Give her a darker tail.");
+  await user.click(await screen.findByRole("button", { name: /Redraw with change.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw with change" }));
   await waitFor(() => expect(server.submit).toHaveBeenCalledWith({ char_id: "cat", instruction: "Give her a darker tail.", reference_assets: [] }));
-  expect(within(screen.getByRole("region", { name: "REGENERATE IMAGE · Companion" })).getAllByRole("button", { name: "QUEUED" })).toHaveLength(2);
+  expect(within(screen.getByRole("region", { name: "REGENERATE IMAGE · Companion" })).getAllByRole("button", { name: "Queued" })).toHaveLength(2);
 });

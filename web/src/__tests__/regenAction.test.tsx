@@ -42,19 +42,19 @@ describe("RegenAction", () => {
   it("does not start a paid action before its estimate is available", () => {
     renderAction({ cost: undefined });
 
-    expect(screen.getByRole("button", { name: /TRY ANOTHER VERSION COST CALCULATING/i })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /Try another version COST CALCULATING/i })).toHaveProperty("disabled", true);
   });
 
   it("confirms a paid same-brief regeneration before starting", async () => {
     const user = userEvent.setup();
     const { onRegenerate } = renderAction();
 
-    await user.click(screen.getByRole("button", { name: /TRY ANOTHER VERSION about 7 credits/i }));
+    await user.click(screen.getByRole("button", { name: /Try another version about 7 credits/i }));
     expect(onRegenerate).not.toHaveBeenCalled();
 
     const drawer = screen.getByRole("alertdialog");
     expect(within(drawer).getByText("~7 credits")).toBeTruthy();
-    await user.click(within(drawer).getByRole("button", { name: "TRY ANOTHER VERSION" }));
+    await user.click(within(drawer).getByRole("button", { name: "Try another version" }));
 
     expect(onRegenerate).toHaveBeenCalledOnce();
   });
@@ -63,14 +63,14 @@ describe("RegenAction", () => {
     const user = userEvent.setup();
     const { onRegenerateWithInstruction } = renderAction();
 
-    const input = screen.getByLabelText("WHAT SHOULD CHANGE?");
+    const input = screen.getByLabelText("Make a change");
     await user.type(input, "Make the rain heavier");
-    await user.click(screen.getByRole("button", { name: /REGENERATE WITH CHANGE about 9 credits/i }));
+    await user.click(screen.getByRole("button", { name: /Redraw with change about 9 credits/i }));
 
     const drawer = screen.getByRole("alertdialog");
     expect(within(drawer).getByText(/Make the rain heavier/)).toBeTruthy();
     expect(within(drawer).getByText("~9 credits")).toBeTruthy();
-    await user.click(within(drawer).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+    await user.click(within(drawer).getByRole("button", { name: "Redraw with change" }));
 
     expect(onRegenerateWithInstruction).toHaveBeenCalledWith("Make the rain heavier", false);
   });
@@ -79,7 +79,7 @@ describe("RegenAction", () => {
     const user = userEvent.setup();
     const { onRegenerate } = renderAction({ looks: { count: 3, estimate_credits: 12 } });
 
-    await user.click(screen.getByRole("button", { name: /TRY ANOTHER VERSION about 7 credits/i }));
+    await user.click(screen.getByRole("button", { name: /Try another version about 7 credits/i }));
     const drawer = screen.getByRole("alertdialog");
     const looks = within(drawer).getByRole("checkbox", { name: /Also redraw its 3 looks from the new image/ });
     expect(looks).toHaveProperty("checked", true);
@@ -87,7 +87,7 @@ describe("RegenAction", () => {
 
     await user.click(looks);
     expect(within(drawer).getByText("~7 credits")).toBeTruthy();
-    await user.click(within(drawer).getByRole("button", { name: "TRY ANOTHER VERSION" }));
+    await user.click(within(drawer).getByRole("button", { name: "Try another version" }));
     expect(onRegenerate).toHaveBeenCalledWith(false);
   });
 
@@ -95,12 +95,12 @@ describe("RegenAction", () => {
     const user = userEvent.setup();
     const { onRegenerateWithInstruction } = renderAction({ looks: { count: 1, estimate_credits: 4 } });
 
-    await user.type(screen.getByLabelText("WHAT SHOULD CHANGE?"), "Red hair");
-    await user.click(screen.getByRole("button", { name: /REGENERATE WITH CHANGE about 9 credits/i }));
+    await user.type(screen.getByLabelText("Make a change"), "Red hair");
+    await user.click(screen.getByRole("button", { name: /Redraw with change about 9 credits/i }));
     const drawer = screen.getByRole("alertdialog");
     expect(within(drawer).getByRole("checkbox", { name: /Also redraw its look from the new image/ })).toBeTruthy();
     expect(within(drawer).getByText("~13 credits")).toBeTruthy();
-    await user.click(within(drawer).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+    await user.click(within(drawer).getByRole("button", { name: "Redraw with change" }));
     expect(onRegenerateWithInstruction).toHaveBeenCalledWith("Red hair", true);
   });
 });

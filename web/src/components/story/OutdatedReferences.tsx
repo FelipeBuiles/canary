@@ -116,26 +116,32 @@ function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDi
   };
 
   return (
-    <section ref={sectionRef} className="space-y-4 border-[2px] border-ink-black bg-surface-container p-5" aria-label={t("References to update")}>
-      <div>
-        <h2 className="font-display text-xl font-black uppercase">{t("References to update")}</h2>
-        <p className="mt-2 font-body text-sm text-ink-muted">
-          {t("These references no longer match what Cast would draw now. Out-of-date images keep serving pages until you update or keep them; new entries need an image before pages can draw them.")}
-        </p>
+    <section ref={sectionRef} className="border border-ink-black bg-[color-mix(in_srgb,var(--color-narrator-gold)_22%,var(--color-bristol))] px-4 py-3 shadow-[3px_3px_0_0_var(--color-ink-black)]" aria-label={t("References to update")}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="flex items-center gap-2 font-meta text-sm font-semibold">
+            <span aria-hidden="true" className="size-2.5 shrink-0 border border-ink-black bg-narrator-gold" />{t("References to update")}
+          </h2>
+          <p className="mt-0.5 font-body text-xs text-ink-muted">
+            {t("Pages keep using the current images until you update or keep them.")}
+          </p>
+        </div>
+        {actionable && <Button size="sm" variant="secondary" disabled={updateDisabled} onClick={onUpdate}
+          title={t("Cast makes the new images and regenerates every changed one you haven't kept. You'll see the cost first.")}>{t("Update images")}</Button>}
       </div>
-      <ul className="divide-y-[2px] divide-ink-black/10">
+      <ul className="mt-2 divide-y divide-ink-black/12 border-t border-ink-black/12">
         {[...groups.values()].map((group) => (
-          <li key={`${group.kind}:${group.entityId}`} className="space-y-3 py-3" aria-label={group.name}>
+          <li key={`${group.kind}:${group.entityId}`} className="space-y-1.5 py-2" aria-label={group.name}>
             <div className="flex flex-wrap items-center gap-3">
-              <span className="min-w-0 flex-1 font-body text-sm font-bold">{group.name}</span>
+              <span className="min-w-0 flex-1 font-body text-sm font-semibold">{group.name}</span>
               {group.changed.length > 0 && (
                 <Link to={{ pathname: "../story", search: `?edit=${group.kind}:${encodeURIComponent(group.entityId)}` }} relative="path"
-                  className="inline-flex min-h-11 items-center font-meta text-xs underline underline-offset-4">{t("Edit details")}</Link>
+                  className="inline-flex min-h-8 items-center font-meta text-xs underline underline-offset-4">{t("Edit details")}</Link>
               )}
             </div>
             {group.redrawn.length > 0 && (
-              <div className="space-y-2 border-l-[3px] border-ink-black/20 pl-3">
-                <p className="font-body text-sm">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <p className="min-w-0 flex-1 font-body text-sm">
                   {t("{count, plural, one {Its main image was redrawn, so this look was drawn from the previous one:} other {Its main image was redrawn, so these # looks were drawn from the previous one:}}", { count: group.redrawn.length })}
                   {" "}<span className="text-ink-muted">{group.redrawn.map(lookLabel).join(" · ")}</span>
                 </p>
@@ -160,7 +166,7 @@ function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDi
               <div key={ref.state_id ?? ""} className="flex flex-wrap items-center gap-3">
                 <span className="min-w-0 flex-1 font-body text-sm">
                   {lookLabel(ref) ?? t("Main image")}
-                  <span className="ml-2 font-meta text-[0.65rem] uppercase tracking-[0.12em] text-ink-muted">
+                  <span className="ml-2 font-meta text-xs text-ink-muted">
                     {ref.status === "missing" ? t("New, no image yet") : t("Changed since its image")}
                   </span>
                 </span>
@@ -175,10 +181,6 @@ function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDi
         ))}
       </ul>
       {(keep.error || updateError) && <ErrorNotice error={(keep.error ?? updateError)} operation="save" />}
-      {actionable && <div className="flex flex-wrap items-center justify-end gap-3">
-        <p className="font-body text-xs text-ink-muted">{t("Cast makes the new images and regenerates every changed one you haven't kept. You'll see the cost first.")}</p>
-        <Button size="sm" disabled={updateDisabled} onClick={onUpdate}>{t("Update images")}</Button>
-      </div>}
     </section>
   );
 }
@@ -216,7 +218,7 @@ function RedrawLooks({ project, kind, entityId, name, looks }: {
   });
   return (
     <>
-      <Button size="xs" disabled={!cost || redraw.isPending} onClick={() => setConfirming(true)}>
+      <Button size="xs" variant="secondary" disabled={!cost || redraw.isPending} onClick={() => setConfirming(true)}>
         {looks.length === 1 ? t("Redraw look") : t("Redraw looks")}
         {cost && <> <span aria-hidden="true">·</span> <CreditAmount value={cost.estimate_credits} approximate label={t("credits")} /></>}
       </Button>
