@@ -7,6 +7,7 @@ import { I18nProvider } from "../i18n";
 const mocks = vi.hoisted(() => ({ status: undefined as ProjectStatus | undefined, error: null as Error | null, refetch: vi.fn(), mount: vi.fn() }));
 vi.mock("../api/queries", () => ({ useProjectStatus: () => ({ data: mocks.status, error: mocks.error, refetch: mocks.refetch }) }));
 vi.mock("../hooks/useSSE", () => ({ useSSE: vi.fn() }));
+vi.mock("../hooks/useAssetVersions", () => ({ useAssetVersions: () => true }));
 vi.mock("../api/events", () => ({ trackProductEvent: vi.fn() }));
 import { ProjectRooms } from "../layout/ProjectRooms";
 

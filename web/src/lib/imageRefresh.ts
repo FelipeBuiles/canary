@@ -15,7 +15,8 @@ const listeners = new Set<() => void>();
 let version = 0;
 const pending = new Set<string>();
 
-function subscribe(listener: () => void) {
+/** Called after any token changes: an image may have been rewritten. */
+export function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }

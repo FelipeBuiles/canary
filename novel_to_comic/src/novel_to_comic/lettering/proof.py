@@ -123,6 +123,13 @@ def resolve_style_proof(
     return state.model_copy(update={"elements": tuple(elements)})
 
 
+def style_proof_identity(style: LetteringStyle, image_sha256: str, copy: ProofCopy = LABEL_COPY) -> str:
+    """The derivative's content key; proof URLs carry it so browsers keep them."""
+    return hashlib.sha256(json.dumps([
+        image_sha256, style.content_sha256, ENGINE_VERSION, PROOF_VERSION, specimens(copy),
+    ], separators=(",", ":")).encode()).hexdigest()
+
+
 def render_style_proof(
     target: TargetArtifacts, style: LetteringStyle, image: bytes,
     copy: ProofCopy = LABEL_COPY,
@@ -132,10 +139,7 @@ def render_style_proof(
     Content-addressed, so the renderer runs without the production lock; only
     the cache write takes it. Six proofs render side by side, not in a queue.
     """
-    identity = hashlib.sha256(json.dumps([
-        hashlib.sha256(image).hexdigest(), style.content_sha256, ENGINE_VERSION,
-        PROOF_VERSION, specimens(copy),
-    ], separators=(",", ":")).encode()).hexdigest()
+    identity = style_proof_identity(style, hashlib.sha256(image).hexdigest(), copy)
     path = target.lettering_proof_path(identity)
     if path.exists():
         return path.read_bytes(), identity

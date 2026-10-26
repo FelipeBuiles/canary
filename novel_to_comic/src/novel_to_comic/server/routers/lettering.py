@@ -29,6 +29,7 @@ from novel_to_comic.target_artifacts import (
     ArtifactMissing,
     TargetArtifacts,
 )
+from ..file_cache import PRIVATE_REVALIDATE, not_modified
 from ..deps import get_project, project_key
 from ..auth import get_current_user
 from ..credited_job import enqueue_reserved_generation_job
@@ -163,6 +164,7 @@ def get_page_composite(
     rendition: Literal["full", "reader", "thumbnail"],
     render_revision: int | None = None,
     project=Depends(get_project),
+    request: Request = None,
 ):
     # composite_page owns its short snapshot/write locks. Holding an outer lock
     # across Chromium rendering would make every gallery thumbnail block the
@@ -188,13 +190,11 @@ def get_page_composite(
                 raise LetteringConflict(
                     "Page preview changed while loading. Refresh the page preview."
                 ) from None
-    return Response(
+    etag = f'"{identity}-{rendition}"' if identity else None
+    return (etag and not_modified(request, etag)) or Response(
         data,
         media_type="image/png" if rendition == "full" else "image/webp",
-        headers={
-            "Cache-Control": "private, no-cache",
-            **({"ETag": f'"{identity}-{rendition}"'} if identity else {}),
-        },
+        headers={"Cache-Control": PRIVATE_REVALIDATE, **({"ETag": etag} if etag else {})},
     )
 
 

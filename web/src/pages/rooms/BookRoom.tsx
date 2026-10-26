@@ -38,6 +38,7 @@ import { groupEditionFindings } from "../../lib/editionChecks";
 import type { FinishPreflight } from "../../types/api";
 import { invalidateProject, projectPath, splitProjectKey } from "../../api/projectScope";
 import { CombinedExport } from "../../components/parts/CombinedExport";
+import { versionedUrl } from "../../lib/assetVersions";
 
 type FinishFindingGroup = {
   key: string;
@@ -171,7 +172,7 @@ export function BookRoom() {
     );
   }
 
-  const coverSrc = status?.has_cover ? `/api${projectPath(id)}/files/cover/cover.png` : pageDisplayImage(id, bookPages[0] ?? { pageNumber: 1, revision: 1 });
+  const coverSrc = status?.has_cover ? versionedUrl(`/api${projectPath(id)}/files/cover/cover.png`) : pageDisplayImage(id, bookPages[0] ?? { pageNumber: 1, revision: 1 });
   const showPage = (pageNumber: number) => setDeskIndex(deskIndexForPage(views, pageNumber));
   const thumbOf = (pageNumber: number) => {
     const page = bookPages.find((item) => item.pageNumber === pageNumber);

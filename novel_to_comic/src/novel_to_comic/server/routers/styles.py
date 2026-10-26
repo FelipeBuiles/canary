@@ -9,8 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Literal
 from fastapi.responses import Response
-from novel_to_comic.lettering.proof import render_style_proof
-from ..file_cache import PRIVATE_REVALIDATE, file_etag, not_modified
+from novel_to_comic.lettering.proof import render_style_proof, style_proof_identity
+from ..file_cache import file_etag, file_sha256, not_modified, versioned_cache_control
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
@@ -324,6 +324,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
 
     active_index, active_id = _active_suggestion(suggestions, config)
     editable = project_lettering_mode(TargetArtifacts(project_dir), config) == "editable"
+    proof_copy = style_proof_copy(config, bible, project_dir) if editable else None
     proof_states = {}
     active_style_jobs = []
     batch_jobs = []
@@ -378,12 +379,19 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
         lettering_style = _proof_style(project_dir, s, active=i == active_index)
         proof_base = f"/api/projects/{project_id}/styles/{s['id']}/proof"
         proof_revision = lettering_style.content_sha256
+
+        def proof_url(kind: str, source: Path) -> str:
+            # The version names the exact bytes the route will serve, so an
+            # unchanged proof is shown from the browser cache without a request.
+            version = (_proof_version(source, lettering_style, proof_copy) if editable
+                       else file_etag(source).strip('"'))
+            return f"{proof_base}/{kind}?style={proof_revision}&v={version}"
         result.append({
             **s,
             # A stale art-only sample still takes today's software lettering:
             # the overlay is free and lands in the spaces that art reserved.
             "sample_preview_url": (
-                f"{proof_base}/sample?style={proof_revision}"
+                proof_url("sample", sample_path)
                 if sample_exists and bible is not None and (
                     i not in stale_indices
                     or (editable and sample_takes_software_lettering(sample_path))
@@ -402,7 +410,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
                 style_reference is not None and _supports_style_reference(config)
             ),
             "validation_url": (
-                f"{proof_base}/validation?style={proof_revision}"
+                proof_url("validation", validation_path)
                 if validation_fresh else None
             ),
             "is_active": i == active_index,
@@ -436,9 +444,10 @@ def get_style_lettering_proof(
         if project_lettering_mode(TargetArtifacts(project[0]), project[1]) == "integrated":
             # Integrated proof requests already draw their lettering into the image.
             etag = file_etag(source)
-            return not_modified(request, etag) or Response(
+            cache = versioned_cache_control(request, etag.strip('"'))
+            return not_modified(request, etag, cache) or Response(
                 source.read_bytes(), media_type="image/png",
-                headers={"Cache-Control": PRIVATE_REVALIDATE, "ETag": etag},
+                headers={"Cache-Control": cache, "ETag": etag},
             )
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         art = source.read_bytes()
@@ -446,9 +455,15 @@ def get_style_lettering_proof(
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
     data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
-    return not_modified(request, f'"{identity}"') or Response(data, media_type="image/png", headers={
-        "Cache-Control": PRIVATE_REVALIDATE, "ETag": f'"{identity}"',
+    cache = versioned_cache_control(request, identity)
+    return not_modified(request, f'"{identity}"', cache) or Response(data, media_type="image/png", headers={
+        "Cache-Control": cache, "ETag": f'"{identity}"',
     })
+
+
+def _proof_version(source: Path, style, copy) -> str:
+    return style_proof_identity(style, file_sha256(source), proof_copy_for_sample(copy, source))
+
 
 
 @router.get("/styles/suggest-estimate")

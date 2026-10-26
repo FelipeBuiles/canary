@@ -8,6 +8,7 @@ import type { CastAssetReference, CastReferenceInput } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { RegenAction } from "./RegenAction";
 import { seriesPath } from "../../api/projectScope";
+import { versionedUrl } from "../../lib/assetVersions";
 
 type Props = Omit<ComponentProps<typeof RegenAction>, "onRegenerateWithInstruction"> & {
   projectName: string;
@@ -24,7 +25,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function referenceImage(projectName: string, item: CastReferenceInput) {
   if ("upload_id" in item) return `/api${seriesPath(projectName)}/cast/reference-uploads/${encodeURIComponent(item.upload_id)}`;
-  return `/api${seriesPath(projectName)}/files/${assetImage(item)}`;
+  return versionedUrl(`/api${seriesPath(projectName)}/files/${assetImage(item)}`);
 }
 
 function assetImage(item: CastAssetReference) {

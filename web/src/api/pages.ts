@@ -12,6 +12,7 @@ import type {
   PageIssue,
   StageValidation,
 } from "../types/api";
+import { versionedUrl } from "../lib/assetVersions";
 
 
 export function getAdaptation(project: string): Promise<BookAdaptation> {
@@ -46,7 +47,7 @@ export function getPageSource(project: string, pageNumber: number): Promise<Page
 // The delivery version bypasses previously year-cached URLs. The server now
 // requires revalidation because a restart can reuse a page/revision number.
 export function pageRenderUrl(project: string, pageNumber: number, revision: number): string {
-  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}?delivery=2`;
+  return versionedUrl(`/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}?delivery=2`);
 }
 
 export type PageRenderRendition = "thumbnail" | "reader";
@@ -57,7 +58,7 @@ export function pageRenderPreviewUrl(
   revision: number,
   rendition: PageRenderRendition,
 ): string {
-  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}/preview/${rendition}?delivery=2`;
+  return versionedUrl(`/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}/preview/${rendition}?delivery=2`);
 }
 
 export function analyzeCompletePage(
@@ -207,7 +208,7 @@ export interface PageCorrectionReference {
 /** Project-relative reference bytes served by the generic files route. */
 export function referenceFileUrl(project: string, imagePath: string): string {
   const segments = imagePath.split("/").map((segment) => encodeURIComponent(segment));
-  return `/api${seriesPath(project)}/files/${segments.join("/")}`;
+  return versionedUrl(`/api${seriesPath(project)}/files/${segments.join("/")}`);
 }
 
 /** Exact submitted correction frozen into the render's generation request. */

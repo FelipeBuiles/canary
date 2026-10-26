@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { versionedUrl } from "../lib/assetVersions";
 
 /**
  * Retry delays for assets that the running cast stage has not written yet.
@@ -66,7 +67,7 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
 
   const probe = stageRegenerating && !current.loaded && current.token ? (
     <img
-      src={`${src}?t=${encodeURIComponent(current.token)}`}
+      src={versionedUrl(`${src}?t=${encodeURIComponent(current.token)}`)}
       loading="lazy"
       width={1}
       height={1}
@@ -81,6 +82,6 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
   // Reuse the URL that actually loaded; the original URL may have a cached
   // missing-file response from before generation finished.
   const hasImage = stageRegenerating && current.loaded;
-  const imageSrc = `${src}?t=${encodeURIComponent(hasImage ? current.token! : String(timestamp))}`;
+  const imageSrc = versionedUrl(`${src}?t=${encodeURIComponent(hasImage ? current.token! : String(timestamp))}`);
   return { hasImage, imageSrc, probe };
 }

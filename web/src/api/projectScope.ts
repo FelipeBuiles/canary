@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { versionedUrl } from "../lib/assetVersions";
 
 /**
  * A project key names a whole project (`<id>`) or one of its parts
@@ -40,12 +41,12 @@ export function withProjectKey(pathname: string, key: string): string {
 
 /** A file in the series root (references, plates, Style proofs). */
 export function seriesFileUrl(key: string, relativePath: string): string {
-  return `/api${seriesPath(key)}/files/${relativePath}`;
+  return versionedUrl(`/api${seriesPath(key)}/files/${relativePath}`);
 }
 
 /** A file in the part (page renders, the part's cover). */
 export function projectFileUrl(key: string, relativePath: string): string {
-  return `/api${projectPath(key)}/files/${relativePath}`;
+  return versionedUrl(`/api${projectPath(key)}/files/${relativePath}`);
 }
 
 /**

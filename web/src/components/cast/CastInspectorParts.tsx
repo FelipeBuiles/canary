@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n";
 import { readableAnchor } from "../../lib/visualAnchor";
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { thumbnailUrl } from "./castAssets";
+import { versionedUrl } from "../../lib/assetVersions";
 
 export const OVERLINE = "font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted";
 
@@ -45,7 +46,7 @@ export function ReferenceViews({ projectName, charId, timestamp }: { projectName
   const visiblePoses = REF_VIEWS.filter(({ pose }) => !failed[pose]);
   if (visiblePoses.length === 0) return null;
   const poseImages = visiblePoses.map(({ pose, label }) => ({
-    src: `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`,
+    src: versionedUrl(`/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`),
     alt: `${t(label)} ${t("reference")}`,
   }));
 

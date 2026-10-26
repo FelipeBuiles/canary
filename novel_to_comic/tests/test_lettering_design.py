@@ -314,8 +314,17 @@ def test_fresh_proofs_follow_mode_and_preserve_generated_lettering(tmp_path, mod
     assert source.read_bytes() == raw
     # A browser holding the current proof revalidates without a new download.
     from starlette.requests import Request
-    holder = Request({"type": "http", "headers": [(b"if-none-match", response.headers["etag"].encode())]})
+    holder = Request({"type": "http", "query_string": b"", "headers": [(b"if-none-match", response.headers["etag"].encode())]})
     assert styles.get_style_lettering_proof("demo", item["id"], kind, project, holder).status_code == 304
+    # The listed URL names these bytes, so the browser keeps it without asking;
+    # an outdated version keeps revalidating.
+    assert response.headers["cache-control"] == "private, no-cache"
+    version = url.split("&v=", 1)[1]
+    def cached(v):
+        listed = Request({"type": "http", "headers": [], "query_string": f"v={v}".encode()})
+        return styles.get_style_lettering_proof("demo", item["id"], kind, project, listed).headers["cache-control"]
+    assert cached(version) == "private, max-age=31536000, immutable"
+    assert cached("old") == "private, no-cache"
     other_mode = "editable" if mode == "integrated" else "integrated"
     other_project = (tmp_path, config.model_copy(update={"lettering_mode": other_mode}), project[2])
     with pytest.raises(HTTPException) as exc:

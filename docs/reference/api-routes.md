@@ -69,6 +69,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/export/{fmt}` | `download_export` | `export.py` |
 | `POST` | `/api/feedback` | `submit_feedback` | `feedback.py` |
 | `GET` | `/api/projects/{project}/files/{file_path:path}` | `serve_project_file` | `files.py` |
+| `GET` | `/api/projects/{project}/thumbnails/{rendition}/{file_path:path}` | `serve_project_thumbnail` | `files.py` |
+| `GET` | `/api/projects/{project}/asset-versions` | `list_asset_versions` | `files.py` |
 | `GET` | `/api/labs/image-compare/options` | `image_compare_options` | `labs.py` |
 | `GET` | `/api/labs/image-compare/projects/{project}/items` | `image_compare_items` | `labs.py` |
 | `POST` | `/api/labs/image-compare/preview` | `image_compare_preview` | `labs.py` |
