@@ -1,28 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { ProjectSummary, StageName } from "../types/api";
+import type { ProjectSummary } from "../types/api";
 import { LazyImage } from "./ui/LazyImage";
-import { Skeleton } from "./ui/Skeleton";
-import { BACKEND_STAGE_TO_STATION_ROUTE, STATIONS, stationForRoute } from "../lib/stations";
+import { Icon } from "./ui/Icon";
+import { projectCoverColor, projectShelfState, projectStation } from "../lib/projectShelf";
 import { useI18n } from "../i18n";
-import { StatusPill } from "./ui/StatusPill";
 import { partProjectKey, projectFileUrl } from "../api/projectScope";
 
-const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
-  extract:   { bg: "#2d3a2e" },
-  brief:     { bg: "#362017" },
-  style:     { bg: "#31151a" },
-  cast:      { bg: "#0d1a2b" },
-  adapt:     { bg: "#20162d" },
-  plan:      { bg: "#1a1530" },
-  draw:      { bg: "#0d1425" },
-  finish:    { bg: "#101a12" },
-};
-const FALLBACK_BG = "#111827";
 
 interface Props {
   project: ProjectSummary;
-  expanded?: boolean;
   coverPending?: boolean;
   coverFailed?: boolean;
   coverRetrying?: boolean;
@@ -31,26 +18,8 @@ interface Props {
   deleteIncompatiblePending?: boolean;
 }
 
-/** One status pill does both jobs: where in the flow, and the studio state word. */
-function statusLine(project: ProjectSummary, t: (s: string) => string): { label: string; tone: "neutral" | "red" | "gold" | "sage" | "ink" } {
-  if (project.incompatible) {
-    return { label: t("Needs reset"), tone: "red" };
-  }
-  const stationRoute = project.furthest_stage
-    ? BACKEND_STAGE_TO_STATION_ROUTE[project.furthest_stage as StageName]
-    : null;
-  const station = stationRoute ? stationForRoute(stationRoute) ?? STATIONS[0] : null;
-  const where = (state: string) => (station ? `${t(station.label)} · ${state}` : state);
-
-  if (project.is_running) return { label: where(t("Working")), tone: "ink" };
-  if (project.furthest_stage === "finish") return { label: t("Ready"), tone: "sage" };
-  if (project.furthest_stage) return { label: where(t("Needs you")), tone: "gold" };
-  return { label: t("Not started"), tone: "neutral" };
-}
-
 export function ProjectCard({
   project,
-  expanded = false,
   coverPending = false,
   coverFailed = false,
   coverRetrying = false,
@@ -59,7 +28,8 @@ export function ProjectCard({
   deleteIncompatiblePending = false,
 }: Props) {
   const { t } = useI18n();
-  const card = statusLine(project, t);
+  const state = projectShelfState(project);
+  const station = projectStation(project);
   // Each part has its own cover; the card shows the first part's.
   const coverUrl = projectFileUrl(partProjectKey(project.id, project.cover_part_id), "cover/cover.png");
   const coverComplete = project.has_cover && project.cover_job?.status === "complete";
@@ -72,121 +42,116 @@ export function ProjectCard({
     });
   }
 
-  const stageKey = project.furthest_stage as StageName | null;
-  const coverStyle = stageKey ? STAGE_COVER_STYLE[stageKey] : undefined;
-  const coverBg = coverStyle?.bg ?? FALLBACK_BG;
-  const byline = project.author ? `by ${project.author}` : "author pending";
-  const stationRoute = stageKey ? BACKEND_STAGE_TO_STATION_ROUTE[stageKey] : null;
-  const station = stationRoute ? stationForRoute(stationRoute) : null;
+  const coverBg = projectCoverColor(project);
+  const showRetry = coverFailed && !project.has_cover && !coverPending && Boolean(onRetryCover);
+  const title = (
+    <h3 className="break-words font-display font-black uppercase leading-[0.92] tracking-[-0.025em]">
+      {project.project_name}
+    </h3>
+  );
 
-  const cardContent = (
-    <article className={`${expanded ? "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:gap-6" : ""} h-full`}>
-      {/* The cover is the card: it lifts like a page pulled from the stack. */}
-      <div className="relative overflow-hidden outline outline-1 outline-ink-black/12 transition-[outline-color,box-shadow,translate] duration-[var(--motion-press)] group-hover:-translate-x-px group-hover:-translate-y-px group-hover:shadow-press group-hover:outline-2 group-hover:outline-ink-black group-focus-visible:-translate-x-px group-focus-visible:-translate-y-px group-focus-visible:shadow-press group-focus-visible:outline-2 group-focus-visible:outline-ink-black">
+  // The cover is the card: a whole 3:4 issue with its title printed on it.
+  const cover = (
+    <div className={`relative aspect-[3/4] overflow-hidden bg-ink-black shadow-[0_1px_2px_rgb(27_28_21/0.25),0_16px_30px_-16px_rgb(27_28_21/0.55)] transition-[translate,box-shadow] duration-200 ease-[cubic-bezier(.22,1,.36,1)] group-hover:-translate-x-0.5 group-hover:-translate-y-[3px] group-hover:shadow-[4px_5px_0_var(--color-ink-black),0_22px_36px_-18px_rgb(27_28_21/0.55)] group-focus-visible:-translate-x-0.5 group-focus-visible:-translate-y-[3px] group-focus-visible:shadow-[4px_5px_0_var(--color-ink-black)] ${state === "reset" ? "opacity-55 grayscale" : ""}`}>
       {project.has_cover ? (
-        <LazyImage
-          src={coverUrl}
-          alt={`${project.project_name} cover`}
-          aspect="6 / 5"
-          loading="lazy"
-          containerClassName={`w-full${coverTransition.reveal ? " animate-proof-reveal" : ""}`}
-          className="transition-transform duration-300 group-hover:scale-[1.02]"
-        />
-      ) : coverPending ? (
-        <div className="relative aspect-[6/5]">
-          <Skeleton className="absolute inset-0" />
-          <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
-            <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
-            {t("DRAWING COVER…")}
+        <>
+          <LazyImage
+            src={coverUrl}
+            alt=""
+            aspect="3 / 4"
+            loading="lazy"
+            containerClassName={`absolute inset-0 w-full${coverTransition.reveal ? " animate-proof-reveal" : ""}`}
+            className="transition-transform duration-500 ease-[cubic-bezier(.22,1,.36,1)] group-hover:scale-[1.03]"
+          />
+          <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[rgb(14_14_10/0.86)] via-[rgb(14_14_10/0.55)] to-transparent px-3.5 pb-10 pt-3.5 text-pulp-paper [text-shadow:0_1px_10px_rgb(0_0_0/0.5)] [&_h3]:text-[1.3rem]">
+            {title}
           </div>
+        </>
+      ) : coverPending ? (
+        <div className="benday-paper absolute inset-0 px-3.5 pt-3.5 text-ink-black [&_h3]:text-[1.3rem]">
+          {title}
         </div>
       ) : (
-        <div
-          className="relative flex aspect-[6/5] flex-col justify-between overflow-hidden p-5 text-bristol"
-          style={{ backgroundColor: coverBg }}
-        >
-          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.1)_1px,transparent_0)] [background-size:20px_20px]" />
-          <div className="relative flex items-center justify-between border-b-[2px] border-bristol/35 pb-2 font-meta text-[0.5rem] font-bold tracking-[0.12em] text-bristol/75">
-            <span>SCENEWRIGHT</span>
-            <span>{station?.number ?? "00"}</span>
-          </div>
-          <div className="relative">
-            <div
-              aria-hidden="true"
-              data-cover-title={project.project_name}
-              className="font-display text-[1.65rem] font-black uppercase leading-[0.9] tracking-[-0.03em] before:content-[attr(data-cover-title)]"
-            />
-            <div className="mt-2 font-body text-[0.72rem] font-semibold text-bristol/70">{byline}</div>
-          </div>
+        <div className="benday-ink absolute inset-0 flex flex-col justify-end px-3.5 pb-12 pt-3.5 text-pulp-paper [&_h3]:text-[1.85rem]" style={{ backgroundColor: coverBg }}>
+          {title}
+          {project.author && <p className="mt-2 font-body text-xs font-semibold text-pulp-paper/70">{project.author}</p>}
         </div>
       )}
 
-      {project.is_running && !coverPending && (
-        <div className="absolute bottom-0 left-0 z-10 bg-narrator-gold px-4 py-2.5 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
-          <span className="animate-press-blink mr-2 inline-block h-2 w-2 bg-hero-red" />
-          {station ? `${t(station.label)} · ${t("In progress")}` : t("In progress")}
+      {coverPending ? (
+        <div className="absolute inset-x-0 bottom-0 flex h-[30px] items-center gap-2 whitespace-nowrap bg-narrator-gold px-3 font-meta text-[0.6875rem] font-bold tracking-[0.06em] text-ink-black">
+          <span aria-hidden="true" className="animate-press-blink inline-block h-[7px] w-[7px] bg-hero-red" />
+          {t("DRAWING COVER…")}
         </div>
-      )}
-      </div>
+      ) : state === "working" ? (
+        <div className="absolute inset-x-0 bottom-0 flex h-[30px] items-center gap-2 whitespace-nowrap bg-ink-black px-3 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-pulp-paper">
+          <span aria-hidden="true" className="animate-press-blink inline-block h-[7px] w-[7px] bg-hero-red" />
+          {station ? `${t("Working")} · ${t(station.label)}` : t("Working")}
+        </div>
+      ) : state === "needs" && !showRetry ? (
+        <span className="absolute bottom-2.5 left-2.5 inline-flex h-6 items-center gap-[7px] border border-ink-black bg-narrator-gold px-2 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.06em] text-ink-black shadow-[2px_2px_0_var(--color-ink-black)]">
+          <span aria-hidden="true" className="inline-block h-[7px] w-[7px] bg-ink-black" />
+          {project.furthest_stage ? t("Needs you") : t("Not started")}
+        </span>
+      ) : null}
 
-      <div className={expanded ? "flex flex-col justify-center pt-3 sm:pt-0" : "pt-3"}>
-      <h3
-        title={project.project_name}
-        className="break-words font-display text-[1.0625rem] font-black uppercase leading-none tracking-[-0.02em] text-ink-black"
-      >
-        {project.project_name}
-      </h3>
-      <p className="mt-1 truncate font-body text-xs text-ink-soft">
-        {byline}
-      </p>
-      {!(project.is_running && !coverPending) && (
-        <StatusPill tone={card.tone} className="mt-2">{card.label}</StatusPill>
+      {state === "done" && (
+        <span aria-hidden="true" className="absolute bottom-2.5 right-2.5 inline-flex h-7 translate-y-1 items-center gap-1.5 border border-ink-black bg-pulp-paper px-2.5 font-meta text-xs font-semibold text-ink-black opacity-0 transition-[opacity,translate] duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100">
+          {t("Open")}
+          <Icon name="arrow-right" size={13} />
+        </span>
       )}
-      </div>
-    </article>
+    </div>
   );
 
   return (
-    <div className="relative h-full">
-      {project.incompatible ? (
-        <div className="block h-full" aria-label={`${t("PROJECT CANNOT OPEN")}: ${project.project_name}`}>
-          {cardContent}
-        </div>
+    <div className="relative flex min-w-0 flex-col gap-2.5">
+      {state === "reset" ? (
+        <div aria-label={`${t("PROJECT CANNOT OPEN")}: ${project.project_name}`}>{cover}</div>
       ) : (
         <Link
           to={`/project/${encodeURIComponent(project.id)}`}
           aria-label={`${t("OPEN FILE")}: ${project.project_name}`}
-          className="group block h-full focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+          className="group block focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
         >
-          {cardContent}
+          {cover}
         </Link>
       )}
 
-      {project.incompatible && onDeleteIncompatible && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-end">
-          <button
-            type="button"
-            className="pointer-events-auto min-h-8 border-[2px] border-ink-black bg-hero-red px-3 font-meta text-xs font-semibold text-bristol shadow-press disabled:cursor-wait disabled:opacity-75"
-            onClick={onDeleteIncompatible}
-            disabled={deleteIncompatiblePending}
-          >
-            {deleteIncompatiblePending ? t("REMOVING…") : t("REMOVE OLD PROJECT")}
-          </button>
-        </div>
+      {showRetry && (
+        <button
+          type="button"
+          className="absolute bottom-[calc(1.125rem+10px+0.625rem)] left-3.5 z-10 inline-flex min-h-7 items-center gap-1.5 border border-ink-black bg-pulp-paper px-2.5 font-meta text-xs font-semibold text-ink-black transition-colors hover:bg-narrator-gold disabled:cursor-wait disabled:opacity-75"
+          onClick={onRetryCover}
+          disabled={coverRetrying}
+        >
+          <Icon name="reset" size={13} />
+          {coverRetrying ? t("RETRYING COVER…") : t("Retry cover")}
+        </button>
       )}
 
-      {coverFailed && !project.has_cover && !coverPending && onRetryCover && (
-        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-start justify-end p-2 ${expanded ? "sm:right-auto sm:w-[45.4545%]" : ""}`}>
-          <button
-            type="button"
-            className="pointer-events-auto min-h-8 border border-ink-black bg-pulp-paper px-2.5 font-meta text-xs font-medium text-ink-black transition-colors hover:bg-narrator-gold disabled:cursor-wait disabled:opacity-75"
-            onClick={onRetryCover}
-            disabled={coverRetrying}
-          >
-            {coverRetrying ? t("RETRYING COVER…") : t("Retry cover")}
-          </button>
-        </div>
-      )}
+      <div className="flex min-w-0 items-baseline justify-between gap-2 font-body text-[0.8125rem] leading-[1.125rem] text-ink-soft">
+        {state === "reset" ? (
+          <>
+            <span className="font-meta text-xs font-semibold uppercase tracking-[0.06em] text-ink-muted">{t("Needs reset")}</span>
+            {onDeleteIncompatible && (
+              <button
+                type="button"
+                className="min-h-7 border border-hero-red bg-bristol px-2.5 font-meta text-xs font-semibold text-status-blocked-text transition-colors hover:bg-chip-red disabled:cursor-wait disabled:opacity-75"
+                onClick={onDeleteIncompatible}
+                disabled={deleteIncompatiblePending}
+              >
+                {deleteIncompatiblePending ? t("REMOVING…") : t("Remove")}
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="truncate">{project.author ?? ""}</span>
+            {state !== "done" && station && <span className="flex-none font-meta text-xs text-ink-muted">{t(station.label)}</span>}
+          </>
+        )}
+      </div>
     </div>
   );
 }

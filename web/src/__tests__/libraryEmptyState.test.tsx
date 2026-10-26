@@ -241,7 +241,7 @@ describe("Library first-run (Issue #0)", () => {
     renderLibrary();
 
     expect(screen.getByText("Needs reset")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "REMOVE OLD PROJECT" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).toBeTruthy();
     await user.type(screen.getByPlaceholderText("Old Book"), "Old Book");
@@ -251,5 +251,24 @@ describe("Library first-run (Issue #0)", () => {
       { id: "legacy-id" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("raises the production waiting on the user and filters the shelf", async () => {
+    const user = userEvent.setup();
+    const base = { author: null, is_running: false, has_cover: false, cover_job: null, total_cost_credits: 0 };
+    projectsResult.data = [
+      { ...base, id: "old", name: "old", project_name: "Finished Tale", created_at: "2026-05-01", furthest_stage: "finish" },
+      { ...base, id: "new", name: "new", project_name: "Open Draft", created_at: "2026-06-01", furthest_stage: "draw" },
+    ] as unknown as ProjectSummary[];
+    renderLibrary();
+
+    const desk = screen.getByRole("region", { name: "Open Draft" });
+    expect(within(desk).getByText("Waiting on you")).toBeTruthy();
+    expect(within(desk).getByRole("link", { name: /Continue in Pages/ }).getAttribute("href")).toBe("/project/new");
+
+    await user.click(screen.getByRole("button", { name: /Finished/ }));
+    expect(screen.queryByRole("region", { name: "Open Draft" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Open Draft/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Finished Tale/ })).toBeTruthy();
   });
 });
