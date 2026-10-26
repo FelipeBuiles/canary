@@ -248,7 +248,7 @@ it("merges only after the author picks what stays and sees what changes", async 
 
 it("offers to undo the latest change and to compare likely duplicates", async () => {
   server.undo = { change: { action: "merge", kind: "characters", name: "Ines Vale", into: "Ines" }, blocked: null };
-  server.duplicates = [{ kind: "characters", ids: ["mara", "ines"], reason: "name_within" }];
+  server.duplicates = [{ kind: "characters", ids: ["mara", "ines"], reason: "same_name" }];
   const user = userEvent.setup();
   renderEditor();
   expect(await screen.findByText("Merged Ines Vale into Ines")).toBeTruthy();

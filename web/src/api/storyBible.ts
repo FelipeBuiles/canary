@@ -29,7 +29,7 @@ export interface StoryBibleChange {
 export interface PossibleDuplicate {
   kind: EntityKind;
   ids: [string, string];
-  reason: "same_name" | "name_within";
+  reason: "same_name";
 }
 
 /** What removing or merging an entry would change. Previews never write. */

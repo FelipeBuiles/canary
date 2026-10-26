@@ -161,14 +161,66 @@ def test_restoring_a_removed_entry_brings_it_back_whole() -> None:
         restore_excluded(renamed, "characters", "Ines")
 
 
-def test_possible_duplicates_pair_shared_and_contained_names() -> None:
-    pairs = possible_duplicates(_bible(), {})
-    assert {(p["kind"], tuple(p["ids"]), p["reason"]) for p in pairs} == {
-        ("characters", ("char_002", "char_003"), "name_within"),
-        ("locations", ("loc_001", "loc_002"), "same_name"),
-    }
-    # Both cited: neither can be merged away, so it isn't suggested.
-    assert all(p["kind"] != "characters" for p in possible_duplicates(_bible(), {"char_002": ["P"], "char_003": ["P"]}))
+def test_possible_duplicates_require_complete_names() -> None:
+    bible = _bible()
+    # A short name inside a fuller name is not enough without an explicit alias.
+    assert possible_duplicates(bible, {}) == [
+        {"kind": "locations", "ids": ["loc_001", "loc_002"], "reason": "same_name"},
+    ]
+    bible.characters[2].aliases = ["Ines"]
+    pairs = possible_duplicates(bible, {})
+    assert pairs[0] == {"kind": "characters", "ids": ["char_002", "char_003"], "reason": "same_name"}
+    assert len(pairs) == 2
+    # The alias can be on either side; one cited entry can absorb an uncited one.
+    bible.characters.reverse()
+    assert possible_duplicates(bible, {"char_002": ["P"]})[0]["ids"] == ["char_003", "char_002"]
+    assert all(p["kind"] != "characters" for p in possible_duplicates(bible, {"char_002": ["P"], "char_003": ["P"]}))
+    assert len(possible_duplicates(bible, {}, limit=1)) == 1
+    assert possible_duplicates(bible, {}, limit=0) == []
+
+
+@pytest.mark.parametrize(("kind", "first", "first_aliases", "second", "second_aliases"), [
+    ("characters", "Ammi Pierce", ["Ammi", "old Ammi"], "Ammi's Horse", ["Ammi’s horse", "Hero"]),
+    ("characters", "Ammi Pierce", ["a good old man"], "Nahum Gardner", ["the man"]),
+    ("characters", "Nahum Gardner", ["Nahum"], "Zenas Gardner", ["Nahum’s oldest boy Zenas"]),
+    ("characters", "The Other Two Gardner Sons", ["the boys"], "The McGregor Boys", ["the boys"]),
+    ("characters", "The Gardner Horses", ["the horses"], "The Three Horses at the Saplings", ["the horses"]),
+    ("characters", "Mrs. Pierce", [], "Mr. Pierce", []),
+    ("locations", "Arkham", ["the town"], "Arkham Police Station", ["the police station"]),
+    ("locations", "Gardner Farmhouse", [], "Gardner Farmhouse Attic", []),
+    ("locations", "Ammi Pierce's Cottage", ["his house"], "Gardner Farmhouse", ["the house"]),
+    ("locations", "Ammi's Cottage", ["the house"], "Gardner Farmhouse", ["the house"]),
+    ("props", "The Meteorite", ["the stone"], "Meteorite Specimen Fragment", ["the fragment"]),
+    ("props", "First Specimen", ["the fragment"], "Second Specimen", ["the fragment"]),
+])
+def test_possible_duplicates_reject_contextual_overlap(kind, first, first_aliases, second, second_aliases) -> None:
+    bible = _bible()
+    for other_kind in ("characters", "locations", "props"):
+        if other_kind != kind:
+            setattr(bible, other_kind, [])
+    entries = getattr(bible, kind)
+    entries[:] = [entries[0].model_copy(deep=True), entries[0].model_copy(deep=True)]
+    for entry, identifier, name, aliases in zip(entries, ("first", "second"), (first, second), (first_aliases, second_aliases)):
+        entry.id, entry.name, entry.aliases = identifier, name, aliases
+    assert possible_duplicates(bible, {}) == []
+
+
+@pytest.mark.parametrize("kind", ["characters", "locations", "props"])
+@pytest.mark.parametrize(("first", "second"), [
+    ("The Lamp Room", "lamp room"),
+    ("  Ammi   Pierce ", "AMMI PIERCE"),
+    ("Ammi’s Horse", "Ammi's Horse"),
+])
+def test_possible_duplicates_normalize_complete_names(kind, first, second) -> None:
+    bible = _bible()
+    template = getattr(bible, kind)[0]
+    for other_kind in ("characters", "locations", "props"):
+        setattr(bible, other_kind, [])
+    setattr(bible, kind, [
+        template.model_copy(update={"id": "first", "name": first, "aliases": []}),
+        template.model_copy(update={"id": "second", "name": second, "aliases": []}),
+    ])
+    assert possible_duplicates(bible, {}) == [{"kind": kind, "ids": ["first", "second"], "reason": "same_name"}]
 
 
 def test_merging_folds_scenes_looks_and_names_into_the_kept_entry() -> None:
