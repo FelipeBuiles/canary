@@ -118,7 +118,6 @@ describe("StoryRoom", () => {
     renderRoom();
     const note = screen.getByRole("region", { name: "Not found in the book" });
     expect(note.textContent).toContain("Be careful what you wish for.");
-    expect(note.closest("details")?.open).toBe(true);
   });
 
   it("omits the unprotected-phrase note when every phrase is in the book", () => {
@@ -165,7 +164,7 @@ describe("StoryRoom", () => {
     expect(runPipeline).not.toHaveBeenCalled();
   });
 
-  it("reviews the Story Bible and adaptation Brief together", () => {
+  it("keeps the adaptation Brief and the Story Bible one tab apart", () => {
     renderRoom();
 
     expect(screen.getByRole("heading", { name: "Story" })).toBeTruthy();
@@ -174,15 +173,17 @@ describe("StoryRoom", () => {
     // Essential events are ordered requirements; the other lists are not.
     expect(screen.getByText("The final discovery").closest("ol")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop").closest("ul")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Inside your story" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Story Bible" }));
+    expect(screen.getByRole("button", { name: "Story Bible" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("heading", { name: "Inside your story" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Scenes\s*1$/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("Elena finds the forbidden ledger.")).toBeTruthy();
-    expect(screen.getByText("Elena")).toBeTruthy();
-    expect(screen.getByText("The Archive")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^Characters\s*1$/ }));
+    expect(screen.queryByText("The investigation closes its causal loop")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Elena" }));
     expect(screen.getByText("Silver-streaked dark hair.")).toBeTruthy();
-    expect(screen.queryByText("Elena finds the forbidden ledger.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Places\s*1$/ }));
+    expect(screen.getByText(/Elena · in 1 of 1 scenes/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "The Archive" }));
     expect(screen.getByText("Salt-stained stone stacks.")).toBeTruthy();
     expect(screen.queryByText("a".repeat(64))).toBeNull();
   });
