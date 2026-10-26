@@ -1621,20 +1621,17 @@ describe("PagesRoom", () => {
     await userEvent.click(screen.getByRole("button", { name: "Page documents" }));
     await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
 
-    expect(screen.getByRole("region", { name: "BOOK ADAPTATION" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Adaptation" })).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: "Open page 1, revision 2" })).toBeNull();
-    const treatment = screen.getByText("Narrative treatment").closest("details")!;
-    expect(treatment.open).toBe(false);
-    await userEvent.click(treatment.querySelector("summary")!);
-    expect(treatment.open).toBe(true);
+    expect(screen.getByRole("complementary", { name: "Throughline" })).toBeTruthy();
     expect(screen.getByText("A quarrel seeds the voyage")).toBeTruthy();
     expect(screen.getByText("Mara argues at the market")).toBeTruthy();
     expect(screen.queryByText("EDITORIAL FINDINGS")).toBeNull();
     expect(screen.queryByText("SAVED CHANGES")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Back to pages" }));
-    expect(screen.queryByRole("region", { name: "BOOK ADAPTATION" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Adaptation" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open page 1, revision 2" })).toBeTruthy();
   });
 
@@ -1643,12 +1640,12 @@ describe("PagesRoom", () => {
     await userEvent.click(screen.getByRole("button", { name: "Page documents" }));
     await userEvent.click(screen.getByRole("button", { name: "Adaptation" }));
     expect(screen.getByLabelText("Current route").textContent).toContain("reading=adaptation");
-    await userEvent.click(screen.getByRole("button", { name: "PAGE PLAN" }));
-    expect(screen.getByRole("region", { name: "PAGE PLAN" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Page plan" }));
+    expect(screen.getByRole("region", { name: "Page plan" })).toBeTruthy();
     expect(screen.getByLabelText("Current route").textContent).toContain("reading=page-plan");
     expect(screen.getByText("A slow-burn rhythm")).toBeTruthy();
     expect(screen.getByText("One dominant reveal")).toBeTruthy();
-    expect(screen.getByText("Hold, then reveal")).toBeTruthy();
+    expect(screen.getAllByText("Hold, then reveal").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "Back to pages" }));
     expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
     expect(screen.getByRole("button", { name: "Needs you 1" }).getAttribute("aria-pressed")).toBe("true");
@@ -1659,17 +1656,16 @@ describe("PagesRoom", () => {
 
   it("opens the full reading workspace from a deep link", async () => {
     renderRoom("/project/demo/pages?reading=page-plan");
-    expect(screen.getByRole("region", { name: "PAGE PLAN" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Page plan" })).toBe(document.activeElement);
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("heading", { name: "PAGE PLAN" })).toBe(document.activeElement);
   });
 
   it.each(["adaptation", "page-plan"])("returns unfinished %s deep links to Pages without a reading header", async (kind) => {
     stageStatuses.adapt.status = "running";
     stageStatuses.plan.status = "pending";
     renderRoom(`/project/demo/pages?reading=${kind}&filter=needs-review`);
-    expect(screen.queryByRole("region", { name: "BOOK ADAPTATION" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "PAGE PLAN" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Adaptation" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Page plan" })).toBeNull();
     expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
     expect(screen.getByLabelText("Current route").textContent).toContain("filter=needs-review");
     await userEvent.click(screen.getByRole("button", { name: "Page documents" }));

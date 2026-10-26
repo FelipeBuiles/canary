@@ -1,181 +1,404 @@
-import { useId } from "react";
-import { ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, MapPin, Package } from "lucide-react";
 import { useI18n } from "../../i18n";
-import type { BookAdaptation, BookPlan, ComicPage, CompletePageSummary, EditorialIssue } from "../../types/api";
-import { SectionHeader } from "../composites/SectionHeader";
+import { cn } from "../../lib/cn";
+import { pageDisplayImage } from "../../lib/pageState";
+import {
+  ANGLE_LABELS, ROLE_LABELS, SHOT_LABELS, beatPages, entityLabel, layoutSummary, panelsInOrder, withEntityNames,
+  type EntityRef,
+} from "../../lib/readingDocs";
+import type { BookAdaptation, BookPlan, ComicPage, CompletePageSummary, EditorialIssue, PageContent } from "../../types/api";
 
-
-const metaClass = "font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted";
-const copyClass = "whitespace-pre-line font-body text-sm leading-7";
-const disclosureClass = "flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 font-meta text-xs font-bold text-hero-red [&::-webkit-details-marker]:hidden";
+type Names = Map<string, EntityRef>;
 
 const narrativeLabels: Record<string, string> = { establisher: "Establishing beat", initial: "Opening beat", prolongation: "Building tension", peak: "Peak", release: "Release", transition: "Transition" };
+const densityLabels: Record<ComicPage["density_intent"], string> = { sparse: "Sparse", standard: "Standard", dense: "Dense" };
+const turnLabels: Record<ComicPage["page_turn_role"], string> = { none: "", setup: "Setup", reveal: "Reveal", cliffhanger: "Cliffhanger", release: "Release", transition: "Transition" };
+const spreadLabels: Record<ComicPage["spread_role"], string> = { single: "Single page", left: "Left page", right: "Right page", spread: "Full spread" };
 
-function PassageList({ lines }: { lines: string[] }) {
-  return <ul className="space-y-3">{lines.map((line, index) => <li key={index} className={copyClass}>{line}</li>)}</ul>;
+const eyebrow = "font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted";
+const pad = (value: number) => String(value).padStart(2, "0");
+
+function pageImage(project: string, item: CompletePageSummary | undefined, size: "reader" | "thumbnail") {
+  const revision = item?.active_render?.render.revision;
+  if (!item || !revision) return null;
+  return pageDisplayImage(project, {
+    pageNumber: item.page.page_number, revision,
+    hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision,
+  }, size);
 }
 
-function EditorialNotes({ issues }: { issues: EditorialIssue[] }) {
-  const { t } = useI18n();
-  if (issues.length === 0) return null;
-  return <details className="group border-t border-ink-black/15">
-    <summary className={disclosureClass}>{t("Optional editorial notes")} · {issues.length}<ChevronDown size={16} aria-hidden="true" /></summary>
-    <p className={`${copyClass} mb-4 text-ink-muted`}>{t("These suggestions do not block completion or start another generation.")}</p>
-    {issues.map((issue) => <details key={issue.id} className="border-b border-ink-black/15">
-      <summary className={disclosureClass}>{issue.evidence[0] ?? issue.message}<ChevronDown size={16} aria-hidden="true" /></summary>
-      <div className="pb-4"><PassageList lines={issue.evidence.slice(1)} /></div>
-    </details>)}
-  </details>;
+/** Canonical copy, set the way it reads on the page: captions boxed, balloons rounded, effects loud. */
+export function LetteringLine({ kind, text, speaker }: { kind?: string; text: string; speaker?: string | null }) {
+  if (kind === "sfx") {
+    return <p className="font-display text-lg font-black uppercase leading-tight tracking-[-0.01em] text-hero-red">{text}</p>;
+  }
+  if (kind === "caption") {
+    return <p className="border border-ink-black/70 bg-chip-gold px-3 py-2 font-body text-sm leading-6 whitespace-pre-line">{text}</p>;
+  }
+  return (
+    <div>
+      {speaker && <p className="mb-1 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-ink-soft">{speaker}</p>}
+      <p className={cn("rounded-[1.1rem] border bg-bristol px-3.5 py-2 font-body text-sm leading-6 whitespace-pre-line",
+        kind === "thought" ? "border-dashed border-ink-black/50 italic" : "border-ink-black/70")}>{text}</p>
+    </div>
+  );
 }
 
-export function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }) {
+export function EditorialNotes({ issues }: { issues: EditorialIssue[] }) {
   const { t } = useI18n();
-  const prefix = useId();
-  const beats = [...(adaptation.beats ?? [])].sort((left, right) => left.order - right.order);
+  return (
+    <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
+      {issues.map((issue) => (
+        <li key={issue.id} className="border-b border-ink-black/10 pb-3 last:border-0 last:pb-0">
+          <p className="font-body text-sm leading-6">{issue.message}</p>
+          {issue.evidence.map((line, index) => <p key={index} className="mt-1 font-body text-xs leading-5 text-ink-muted">{line}</p>)}
+        </li>
+      ))}
+      <li className="font-body text-xs text-ink-muted">{t("These suggestions don't block anything.")}</li>
+    </ul>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Adaptation: the story's beats under the page each one lands on.     */
+/* ------------------------------------------------------------------ */
+
+export function AdaptationDetails({ project, adaptation, pages, focusBeat, onOpenPage }: {
+  project: string;
+  adaptation: BookAdaptation;
+  pages: CompletePageSummary[] | undefined;
+  focusBeat?: string | null;
+  onOpenPage: (page: number) => void;
+}) {
+  const { t } = useI18n();
+  const beats = useMemo(() => [...(adaptation.beats ?? [])].sort((a, b) => a.order - b.order), [adaptation.beats]);
+  const placed = useMemo(() => beatPages(pages), [pages]);
+  const byNumber = useMemo(() => new Map(pages?.map((item) => [item.page.page_number, item])), [pages]);
+  const groups = useMemo(() => {
+    const out: Array<{ page: number | null; beats: typeof beats }> = [];
+    for (const beat of beats) {
+      const page = placed.get(beat.id) ?? null;
+      const last = out.at(-1);
+      if (last && last.page === page) last.beats.push(beat);
+      else out.push({ page, beats: [beat] });
+    }
+    return out;
+  }, [beats, placed]);
   const spine = adaptation.treatment?.causal_spine ?? [];
-  const treatmentSections = [
+  const treatment = ([
     ["Character arcs", adaptation.treatment?.character_arcs],
     ["Reveals", adaptation.treatment?.reveals],
     ["Consequences", adaptation.treatment?.consequences],
     ["Aftermath", adaptation.treatment?.aftermath],
     ["Relative emphasis", adaptation.treatment?.relative_emphasis],
-  ] as const;
+  ] as const).filter(([, lines]) => lines && lines.length > 0);
+  const scroller = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!focusBeat) return;
+    const target = scroller.current?.querySelector<HTMLElement>(`[data-beat="${CSS.escape(focusBeat)}"]`);
+    target?.scrollIntoView?.({ block: "center" });
+    target?.focus({ preventScroll: true });
+  }, [focusBeat]);
+
+  const jumpTo = (page: number) => scroller.current?.querySelector<HTMLElement>(`[data-beat-page="${page}"]`)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
 
   return (
-    <div className="space-y-8">
-      <section id={`${prefix}-treatment`} tabIndex={-1} className="scroll-mt-40 md:scroll-mt-28 focus-visible:outline-2 focus-visible:outline-hero-red">
-        <details className="group/treatment bg-surface-container px-4 sm:px-5">
-          <summary className={`${disclosureClass} text-ink-black`}>
-            <span>{t("Narrative treatment")}<span className="mt-1 block font-body text-sm font-normal text-ink-muted">{t("The story’s throughline, from one turning point to the next.")}</span></span>
-            <ChevronDown size={18} aria-hidden="true" className="shrink-0 group-open/treatment:rotate-180" />
-          </summary>
-          <div className="pb-5 pt-3">
+    <div className="flex min-h-0 flex-1 flex-col studio-desktop:flex-row">
+      <aside aria-label={t("Throughline")} className="shrink-0 border-b border-ink-black/10 bg-bristol px-5 py-6 studio-desktop:w-[21rem] studio-desktop:overflow-y-auto studio-desktop:border-b-0 studio-desktop:border-r">
+        <h2 className="font-display text-lg font-black uppercase tracking-[-0.02em]">{t("Throughline")}</h2>
         {spine.length > 0 ? (
-          <ol className="space-y-5">
+          <ol className="relative mt-4 space-y-4 before:absolute before:bottom-2 before:left-[0.6875rem] before:top-2 before:w-px before:bg-ink-black/20">
             {spine.map((line, index) => (
-              <li key={index} className="flex items-start gap-4">
-                <span aria-hidden="true" className="shrink-0 pt-1 font-meta text-xs font-bold tabular-nums text-ink-muted">{String(index + 1).padStart(2, "0")}</span>
-                <p className={copyClass}>{line}</p>
+              <li key={index} className="relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-3">
+                <span aria-hidden="true" className="relative z-10 flex h-6 w-6 items-center justify-center border border-ink-black bg-narrator-gold font-meta text-[0.6875rem] font-bold tabular-nums">{index + 1}</span>
+                <p className="font-body text-sm leading-6">{line}</p>
               </li>
             ))}
           </ol>
-        ) : <p className={`${copyClass} text-ink-muted`}>{t("No narrative treatment is available yet.")}</p>}
-        {treatmentSections.some(([, lines]) => lines && lines.length > 0) && (
-          <div className="mt-7 border-t border-ink-black/15">
-            {treatmentSections.filter(([, lines]) => lines && lines.length > 0).map(([label, lines]) => (
-              <details key={label} className="group border-b border-ink-black/15">
-                <summary className={disclosureClass}>{t(label)}<ChevronDown size={16} aria-hidden="true" className="shrink-0 group-open:rotate-180" /></summary>
-                <div className="pb-5"><PassageList lines={[...(lines ?? [])]} /></div>
+        ) : <p className="mt-3 font-body text-sm text-ink-muted">{t("No narrative treatment is available yet.")}</p>}
+
+        {treatment.length > 0 && (
+          <div className="mt-6 border-t border-ink-black/12">
+            {treatment.map(([label, lines]) => (
+              <details key={label} className="group border-b border-ink-black/12">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 font-meta text-[0.8125rem] font-semibold [&::-webkit-details-marker]:hidden">
+                  {t(label)}<span className="ml-auto font-normal text-ink-muted">{lines!.length}</span>
+                  <ChevronDown size={15} aria-hidden="true" className="shrink-0 text-ink-muted group-open:rotate-180" />
+                </summary>
+                <ul className="space-y-2.5 pb-4">{lines!.map((line, index) => <li key={index} className="font-body text-sm leading-6">{line}</li>)}</ul>
               </details>
             ))}
           </div>
         )}
-          </div>
-        </details>
-      </section>
-      <section id={`${prefix}-beats`} tabIndex={-1} className="scroll-mt-40 md:scroll-mt-28 focus-visible:outline-2 focus-visible:outline-hero-red">
-        <SectionHeader title="Adapted beats" description={`${beats.length} ${t("ordered story beats")} · ${t("Open a beat for the full text and lettering.")}`} />
-        {beats.length === 0 && <p className={`${copyClass} text-ink-muted`}>{t("No adapted beats are available yet.")}</p>}
-        <ol className="divide-y divide-ink-black/15">
-          {beats.map((beat) => {
-            const lettering = (beat.lettering ?? []).filter((item) => item.text);
-            const transitions = (beat.transitions ?? []).flatMap((item) => item.description ? [item.description] : []);
-            const changes = (beat.appearance_changes ?? []).flatMap((item) => item.description ? [item.description] : []);
+
+        {groups.some((group) => group.page !== null) && (
+          <nav aria-label={t("Jump to page")} className="mt-6">
+            <p className={eyebrow}>{t("Pages")}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {groups.filter((group) => group.page !== null).map((group) => (
+                <button key={group.page} type="button" onClick={() => jumpTo(group.page!)}
+                  aria-label={t("Jump to page {number}", { number: String(group.page) })}
+                  className="flex h-8 min-w-8 items-center justify-center border border-ink-black/20 px-1.5 font-meta text-xs font-semibold tabular-nums hover:border-ink-black hover:bg-narrator-gold">
+                  {group.page}
+                </button>
+              ))}
+            </div>
+          </nav>
+        )}
+      </aside>
+
+      <div ref={scroller} className="benday-paper min-w-0 flex-1 px-3 py-5 sm:px-6 sm:py-7 studio-desktop:overflow-y-auto">
+        <article className="mx-auto max-w-[48rem] border border-ink-black/14 bg-bristol shadow-[0_18px_40px_-24px_rgba(27,28,21,0.35)]">
+          {beats.length === 0 && <p className="px-6 py-10 font-body text-sm text-ink-muted">{t("No adapted beats are available yet.")}</p>}
+          {groups.map((group, index) => {
+            const item = group.page !== null ? byNumber.get(group.page) : undefined;
+            const thumb = pageImage(project, item, "thumbnail");
             return (
-              <li key={beat.id}>
-                <details className="group/beat">
-                  <summary className="grid min-h-11 cursor-pointer list-none grid-cols-[2.5rem_minmax(0,1fr)_1rem] items-start gap-3 py-5 hover:bg-surface-container/60 sm:gap-5 [&::-webkit-details-marker]:hidden">
-                    <span className="pt-0.5 font-meta text-sm font-bold tabular-nums text-ink-muted">{String(beat.order).padStart(2, "0")}</span>
-                    <span className="min-w-0">
-                      <span className="whitespace-pre-line font-body text-sm leading-6 line-clamp-2 group-open/beat:line-clamp-none">{beat.summary}</span>
-                      {beat.narrative_function && narrativeLabels[beat.narrative_function] && <span className="mt-2 block font-meta text-xs text-ink-muted">{t(narrativeLabels[beat.narrative_function])}</span>}
-                    </span>
-                    <ChevronDown size={16} aria-hidden="true" className="mt-1 shrink-0 group-open/beat:rotate-180" />
-                  </summary>
-                  <div className="pb-5 pl-13 sm:pl-15">
-                  {(lettering.length > 0 || transitions.length > 0 || changes.length > 0) && (
-                    <section aria-label={t("Lettering & story details")}>
-                      <div className="space-y-5 pb-2">
-                        {lettering.length > 0 && <div><h3 className={`${metaClass} mb-3`}>{t("Lettering")}</h3><ul className="space-y-3">{lettering.map((item) => <li key={item.id} className="bg-surface-container px-4 py-3 font-body text-sm leading-6 whitespace-pre-line">{item.text}</li>)}</ul></div>}
-                        {transitions.length > 0 && <div><h3 className={`${metaClass} mb-2`}>{t("Transitions")}</h3><PassageList lines={transitions} /></div>}
-                        {changes.length > 0 && <div><h3 className={`${metaClass} mb-2`}>{t("Appearance changes")}</h3><PassageList lines={changes} /></div>}
-                      </div>
-                    </section>
-                  )}
-                  </div>
-                </details>
-              </li>
+              <section key={`${group.page}-${index}`} data-beat-page={group.page ?? undefined} className="scroll-mt-4 border-b border-ink-black/12 last:border-0">
+                <header className="flex items-center gap-4 bg-surface-container/60 px-5 py-3 sm:px-8">
+                  {group.page !== null ? (
+                    <button type="button" onClick={() => onOpenPage(group.page!)} aria-label={t("Open page {number} in the plan", { number: String(group.page) })}
+                      className="group/page flex min-w-0 flex-1 items-center gap-4 text-left">
+                      <span className="flex h-14 w-10 shrink-0 items-center justify-center overflow-hidden border border-ink-black/30 bg-pulp-paper benday-paper">
+                        {thumb && <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-display text-base font-black uppercase tracking-[-0.01em]">{t("Page {number}", { number: String(group.page) })}</span>
+                        {item?.page.rhythm_intent && <span className="block truncate font-body text-xs text-ink-muted">{item.page.rhythm_intent}</span>}
+                      </span>
+                      <span className="hidden shrink-0 items-center gap-1 font-meta text-xs font-medium text-ink-soft group-hover/page:text-ink-black sm:inline-flex">{t("Open in plan")}<ArrowRight size={13} aria-hidden="true" /></span>
+                    </button>
+                  ) : <span className="font-display text-base font-black uppercase">{t("Not placed on a page")}</span>}
+                </header>
+                <ol>
+                  {group.beats.map((beat) => {
+                    const lettering = (beat.lettering ?? []).filter((line) => line.text) as Array<{ id: string; kind?: string; text: string; speaker?: string | null }>;
+                    const transitions = (beat.transitions ?? []).flatMap((line) => line.description ? [line.description] : []);
+                    const changes = (beat.appearance_changes ?? []).flatMap((line) => line.description ? [line.description] : []);
+                    const role = beat.narrative_function ? narrativeLabels[beat.narrative_function] : undefined;
+                    return (
+                      <li key={beat.id} data-beat={beat.id} tabIndex={-1}
+                        className={cn("grid grid-cols-[2rem_minmax(0,1fr)] gap-3 px-5 py-5 outline-none sm:grid-cols-[2.5rem_minmax(0,1fr)] sm:gap-4 sm:px-8",
+                          focusBeat === beat.id && "bg-chip-gold/60 shadow-[inset_3px_0_0_var(--color-narrator-gold)]")}>
+                        <span className="pt-0.5 font-meta text-xs font-bold tabular-nums text-ink-muted">{pad(beat.order)}</span>
+                        <div className="min-w-0 space-y-3">
+                          <p className="font-body text-[0.9375rem] leading-7 whitespace-pre-line">{beat.summary}</p>
+                          {role && <p className="font-meta text-[0.6875rem] font-medium uppercase tracking-[0.08em] text-ink-muted">{t(role)}</p>}
+                          {lettering.length > 0 && (
+                            <div aria-label={t("Lettering")} role="group" className="space-y-2.5">
+                              {lettering.map((line) => <LetteringLine key={line.id} kind={line.kind} text={line.text} speaker={line.speaker} />)}
+                            </div>
+                          )}
+                          {transitions.map((line, at) => <p key={`t${at}`} className="flex gap-2 font-body text-xs leading-5 text-ink-muted"><ArrowRight size={13} aria-hidden="true" className="mt-0.5 shrink-0" /><span><span className="sr-only">{t("Transition")}: </span>{line}</span></p>)}
+                          {changes.map((line, at) => <p key={`c${at}`} className="flex gap-2 font-body text-xs leading-5 text-ink-muted"><span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 bg-narrator-gold" /><span><span className="sr-only">{t("Appearance change")}: </span>{line}</span></p>)}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
             );
           })}
-        </ol>
-      </section>
-      <EditorialNotes issues={adaptation.editorial_issues} />
+        </article>
+      </div>
     </div>
   );
 }
 
-const densityLabels: Record<ComicPage["density_intent"], string> = { sparse: "Sparse", standard: "Standard", dense: "Dense" };
-const turnLabels: Record<ComicPage["page_turn_role"], string> = { none: "", setup: "Setup", reveal: "Reveal", cliffhanger: "Cliffhanger", release: "Release", transition: "Transition" };
-const spreadLabels: Record<ComicPage["spread_role"], string> = { single: "Single page", left: "Left page", right: "Right page", spread: "Full spread" };
+/* ------------------------------------------------------------------ */
+/* Page plan: a storyboard, one page at a time.                        */
+/* ------------------------------------------------------------------ */
 
-export function PagePlanDetails({ plan, pages, detailsLoading, detailsError }: {
+export function PagePlanDetails({ project, plan, pages, names, detailsLoading, detailsError, page, onPage, onOpenBeat }: {
+  project: string;
   plan: BookPlan;
   pages: CompletePageSummary[] | undefined;
+  names: Names;
   detailsLoading: boolean;
   detailsError: unknown;
+  page: number | null;
+  onPage: (page: number) => void;
+  onOpenBeat: (beat: string) => void;
 }) {
   const { t } = useI18n();
-  const prefix = useId();
-  const plannedPages = plan.pages ?? [];
-  const detailsByNumber = new Map(pages?.map((item) => [item.page.page_number, item.page]));
+  // The plan's own order is canonical; never re-sort it.
+  const planned = plan.pages ?? [];
+  const byNumber = useMemo(() => new Map(pages?.map((item) => [item.page.page_number, item])), [pages]);
+  const current = page && planned.some((item) => item.page_number === page) ? page : planned[0]?.page_number ?? null;
+  const index = planned.findIndex((item) => item.page_number === current);
+  const item = current !== null ? byNumber.get(current) : undefined;
+  const list = useRef<HTMLElement>(null);
+  const [rhythmOpen, setRhythmOpen] = useState(false);
+
+  const step = (delta: number) => {
+    const next = planned[index + delta];
+    if (next) onPage(next.page_number);
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (target instanceof Element && target.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
+      if (event.key === "ArrowLeft") { event.preventDefault(); step(-1); }
+      if (event.key === "ArrowRight") { event.preventDefault(); step(1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => {
+    list.current?.querySelector<HTMLElement>(`[data-plan-page="${current}"]`)?.scrollIntoView?.({ block: "nearest" });
+  }, [current]);
+
+  if (planned.length === 0) return <p className="px-6 py-10 font-body text-sm text-ink-muted">{t("The page plan is not ready yet.")}</p>;
+  const image = pageImage(project, item, "reader");
+  const missing = detailsLoading ? t("Loading page details…") : detailsError ? t("Page details are not available right now.") : t("Details for this planned page are not available yet.");
+
   return (
-    <div className="space-y-8">
-      <details className="group/rhythm bg-surface-container px-4 sm:px-5">
-        <summary className={`${disclosureClass} text-ink-black`}>
-          <span>{t("Book rhythm")}<span className="mt-1 block font-body text-sm font-normal text-ink-muted">{t("Target pages")}: {plan.target_page_min === plan.target_page_max ? plan.target_page_min : `${plan.target_page_min}–${plan.target_page_max}`}</span></span>
-          <ChevronDown size={18} aria-hidden="true" className="shrink-0 group-open/rhythm:rotate-180" />
-        </summary>
-        <p className={`${copyClass} pb-5 pt-2`}>{plan.rhythm_summary || t("No book rhythm summary is available yet.")}</p>
-      </details>
-      <section>
-        <SectionHeader title="Planned pages" description={`${plannedPages.length} ${t("planned pages")} · ${t("Scan the pacing. Open a page for layout and staging.")}`} />
-        {plannedPages.length > 0 && (
-          <nav aria-label={t("Jump to a planned page")} className="mb-7">
-            <p className={`${metaClass} mb-3`}>{t("Jump to page")}</p>
-            <div className="flex flex-wrap gap-2">
-              {plannedPages.map((item) => <a key={item.page_number} href={`#${prefix}-planned-page-${item.page_number}`} aria-label={t("Jump to page {number}", { number: String(item.page_number) })} className="flex min-h-11 min-w-11 items-center justify-center border border-ink-black/20 bg-bristol px-3 font-meta text-sm font-bold hover:border-ink-black hover:bg-narrator-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">{item.page_number}</a>)}
-            </div>
-          </nav>
+    <div className="flex min-h-0 flex-1 flex-col studio-desktop:flex-row">
+      <nav ref={list} aria-label={t("Planned pages")} className="hidden w-60 shrink-0 overflow-y-auto border-r border-ink-black/10 bg-bristol studio-desktop:block">
+        {plan.rhythm_summary && (
+          <div className="border-b border-ink-black/10 px-4 py-4">
+            <p className={eyebrow}>{t("Book rhythm")}</p>
+            <p className={cn("mt-1.5 font-body text-[0.8125rem] leading-5 text-ink-soft", !rhythmOpen && "line-clamp-4")}>{plan.rhythm_summary}</p>
+            <button type="button" onClick={() => setRhythmOpen((open) => !open)} className="mt-1 font-meta text-xs font-medium underline decoration-ink-black/30 underline-offset-2 hover:decoration-ink-black">
+              {rhythmOpen ? t("Less") : t("More")}
+            </button>
+          </div>
         )}
-        {plannedPages.length === 0 && <p className={`${copyClass} text-ink-muted`}>{t("The page plan is not ready yet.")}</p>}
-        <ol className="space-y-4">
-          {plannedPages.map((planned) => {
-            const page = detailsByNumber.get(planned.page_number);
-            return <li key={planned.page_number} id={`${prefix}-planned-page-${planned.page_number}`} tabIndex={-1} className="scroll-mt-40 md:scroll-mt-28 focus-visible:outline-2 focus-visible:outline-hero-red">
-              <article className="bg-bristol p-4 sm:p-5">
-                <div className="grid gap-3 sm:grid-cols-[5rem_minmax(0,1fr)] sm:gap-6">
-                  <h3 className="flex items-baseline gap-2 font-meta text-xs font-bold text-ink-muted sm:block">{t("Page")} <span className="font-display text-2xl font-black tabular-nums text-ink-black sm:mt-1 sm:block">{String(planned.page_number).padStart(2, "0")}</span></h3>
-                  <div className="min-w-0">
-                    {page ? <>
-                      <p className="whitespace-pre-line font-body text-base font-semibold leading-7">{page.rhythm_intent || t("Open the layout notes to explore this page.")}</p>
-                      <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
-                        {page.page_turn_role && page.page_turn_role !== "none" && <div className="flex items-baseline gap-2"><dt className="sr-only">{t("Page turn")}</dt><dd className="font-meta text-xs font-semibold text-hero-red">{t(turnLabels[page.page_turn_role])}</dd></div>}
-                        {page.density_intent && <div className="flex items-baseline gap-2"><dt className="font-body text-xs text-ink-muted">{t("Density")}</dt><dd className="font-meta text-xs">{t(densityLabels[page.density_intent])}</dd></div>}
-                        {page.spread_role && <div><dt className="sr-only">{t("Placement")}</dt><dd className="font-meta text-xs text-ink-muted">{t(spreadLabels[page.spread_role])}</dd></div>}
-                      </dl>
-                      <details className="group/layout mt-3">
-                        <summary className={disclosureClass}>{t("Layout & staging")}<ChevronDown size={16} aria-hidden="true" className="shrink-0 group-open/layout:rotate-180" /></summary>
-                        <p className={`${copyClass} pb-2`}>{page.layout_intent || t("No layout notes are available.")}</p>
-                      </details>
-                    </> : <p className={`${copyClass} text-ink-muted`} role={detailsLoading ? "status" : undefined}>{detailsLoading ? t("Loading page details…") : detailsError ? t("Page details are not available right now.") : t("Details for this planned page are not available yet.")}</p>}
-                  </div>
-                </div>
-              </article>
-            </li>;
+        <ol className="py-2">
+          {planned.map(({ page_number }) => {
+            const entry = byNumber.get(page_number);
+            const thumb = pageImage(project, entry, "thumbnail");
+            const turn = entry?.page.page_turn_role ? turnLabels[entry.page.page_turn_role] : "";
+            const active = page_number === current;
+            return (
+              <li key={page_number}>
+                <button type="button" data-plan-page={page_number} aria-current={active ? "page" : undefined} onClick={() => onPage(page_number)}
+                  className={cn("grid w-full grid-cols-[2.25rem_minmax(0,1fr)] gap-3 border-l-[3px] px-3 py-2.5 text-left transition-colors",
+                    active ? "border-hero-red bg-ink-black text-pulp-paper" : "border-transparent hover:bg-surface-container")}>
+                  <span className={cn("flex h-12 w-9 items-center justify-center overflow-hidden border benday-paper", active ? "border-pulp-paper/40" : "border-ink-black/25")}>
+                    {thumb && <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-baseline gap-2 font-meta text-xs font-bold">
+                      {t("Page {number}", { number: String(page_number) })}
+                      {turn && <span className={cn("font-medium", active ? "text-narrator-gold" : "text-hero-red")}>{t(turn)}</span>}
+                    </span>
+                    <span className={cn("mt-0.5 block font-body text-xs leading-[1.35] line-clamp-2", active ? "text-pulp-paper/75" : "text-ink-muted")}>{entry?.page.rhythm_intent ?? ""}</span>
+                  </span>
+                </button>
+              </li>
+            );
           })}
         </ol>
-      </section>
-      <EditorialNotes issues={plan.editorial_issues} />
+      </nav>
+
+      <div className="benday-ink relative flex min-h-[26rem] flex-1 items-center justify-center bg-ink-black px-14 py-6 studio-desktop:min-h-0">
+        {image ? (
+          <img key={image} src={image} alt={t("Page {number}", { number: String(current) })}
+            className="max-h-full max-w-full object-contain shadow-[0_24px_60px_-20px_rgba(0,0,0,0.75)] studio-desktop:max-h-[calc(100%-1rem)]" />
+        ) : (
+          <div className="flex aspect-[2/3] h-[min(70%,32rem)] flex-col items-center justify-center gap-3 border border-dashed border-pulp-paper/30 text-center">
+            <p className="font-display text-lg font-black uppercase text-pulp-paper">{t("Not drawn yet")}</p>
+            {item && <p className="font-meta text-xs text-pulp-paper/60">{t("{count, plural, one {# panel planned} other {# panels planned}}", { count: item.page.content.length })}</p>}
+          </div>
+        )}
+        <button type="button" onClick={() => step(-1)} disabled={index <= 0} aria-label={t("Previous page")}
+          className="absolute left-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center border border-pulp-paper/25 text-pulp-paper hover:bg-pulp-paper/10 disabled:opacity-30"><ChevronLeft size={20} aria-hidden="true" /></button>
+        <button type="button" onClick={() => step(1)} disabled={index >= planned.length - 1} aria-label={t("Next page")}
+          className="absolute right-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center border border-pulp-paper/25 text-pulp-paper hover:bg-pulp-paper/10 disabled:opacity-30"><ChevronRight size={20} aria-hidden="true" /></button>
+        <p className="absolute bottom-3 left-1/2 -translate-x-1/2 font-meta text-xs tabular-nums text-pulp-paper/60">{index + 1} / {planned.length}</p>
+      </div>
+
+      <aside aria-label={t("Page {number}", { number: String(current) })} className="shrink-0 border-l border-ink-black/10 bg-bristol studio-desktop:w-[27rem] studio-desktop:overflow-y-auto">
+        <div className="space-y-4 px-6 pb-5 pt-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-[1.625rem] font-black uppercase leading-none tracking-[-0.03em]">{t("Page {number}", { number: String(current) })}</h2>
+            {item && <>
+              {item.page.page_turn_role !== "none" && <span className="border border-hero-red/40 bg-chip-red px-1.5 py-0.5 font-meta text-[0.6875rem] font-semibold text-status-blocked-text">{t(turnLabels[item.page.page_turn_role])}</span>}
+              <span className="border border-ink-black/15 px-1.5 py-0.5 font-meta text-[0.6875rem] text-ink-soft">{t("{density} density", { density: t(densityLabels[item.page.density_intent]) })}</span>
+              <span className="border border-ink-black/15 px-1.5 py-0.5 font-meta text-[0.6875rem] text-ink-soft">{t(spreadLabels[item.page.spread_role])}</span>
+            </>}
+          </div>
+          {item ? <>
+            {item.page.rhythm_intent && <p className="font-body text-base font-semibold leading-6">{item.page.rhythm_intent}</p>}
+            {item.page.layout_intent && <p className="font-body text-sm leading-6 text-ink-soft whitespace-pre-line">{layoutSummary(item.page.layout_intent)}</p>}
+          </> : <p role={detailsLoading ? "status" : undefined} className="font-body text-sm text-ink-muted">{missing}</p>}
+        </div>
+        {item && (
+          <section aria-label={t("Panels")} className="border-t border-ink-black/10 px-6 pb-8 pt-5">
+            <p className={eyebrow}>{t("{count, plural, one {# panel} other {# panels}}", { count: item.page.content.length })}</p>
+            <ol className="mt-3 space-y-3">
+              {panelsInOrder(item.page.content, item.page.reading_order).map((panel, at) => (
+                <PanelCard key={panel.id} panel={panel} number={at + 1} names={names} onOpenBeat={onOpenBeat} />
+              ))}
+            </ol>
+          </section>
+        )}
+      </aside>
+
+      <div className="flex items-center justify-center gap-2 border-t border-ink-black/10 bg-bristol px-4 py-3 studio-desktop:hidden">
+        <label className="font-meta text-xs text-ink-muted" htmlFor="plan-page-select">{t("Page")}</label>
+        <select id="plan-page-select" value={current ?? ""} onChange={(event) => onPage(Number(event.target.value))} className="h-9 border border-ink-black/25 bg-bristol px-2 font-meta text-sm">
+          {planned.map(({ page_number }) => <option key={page_number} value={page_number}>{page_number}</option>)}
+        </select>
+      </div>
     </div>
+  );
+}
+
+function PanelCard({ panel, number, names, onOpenBeat }: { panel: PageContent; number: number; names: Names; onOpenBeat: (beat: string) => void }) {
+  const { t } = useI18n();
+  const role = ROLE_LABELS[panel.panel_role];
+  const camera = panel.camera ? [t(SHOT_LABELS[panel.camera.shot]), t(ANGLE_LABELS[panel.camera.angle])].join(" · ") : "";
+  const people = panel.entity_ids.filter((id) => names.get(id)?.kind !== "place" && names.get(id)?.kind !== "prop");
+  const places = panel.entity_ids.filter((id) => names.get(id)?.kind === "place");
+  const props = panel.entity_ids.filter((id) => names.get(id)?.kind === "prop");
+  const lettering = panel.lettering.filter((line) => line.text);
+  return (
+    <li className="border border-ink-black/12 bg-pulp-paper/40">
+      <div className="flex items-center gap-2.5 border-b border-ink-black/8 px-3.5 py-2">
+        <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center border border-ink-black bg-narrator-gold font-meta text-[0.6875rem] font-bold tabular-nums">{number}</span>
+        <h3 className="min-w-0 flex-1 truncate font-meta text-xs font-semibold">
+          <span className="sr-only">{t("Panel {number}", { number: String(number) })}: </span>
+          {[role ? t(role) : "", camera].filter(Boolean).join(" · ") || t("Panel {number}", { number: String(number) })}
+        </h3>
+        {panel.beat_ids.length > 0 && (
+          <button type="button" onClick={() => onOpenBeat(panel.beat_ids[0])} className="shrink-0 font-meta text-[0.6875rem] text-ink-muted underline decoration-ink-black/25 underline-offset-2 hover:text-ink-black">
+            {t("Beat {number}", { number: String(Number(panel.beat_ids[0].replace(/\D/g, "")) || 1) })}
+          </button>
+        )}
+      </div>
+      <div className="space-y-3 px-3.5 py-3">
+        <p className="font-body text-sm leading-6">{withEntityNames(names, panel.visual_intent)}</p>
+        {(people.length > 0 || places.length > 0 || props.length > 0) && (
+          <ul aria-label={t("In this panel")} className="flex flex-wrap gap-1.5">
+            {places.map((id) => <li key={id} className="inline-flex items-center gap-1 border border-ink-black/15 bg-bristol px-1.5 py-0.5 font-meta text-[0.6875rem] text-ink-soft"><MapPin size={11} aria-hidden="true" />{entityLabel(names, id)}</li>)}
+            {people.map((id) => <li key={id} className="border border-ink-black/15 bg-bristol px-1.5 py-0.5 font-meta text-[0.6875rem] font-medium">{entityLabel(names, id)}</li>)}
+            {props.map((id) => <li key={id} className="inline-flex items-center gap-1 border border-ink-black/15 bg-bristol px-1.5 py-0.5 font-meta text-[0.6875rem] text-ink-soft"><Package size={11} aria-hidden="true" />{entityLabel(names, id)}</li>)}
+          </ul>
+        )}
+        {lettering.length > 0 && <div role="group" aria-label={t("Lettering")} className="space-y-2">{lettering.map((line) => <LetteringLine key={line.id} kind={line.kind} text={line.text} speaker={line.speaker} />)}</div>}
+        {panel.acting.length > 0 && (
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 font-meta text-xs font-medium text-ink-soft hover:text-ink-black [&::-webkit-details-marker]:hidden">
+              {t("Acting")}<ChevronDown size={13} aria-hidden="true" className="group-open:rotate-180" />
+            </summary>
+            <ul className="mt-2 space-y-2">
+              {panel.acting.map((act) => (
+                <li key={act.entity_id} className="font-body text-xs leading-5 text-ink-soft">
+                  <span className="font-semibold text-ink-black">{entityLabel(names, act.entity_id)}</span>
+                  {[act.expression, act.gesture, act.gaze && t("looking at {target}", { target: withEntityNames(names, act.gaze) })].filter(Boolean).map((part) => ` · ${part}`)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    </li>
   );
 }
