@@ -75,7 +75,29 @@ def test_every_asset_url_the_ui_builds_is_routable(tmp_path: Path):
         response = client.get(f"/api/projects/demo/files/{relative}")
         assert response.status_code == 200, relative
         assert response.content == relative.encode()
-        assert response.headers["cache-control"] == "private, max-age=60"
+        assert response.headers["cache-control"] == "private, no-cache"
+
+
+def test_an_unchanged_asset_revalidates_without_resending_its_bytes(tmp_path: Path):
+    # Reloads and remounts reuse the browser's copy; a redraw at the same path
+    # changes the validator, so the next check downloads the new image.
+    client, project_dir = _client(tmp_path)
+    sheet = project_dir / "refs" / "character_ann" / "sheet.png"
+    sheet.parent.mkdir(parents=True)
+    sheet.write_bytes(b"first")
+    url = "/api/projects/demo/files/refs/character_ann/sheet.png"
+
+    etag = client.get(url).headers["etag"]
+    cached = client.get(url, headers={"If-None-Match": f"W/{etag}"})
+    assert cached.status_code == 304
+    assert cached.content == b""
+    assert cached.headers["cache-control"] == "private, no-cache"
+
+    sheet.write_bytes(b"redrawn")
+    redrawn = client.get(url, headers={"If-None-Match": etag})
+    assert redrawn.status_code == 200
+    assert redrawn.content == b"redrawn"
+    assert redrawn.headers["etag"] != etag
 
 
 def test_a_style_proof_is_served_where_the_styles_route_promises_it(tmp_path: Path):
@@ -116,7 +138,7 @@ def test_assets_cannot_escape_the_project_directory(tmp_path: Path):
         "samples/../../secret.txt",
     ):
         with pytest.raises(HTTPException) as exc_info:
-            serve_project_file(escape, project=project)
+            serve_project_file(escape, request=None, project=project)
         assert exc_info.value.status_code == 403, escape
 
 
@@ -267,3 +289,33 @@ def test_restarted_edition_serves_new_art_at_reused_revision(tmp_path: Path):
     assert old.status_code == current.status_code == 200
     assert old.content != current.content
     assert current.headers["cache-control"] == "private, no-cache"
+
+
+def test_tiles_read_a_small_webp_that_follows_a_redraw(tmp_path: Path):
+    # Roster and look tiles must not decode the full master; a redraw at the
+    # same path gets a new rendition and drops the superseded one.
+    client, project_dir = _client(tmp_path)
+    sheet = project_dir / "refs" / "character_ann" / "sheet.png"
+    sheet.parent.mkdir(parents=True)
+    Image.new("RGB", (1536, 1024), "red").save(sheet)
+    url = "/api/projects/demo/files/refs/character_ann/sheet.png".replace("/files/", "/thumbnails/thumbnail/")
+
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert Image.open(io.BytesIO(response.content)).size == (256, 171)
+    assert client.get(url, headers={"If-None-Match": response.headers["etag"]}).status_code == 304
+
+    Image.new("RGB", (1536, 1024), "blue").save(sheet)
+    redrawn = client.get(url, headers={"If-None-Match": response.headers["etag"]})
+    assert redrawn.status_code == 200
+    assert Image.open(io.BytesIO(redrawn.content)).convert("RGB").getpixel((0, 0))[2] > 200
+    assert len(list((project_dir / ".thumbnails" / "thumbnail").glob("*.webp"))) == 1
+
+    assert client.get("/api/projects/demo/thumbnails/thumbnail/refs/character_ann/missing.png").status_code == 404
+    (project_dir / "finish").mkdir()
+    (project_dir / "finish" / "preflight.json").write_text("{}")
+    assert client.get("/api/projects/demo/thumbnails/thumbnail/finish/preflight.json").status_code == 404
+    assert client.get("/api/projects/demo/thumbnails/poster/refs/character_ann/sheet.png").status_code == 422
+    assert client.get("/api/projects/demo/files/.thumbnails/thumbnail").status_code == 403

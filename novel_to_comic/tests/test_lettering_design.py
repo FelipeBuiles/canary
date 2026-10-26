@@ -312,6 +312,10 @@ def test_fresh_proofs_follow_mode_and_preserve_generated_lettering(tmp_path, mod
     assert response.media_type == "image/png"
     assert (response.body == raw) == (mode == "integrated")
     assert source.read_bytes() == raw
+    # A browser holding the current proof revalidates without a new download.
+    from starlette.requests import Request
+    holder = Request({"type": "http", "headers": [(b"if-none-match", response.headers["etag"].encode())]})
+    assert styles.get_style_lettering_proof("demo", item["id"], kind, project, holder).status_code == 304
     other_mode = "editable" if mode == "integrated" else "integrated"
     other_project = (tmp_path, config.model_copy(update={"lettering_mode": other_mode}), project[2])
     with pytest.raises(HTTPException) as exc:

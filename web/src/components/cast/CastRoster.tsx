@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Search, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
-import { entryAnchor, portraitUrl, type CastEntry, type CastKind } from "./castAssets";
+import { entryAnchor, portraitUrl, thumbnailUrl, type CastEntry, type CastKind } from "./castAssets";
 import { useCastEntryImage } from "./useCastEntryImage";
 
 /** What a roster row flags: a reference that didn't finish, or one whose image is out of date. */
@@ -35,7 +35,7 @@ function RosterRow({ project, entry, sub, selected, stageRegenerating, attention
   // Characters show the face crop pages use; older sheets without one fall back to the sheet.
   const [portraitFailed, setPortraitFailed] = useState(false);
   const usePortrait = entry.kind === "character" && !portraitFailed;
-  const thumbSrc = usePortrait ? `${portraitUrl(project, entry.entity.id)}?t=${encodeURIComponent(image.timestamp)}` : image.imageSrc;
+  const thumbSrc = thumbnailUrl(usePortrait ? `${portraitUrl(project, entry.entity.id)}?t=${encodeURIComponent(image.timestamp)}` : image.imageSrc);
   const status = image.isGenerating ? t("Drawing") : attention === "failed" ? t("Didn't finish") : attention === "outdated" ? t("Out of date") : null;
 
   return (

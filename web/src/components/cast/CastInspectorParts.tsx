@@ -5,6 +5,7 @@ import { useImageViewer } from "../../hooks/useImageViewer";
 import { useI18n } from "../../i18n";
 import { readableAnchor } from "../../lib/visualAnchor";
 import { ErrorNotice } from "../composites/ErrorNotice";
+import { thumbnailUrl } from "./castAssets";
 
 export const OVERLINE = "font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted";
 
@@ -62,7 +63,7 @@ export function ReferenceViews({ projectName, charId, timestamp }: { projectName
           >
             <span className="block overflow-hidden bg-surface-container outline outline-1 -outline-offset-1 outline-ink-black/12 transition-[outline-color] group-hover:outline-ink-black/50">
               <img
-                src={poseImages[position].src}
+                src={thumbnailUrl(poseImages[position].src)}
                 alt={poseImages[position].alt}
                 className="aspect-square w-full object-cover"
                 onError={() => setFailed((current) => ({ ...current, [pose]: true }))}
@@ -128,7 +129,7 @@ export function RefVersionHistory({
             className={`group w-[4.5rem] text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red ${busy || restore.isPending ? "opacity-50" : ""}`}
           >
             <span className={`block overflow-hidden bg-surface-container ${version.current ? "outline-2 outline-ink-black shadow-[2px_2px_0_0_var(--color-ink-black)]" : "outline outline-1 -outline-offset-1 outline-ink-black/15 group-hover:outline-ink-black/60"}`}>
-              <img src={`${fileUrl(version.image_path)}${version.current ? `?t=${encodeURIComponent(String(refreshKey ?? "current"))}` : ""}`} alt="" className="aspect-square w-full object-cover" />
+              <img src={thumbnailUrl(`${fileUrl(version.image_path)}${version.current ? `?t=${encodeURIComponent(String(refreshKey ?? "current"))}` : ""}`)} alt="" className="aspect-square w-full object-cover" />
             </span>
             <span className={`mt-1 block font-meta text-[0.6875rem] ${version.current ? "font-semibold text-ink-black" : "text-ink-muted"}`}>
               v{version.version}{version.current && <> · {t("In use")}</>}

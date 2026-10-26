@@ -3,6 +3,7 @@ import { useGenerationTracking } from "./useGenerationTracking";
 import { generationStatus, isGenerationActive, isCurrentReferenceJob } from "../lib/generationTracking";
 import { useCallback, useState } from "react";
 import { useMutationState, useQueryClient } from "@tanstack/react-query";
+import { useImageToken } from "../lib/imageRefresh";
 import type { CastReferenceInput, GenerationJob } from "../types/api";
 
 export function useReferenceJob(project: string, identity: "char_id" | "loc_id" | "prop_id", entityId: string, stateId?: string) {
@@ -25,7 +26,9 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
   const submission = submissions.filter((item) => item !== null).at(-1);
   const [submitted, setSubmitted] = useState<GenerationJob | null>(null);
   const [localError, setLocalError] = useState<{ terminalId: string | null; message: string | null } | null>(null);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
+  // Shared by every view of this reference and kept across room changes, so
+  // the image URL only changes when the image may have.
+  const [timestamp, refreshImage] = useImageToken(JSON.stringify([project, identity, scopedId]));
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const scope = JSON.stringify([project, identity, entityId, stateId, styleHash]);
   const [previousScope, setPreviousScope] = useState(scope);
@@ -65,5 +68,5 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     if (job) seedGenerationJob(qc, project, job);
   }, [project, qc, setSubmitted, setLocalError]);
 
-  return { start: tracking.start, activeJob, setActiveJob, isSubmitting, instructionDraft, referenceDraft, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };
+  return { start: tracking.start, activeJob, setActiveJob, isSubmitting, instructionDraft, referenceDraft, regenError, setRegenError, timestamp: refreshToken, refreshImage, imgFailed, setImgFailed };
 }

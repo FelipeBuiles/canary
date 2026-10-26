@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..deps import get_project
+from ..file_cache import private_file_response
 
 router = APIRouter()
 
@@ -32,10 +33,7 @@ def _is_denied(relative_path: Path) -> bool:
     )
 
 
-@router.get("/files/{file_path:path}")
-def serve_project_file(file_path: str, project=Depends(get_project)):
-    """Serve one file from the authenticated user's project directory."""
-    project_dir, _config, _state = project
+def _project_file(project_dir: Path, file_path: str) -> tuple[Path, Path]:
     root = project_dir.resolve()
     full = (root / file_path).resolve()
 
@@ -45,13 +43,38 @@ def serve_project_file(file_path: str, project=Depends(get_project)):
         raise HTTPException(403, "Access denied")
     if not full.is_file():
         raise HTTPException(404, "File not found")
+    return root, full
+
+
+@router.get("/files/{file_path:path}")
+def serve_project_file(file_path: str, request: Request, project=Depends(get_project)):
+    """Serve one file from the authenticated user's project directory."""
+    project_dir, _config, _state = project
+    _root, full = _project_file(project_dir, file_path)
 
     media_type = mimetypes.guess_type(str(full))[0] or "application/octet-stream"
-    return FileResponse(
-        full,
-        media_type=media_type,
-        # The UI adds a cache-busting query token whenever an asset changes.
-        # Keep duplicate probe/visible-image requests in the browser cache,
-        # without making authenticated project files publicly cacheable.
-        headers={"Cache-Control": "private, max-age=60"},
-    )
+    # The UI changes an asset's query token whenever the asset changes, and
+    # reuses the same URL otherwise. Revalidating keeps unchanged files to a
+    # 304 across reloads, without making authenticated files publicly cacheable.
+    return private_file_response(request, full, media_type)
+
+
+@router.get("/thumbnails/{rendition}/{file_path:path}")
+def serve_project_thumbnail(
+    rendition: Literal["thumbnail", "card"], file_path: str, request: Request,
+    project=Depends(get_project),
+):
+    """Serve a small WebP of one project image; the master stays at ``/files/``."""
+    from novel_to_comic.asset_thumbnails import THUMBNAIL_SOURCE_SUFFIXES, ensure_asset_thumbnail
+
+    project_dir, _config, _state = project
+    root, full = _project_file(project_dir, file_path)
+    if full.suffix.lower() not in THUMBNAIL_SOURCE_SUFFIXES:
+        raise HTTPException(404, "File not found")
+    try:
+        thumbnail = ensure_asset_thumbnail(root, full, rendition)
+    except FileNotFoundError:
+        raise HTTPException(404, "File not found") from None
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, "Thumbnail could not be created") from exc
+    return private_file_response(request, thumbnail, "image/webp")
