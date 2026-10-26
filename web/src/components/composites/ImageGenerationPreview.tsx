@@ -41,7 +41,7 @@ function cardImageReady(container: HTMLElement, src: string, waitedMs: number): 
 }
 
 /** Hold the last decoded frame while the next preview or saved image loads. */
-export function ImageGenerationPreview({ project, target, active, finalSrc, keepChildren = false, aspect, label, caption, className, children, "aria-label": ariaLabel }: {
+export function ImageGenerationPreview({ project, target, active, finalSrc, keepChildren = false, aspect, label, caption, surface = "paper", className, children, "aria-label": ariaLabel }: {
   project: string;
   target: string;
   active: boolean;
@@ -52,6 +52,8 @@ export function ImageGenerationPreview({ project, target, active, finalSrc, keep
   aspect: string;
   label?: string;
   caption?: string;
+  /** What shows around artwork narrower than the frame: paper on paper rooms, ink on the dark stage. */
+  surface?: "paper" | "ink";
   className?: string;
   children?: ReactNode;
   "aria-label"?: string;
@@ -120,7 +122,7 @@ export function ImageGenerationPreview({ project, target, active, finalSrc, keep
     if (stored?.settled) releasePreview(target, stored.request_id);
   };
 
-  return <div ref={container} className={cn("relative w-full overflow-hidden bg-surface-container", className)} style={{ aspectRatio: aspect }} aria-busy={active}>
+  return <div ref={container} className={cn("relative w-full overflow-hidden", surface === "ink" ? "bg-ink-black" : "bg-surface-container", className)} style={{ aspectRatio: aspect }} aria-busy={active}>
     {active && !keepChildren
       ? placeholderVisible && <FlowingDotsPlaceholder aspect={aspect} className="h-full" label={label} caption={caption} aria-label={ariaLabel} />
       : children}

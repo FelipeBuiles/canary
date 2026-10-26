@@ -3824,6 +3824,8 @@
   "{count, plural, one {# reference didn't finish. Resume to draw it.} other {# references didn't finish. Resume to draw them.}}": "{count, plural, one {# référence n'a pas abouti. Reprenez pour la dessiner.} other {# références n'ont pas abouti. Reprenez pour les dessiner.}}",
   "Drawing style options": "Dessin des options de style",
   "Drawing more styles": "Dessin d'autres styles",
+  "Scroll left": "Défiler vers la gauche",
+  "Scroll right": "Défiler vers la droite",
   "Acting": "Jeu",
   "Action": "Action",
   "Appearance change": "Changement d’apparence",

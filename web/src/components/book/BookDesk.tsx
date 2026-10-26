@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { type DeskView, type ReaderPage } from "../../lib/bookReader";
 import { pageDisplayImage } from "../../lib/pageState";
 import { cn } from "../../lib/cn";
+import { ScrollStripControls } from "../ui/ScrollStrip";
+import { useScrollStrip } from "../ui/useScrollStrip";
 
 /**
  * The finished book open on the table: one spread at a time, as large as the
@@ -23,7 +25,7 @@ export function BookDesk({ project, views, index, onIndex, coverSrc, flagged, on
   const { t } = useI18n();
   const view = views[Math.min(index, views.length - 1)];
   const last = views.length - 1;
-  const stripRef = useRef<HTMLOListElement | null>(null);
+  const { attach: stripRef, element: stripElement, ...strip } = useScrollStrip<HTMLOListElement>();
 
   useEffect(() => {
     function turn(event: KeyboardEvent) {
@@ -39,8 +41,8 @@ export function BookDesk({ project, views, index, onIndex, coverSrc, flagged, on
   }, [index, last, onIndex]);
 
   useEffect(() => {
-    stripRef.current?.querySelector<HTMLElement>("[aria-current='true']")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [index]);
+    stripElement?.querySelector<HTMLElement>("[aria-current='true']")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [index, stripElement]);
 
   const label = (item: DeskView) => item.cover ? t("Cover")
     : item.pages.length === 1 ? `${t("Page")} ${item.pages[0].pageNumber}`
@@ -62,14 +64,15 @@ export function BookDesk({ project, views, index, onIndex, coverSrc, flagged, on
         </div>
       </div>
 
-      <div className="relative flex min-h-[24rem] flex-1 items-center justify-center px-14 py-5 [container-type:size] sm:px-16 studio-desktop:min-h-0">
+      <div className="relative flex min-h-[16rem] flex-1 items-center justify-center px-14 py-5 [--stage-h:60svh] [container-type:inline-size] sm:px-16 studio-desktop:min-h-0 studio-desktop:[--stage-h:100cqh] studio-desktop:[container-type:size]">
         {view && <Spread project={project} view={view} coverSrc={coverSrc} onRead={onRead} />}
         <TurnButton side="left" disabled={index <= 0} label={t("Previous spread")} onClick={() => onIndex(index - 1)} />
         <TurnButton side="right" disabled={index >= last} label={t("Next spread")} onClick={() => onIndex(index + 1)} />
       </div>
 
-      <nav aria-label={t("Spreads")} className="border-t border-pulp-paper/10 bg-ink-black/40">
-        <ol ref={stripRef} className="flex gap-2 overflow-x-auto px-5 py-3 sm:px-6">
+      <nav aria-label={t("Spreads")} className="relative border-t border-pulp-paper/10 bg-ink-black/40">
+        <ScrollStripControls strip={strip} />
+        <ol ref={stripRef} className="flex gap-2 overflow-x-auto px-5 py-3 [scrollbar-width:none] sm:px-6">
           {views.map((item, position) => {
             const current = position === index;
             const needsYou = !item.cover && item.pages.some((page) => flagged.has(page.pageNumber));
@@ -101,8 +104,8 @@ export function BookDesk({ project, views, index, onIndex, coverSrc, flagged, on
 function Spread({ project, view, coverSrc, onRead }: { project: string; view: DeskView; coverSrc: string; onRead: () => void }) {
   const { t } = useI18n();
   const shadow = "shadow-[0_30px_60px_-20px_rgb(0_0_0/0.8),0_0_0_1px_rgb(252_250_237/0.1)]";
-  // Two 2:3 pages side by side: the open book is 4:3.
-  const frame = { width: "min(100cqw, calc(100cqh * 4 / 3))", aspectRatio: "4 / 3" };
+  // Two 2:3 pages side by side: the open book is 4:3. The desk sets --stage-h.
+  const frame = { width: "min(100cqw, calc(var(--stage-h) * 4 / 3))", aspectRatio: "4 / 3" };
   const pages = useMemo(() => (view.cover ? [] : view.pages), [view]);
 
   if (view.cover) {

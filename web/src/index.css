@@ -286,6 +286,17 @@
     background-size: 7px 7px;
   }
 
+  /* Scrollbars follow the surface they scroll. scrollbar-color inherits, so
+     ink stages pass it to every scroller inside them; paper panels nested
+     in an ink shell take it back with .scroll-paper. */
+  .benday-ink,
+  .scroll-ink {
+    scrollbar-color: color-mix(in srgb, var(--color-pulp-paper) 28%, transparent) transparent;
+  }
+  .scroll-paper {
+    scrollbar-color: var(--color-ink-soft) var(--color-pulp-paper);
+  }
+
   .pressroom-sidebar {
     position: relative;
     isolation: isolate;

@@ -28,7 +28,8 @@ export function RoomHeader({
   return (
     <>
       <TopBarPortal inlineOnMobile>
-        <div className={cn("@container/masthead relative flex min-w-0 flex-1 items-center gap-4 studio-desktop:px-5", className)}>
+        {/* Inline on phones; an edge-to-edge room has no sheet margins to inset it. */}
+        <div className={cn("@container/masthead relative flex min-w-0 flex-1 items-center gap-4 in-data-bleed:px-4 in-data-bleed:py-4 sm:in-data-bleed:px-6 studio-desktop:px-5", className)}>
           <h1 className="min-w-0 max-w-full truncate font-display text-[1.75rem] font-black uppercase leading-[0.95] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] sm:text-[2rem] studio-desktop:text-[1.625rem]" title={t(title)}>
             {t(title)}
           </h1>
@@ -49,7 +50,7 @@ export function RoomHeader({
 
       {/* Compact room titles and tools scroll with their content. */}
       {actions && (
-        <div className="mt-4 flex flex-wrap items-center gap-2 studio-desktop:hidden">
+        <div className="mt-4 flex flex-wrap items-center gap-2 in-data-bleed:px-4 sm:in-data-bleed:px-6 studio-desktop:hidden">
           {actions}
         </div>
       )}

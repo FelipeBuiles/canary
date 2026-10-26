@@ -11,7 +11,7 @@ import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
 import { gallerySpreads } from "../../lib/pageSpreads";
 import { accountIdentity } from "../../lib/accountEpoch";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useAnalyzeCompletePage,
@@ -67,6 +67,8 @@ import { PartNotices } from "../../components/parts/PartNotices";
 import { describeRedrawChanges } from "../../components/pages/redrawChanges";
 import { isStorageLimitError } from "../../lib/storageLimit";
 import { StorageLimitNotice } from "../../components/composites/StorageLimitNotice";
+import { ScrollStripControls } from "../../components/ui/ScrollStrip";
+import { useScrollStrip } from "../../components/ui/useScrollStrip";
 
 const LetteringEditor = lazy(() => import("../../components/lettering/LetteringEditor").then(module => ({ default: module.LetteringEditor })));
 
@@ -213,7 +215,7 @@ function PageReview({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex h-full w-full flex-col bg-ink-black text-pulp-paper focus-visible:outline-none"
+        className="scroll-ink flex h-full w-full flex-col bg-ink-black text-pulp-paper focus-visible:outline-none"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-pulp-paper/10 px-3 py-2 sm:px-5">
@@ -360,6 +362,17 @@ function PageReview({
 }
 
 /** The room's quiet reference documents, kept behind one button. */
+/** Pages ready to inspect while the press runs, in one row. */
+function DrawingQueueStrip({ children }: { children: ReactNode }) {
+  const { attach: stripRef, ...strip } = useScrollStrip<HTMLDivElement>();
+  return (
+    <div className="relative mt-3">
+      <ScrollStripControls strip={strip} tone="paper" />
+      <div ref={stripRef} className="flex gap-3 overflow-x-auto [scrollbar-width:none]">{children}</div>
+    </div>
+  );
+}
+
 function PageToolsMenu({ items, onOpen }: {
   items: Array<{ kind: "adaptation" | "page-plan"; label: string; disabled: boolean }>;
   onOpen: (kind: "adaptation" | "page-plan") => void;
@@ -1070,14 +1083,14 @@ export function PagesRoom() {
             </div>
             <p className="mt-1 text-sm text-ink-muted">{t("Completed pages are ready to inspect while the press continues.")}</p>
             <div className="mt-3">{queueControl}</div>
-            <div className="mt-3 flex gap-3 overflow-x-auto">
+            <DrawingQueueStrip>
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
                   <img src={pageDisplayImage(id, { pageNumber: item.page.page_number, revision: item.active_render!.render.revision, hybrid: item.lettering_mode === "hybrid", letteringRevision: item.lettering_revision }, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
                   {t("Page")} {item.page.page_number}
                 </button>
               ))}
-            </div>
+            </DrawingQueueStrip>
           </Surface>
         )}
         {visiblePages.length === 0 && <p role="status" className="benday-paper px-5 py-10 text-center text-sm text-ink-muted">{t("No pages in this filter.")}</p>}

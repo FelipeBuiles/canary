@@ -3824,6 +3824,8 @@
   "{count, plural, one {# reference didn't finish. Resume to draw it.} other {# references didn't finish. Resume to draw them.}}": "{count, plural, one {# reference didn't finish. Resume to draw it.} other {# references didn't finish. Resume to draw them.}}",
   "Drawing style options": "Drawing style options",
   "Drawing more styles": "Drawing more styles",
+  "Scroll left": "Scroll left",
+  "Scroll right": "Scroll right",
   "Acting": "Acting",
   "Action": "Action",
   "Appearance change": "Appearance change",

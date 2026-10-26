@@ -3,6 +3,8 @@ import { proofImageUrl, styleName, type StyleSuggestion } from "../../api/styles
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { proofRole } from "./proofRole";
+import { ScrollStripControls } from "../ui/ScrollStrip";
+import { useScrollStrip } from "../ui/useScrollStrip";
 
 function ProofThumbArt({ projectName, suggestion, busy }: { projectName: string; suggestion: StyleSuggestion; busy: boolean }) {
   if (suggestion.has_sample) {
@@ -36,9 +38,12 @@ export function ProofFilmstrip({
   newDisabled: boolean;
 }) {
   const { t } = useI18n();
+  const { attach: stripRef, ...strip } = useScrollStrip<HTMLUListElement>();
   return (
-    <div className="shrink-0 border-t border-pulp-paper/8 bg-[#141510]/60">
-      <ul aria-label={t("All proofs")} className="flex items-center justify-start gap-3.5 overflow-x-auto px-5 pb-4 pt-3.5 [scrollbar-width:thin] sm:justify-center">
+    <div className="relative shrink-0 border-t border-pulp-paper/8 bg-[#141510]/60">
+      <ScrollStripControls strip={strip} />
+      {/* Centred with auto margins, not justify-center, so an overflowing strip still starts at its first proof. */}
+      <ul ref={stripRef} aria-label={t("All proofs")} className="flex items-center gap-3.5 overflow-x-auto px-5 pb-4 pt-3.5 [scrollbar-width:none] sm:[&>li:first-child]:ml-auto sm:[&>li:last-child]:mr-auto">
         {suggestions.map((suggestion) => {
           const name = styleName(suggestion);
           const current = suggestion.id === currentId;
