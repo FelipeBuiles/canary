@@ -28,6 +28,8 @@ export function Shell() {
             <div className={[
               "app-workbench-sheet flex min-h-full w-full flex-col bg-pulp-paper px-4 pb-4 pt-5 sm:px-6 sm:pb-6 sm:pt-6 studio-desktop:px-5 studio-desktop:py-5 xl:px-6 xl:py-6",
               !isLibrary ? "mx-auto max-w-[1560px]" : "",
+              // A room that draws edge to edge drops the sheet's margins.
+              "has-[[data-bleed]]:h-full has-[[data-bleed]]:max-w-none has-[[data-bleed]]:p-0!",
             ].join(" ")}>
               <Outlet />
             </div>

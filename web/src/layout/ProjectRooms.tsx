@@ -63,7 +63,7 @@ export function ProjectRooms() {
   }
 
   return (
-    <div className="min-h-full">
+    <div className="min-h-full has-[[data-bleed]]:flex has-[[data-bleed]]:h-full has-[[data-bleed]]:flex-col">
       <Outlet />
     </div>
   );

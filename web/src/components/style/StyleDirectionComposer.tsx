@@ -1,9 +1,8 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Icon } from "../ui/Icon";
 import { CreditAmount } from "../ui/CreditAmount";
-import { Surface } from "../ui/Surface";
 import { useI18n } from "../../i18n";
 
 export type StyleDirectionMode = "single" | "neighbors";
@@ -27,6 +26,7 @@ interface StyleDirectionComposerProps {
 
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const AUTOMATIC_SLOTS = [["Best", true], ["Fit", false], ["Fit", false], ["Near", false], ["Contrast", false], ["Wild", false]] as const;
 
 export function StyleDirectionComposer({
   automaticCost,
@@ -45,7 +45,7 @@ export function StyleDirectionComposer({
 }: StyleDirectionComposerProps) {
   const { t } = useI18n();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [lane, setLane] = useState<"automatic" | "custom">("automatic");
+  const idPrefix = useId();
   const [direction, setDirection] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [mode, setMode] = useState<StyleDirectionMode>("single");
@@ -77,185 +77,114 @@ export function StyleDirectionComposer({
       : usesReferencePricing ? customNeighborsReferenceCost : customNeighborsCost
   );
 
+  const automaticBlocked = busy || disabled || automaticDisabled;
   return (
-    <Surface padding="lg" className="relative overflow-hidden">
-      <div>
-        <div className="font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black/65">
-          {t("YOUR ART DIRECTOR")}
-        </div>
-        <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
-          {t("How should we find the look?")}
-        </h2>
-        <p className="mt-3 font-body text-[0.95rem] leading-6 text-ink-black/70">
-          {t("Let Scenewright explore the story, or bring a direction you already have. Nothing is generated until you choose.")}
-        </p>
-      </div>
-
-      <div className="mt-7 grid gap-3 md:grid-cols-2" role="radiogroup" aria-label={t("Style starting point")}>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={lane === "automatic"}
-          onClick={() => setLane("automatic")}
-          className={`min-h-28 border-[2px] p-4 text-left transition-colors focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red ${
-            lane === "automatic"
-              ? "border-ink-black bg-narrator-gold shadow-ink-sm"
-              : "border-ink-black/15 bg-bristol hover:border-ink-black/40"
-          }`}
-        >
-          <span className="font-display text-[1.15rem] font-black uppercase tracking-[-0.025em] text-ink-black">
-            {t("Art-direct for me")}
-          </span>
-          <span className="mt-2 block text-[0.83rem] leading-5 text-ink-black/70">
-            {t("Six story-aware directions: three strong fits, an adjacent option, a contrast, and one wildcard.")}
-          </span>
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={lane === "custom"}
-          onClick={() => setLane("custom")}
-          className={`min-h-28 border-[2px] p-4 text-left transition-colors focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red ${
-            lane === "custom"
-              ? "border-ink-black bg-narrator-gold shadow-ink-sm"
-              : "border-ink-black/15 bg-bristol hover:border-ink-black/40"
-          }`}
-        >
-          <span className="font-display text-[1.15rem] font-black uppercase tracking-[-0.025em] text-ink-black">
-            {t("Bring a direction")}
-          </span>
-          <span className="mt-2 block text-[0.83rem] leading-5 text-ink-black/70">
-            {t("Describe the look, upload a visual reference, or use both. Generate one faithful proof or explore nearby options.")}
-          </span>
-        </button>
-      </div>
-
-      {lane === "automatic" ? (
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <Button size="lg" onClick={onAutomatic} disabled={busy || disabled || automaticDisabled}>
-            {busy ? t("PREPARING DIRECTIONS…") : t("CREATE SIX DIRECTIONS")}
+    <div className="grid gap-6 lg:grid-cols-2 lg:gap-7">
+      <section aria-labelledby={`${idPrefix}-auto`} className="flex flex-col border-[2px] border-pulp-paper bg-[#24251d] p-6 text-pulp-paper shadow-[6px_6px_0_var(--color-narrator-gold)]">
+        <h3 id={`${idPrefix}-auto`} className="font-display text-2xl font-black uppercase leading-none tracking-[-0.02em]">{t("Art-direct for me")}</h3>
+        <p className="mt-2 font-body text-sm leading-[1.3rem] text-pulp-paper/80">{t("Six directions read from your story, from safe to surprising.")}</p>
+        <ol aria-label={t("Six directions")} className="mt-5 grid grid-cols-6 gap-2">
+          {AUTOMATIC_SLOTS.map(([label, gold], slot) => (
+            <li key={slot} className="benday-ink relative aspect-[4/5] border border-pulp-paper/18">
+              <span className={`absolute left-1.5 top-1.5 border border-ink-black px-1 font-meta text-[0.5625rem] font-bold uppercase tracking-[0.08em] text-ink-black ${gold ? "bg-narrator-gold" : "bg-pulp-paper"}`}>{t(label)}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-2.5 font-meta text-xs text-on-chrome-muted">{t("Three strong fits · an adjacent look · a contrast · a wildcard")}</p>
+        <div className="mt-auto flex flex-wrap items-center gap-3 pt-6">
+          <Button variant="onInk" size="lg" onClick={onAutomatic} disabled={automaticBlocked}>
+            {busy ? t("Preparing directions…") : t("Create six directions")}
           </Button>
           {automaticCost != null && automaticCost > 0 && (
-            <CreditAmount
-              value={automaticCost}
-              approximate
-              label={t("credits")}
-              className="text-[0.78rem] font-semibold text-ink-black/65"
-            />
+            <CreditAmount value={automaticCost} approximate label={t("credits")} className="font-meta text-xs font-semibold text-pulp-paper/75" />
           )}
         </div>
-      ) : (
-        <div className="mt-6 space-y-5">
-          <div>
-            <FieldLabel htmlFor="style-direction">{t("DESCRIBE THE DIRECTION")}</FieldLabel>
-            <TextAreaField
-              id="style-direction"
-              value={direction}
-              onChange={(event) => setDirection(event.target.value)}
-              placeholder={t("For example: saturated tropical colors, strong black silhouettes, clean expressive faces, and readable action at small panel sizes.")}
-              maxLength={2000}
-              className="min-h-28"
-            />
-          </div>
+      </section>
 
-          <div>
-            <FieldLabel>{t("VISUAL REFERENCE (OPTIONAL)")}</FieldLabel>
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                chooseImage(event.dataTransfer.files[0] ?? null);
-              }}
-              className="flex min-h-24 w-full items-center gap-4 border-[2px] border-dashed border-ink-black/35 bg-pulp-paper px-4 py-4 text-left transition-colors hover:border-ink-black focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red"
-            >
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center border-[2px] border-ink-black bg-bristol">
-                <Icon name={image ? "check" : "plus"} size={18} />
-              </span>
-              <span>
-                <span className="block text-[0.86rem] font-bold text-ink-black">
-                  {image ? image.name : t("Drop an image or choose a file")}
-                </span>
-                <span className="mt-1 block text-[0.74rem] text-ink-black/60">
-                  {image ? `${(image.size / 1024 / 1024).toFixed(1)} MB` : t("PNG, JPG, or WebP · up to 10 MB")}
-                </span>
-              </span>
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              className="hidden"
-              onChange={(event) => chooseImage(event.target.files?.[0] ?? null)}
-            />
-            {fileError && <p className="mt-2 text-[0.8rem] font-semibold text-hero-red">{fileError}</p>}
-            {imageNeedsText && (
-              <p className="mt-2 text-[0.8rem] font-semibold text-hero-red">
-                {t("This project's image model cannot read style references. Add a text description to continue.")}
-              </p>
-            )}
-          </div>
-
-          <fieldset>
-            <legend className="font-meta text-[0.68rem] font-bold tracking-[0.1em] text-ink-black/65">
-              {t("WHAT SHOULD WE GENERATE?")}
-            </legend>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <label className="flex min-h-11 flex-1 cursor-pointer items-center gap-3 border-[2px] border-ink-black/15 bg-bristol px-3 py-2 has-[:checked]:border-ink-black has-[:checked]:bg-narrator-gold/45">
-                <input
-                  type="radio"
-                  name="style-direction-mode"
-                  value="single"
-                  checked={mode === "single"}
-                  onChange={() => setMode("single")}
-                />
-                <span className="text-[0.82rem] font-semibold">{t("One faithful proof")}</span>
+      <section aria-labelledby={`${idPrefix}-own`} className="flex flex-col border-[2px] border-ink-black bg-bristol p-6 text-ink-black">
+        <h3 id={`${idPrefix}-own`} className="font-display text-2xl font-black uppercase leading-none tracking-[-0.02em]">{t("Bring your own")}</h3>
+        <p className="mt-2 font-body text-sm leading-[1.3rem] text-ink-muted">{t("Describe a look, add a reference image, or both.")}</p>
+        <div className="mt-4">
+          <FieldLabel htmlFor={`${idPrefix}-direction`}>{t("Describe it")}</FieldLabel>
+          <TextAreaField
+            id={`${idPrefix}-direction`}
+            value={direction}
+            onChange={(event) => setDirection(event.target.value)}
+            placeholder={t("Saturated tropical colour, strong black silhouettes, clean expressive faces")}
+            maxLength={2000}
+            className="min-h-20"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            chooseImage(event.dataTransfer.files[0] ?? null);
+          }}
+          className="mt-2.5 flex w-full items-center gap-3 border border-dashed border-ink-black/40 bg-pulp-paper p-3 text-left transition-colors hover:border-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+        >
+          <span className="flex size-9 shrink-0 items-center justify-center border border-ink-black bg-bristol">
+            <Icon name={image ? "check" : "plus"} size={16} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate font-meta text-[0.8125rem] font-semibold">{image ? image.name : t("Add a reference image")}</span>
+            <span className="block font-body text-xs text-ink-soft">
+              {image ? `${(image.size / 1024 / 1024).toFixed(1)} MB` : t("PNG, JPG or WebP · up to 10 MB")}
+            </span>
+          </span>
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(event) => chooseImage(event.target.files?.[0] ?? null)}
+        />
+        {fileError && <p className="mt-2 font-body text-[0.8rem] font-semibold text-hero-red">{fileError}</p>}
+        {imageNeedsText && (
+          <p className="mt-2 font-body text-[0.8rem] font-semibold text-hero-red">
+            {t("This project's image model cannot read style references. Add a text description to continue.")}
+          </p>
+        )}
+        {neighborsNeedText && image !== null && (
+          <p className="mt-2 font-body text-[0.8rem] font-semibold text-hero-red">
+            {t("Add a short text description so the art director can create meaningful neighboring directions around your reference.")}
+          </p>
+        )}
+        <div className="mt-auto flex flex-wrap items-center gap-2.5 pt-5">
+          <div role="radiogroup" aria-label={t("How many proofs")} className="inline-flex border border-ink-black/40">
+            {([["single", t("One proof")], ["neighbors", t("Plus five variations")]] as const).map(([value, label]) => (
+              <label key={value} className="flex h-9 cursor-pointer items-center px-3 font-meta text-[0.8125rem] font-medium text-ink-muted transition-colors hover:bg-sidebar-tint hover:text-ink-black has-[:checked]:bg-ink-black has-[:checked]:text-pulp-paper has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-hero-red">
+                <input type="radio" name={`${idPrefix}-mode`} value={value} checked={mode === value} onChange={() => setMode(value)} className="sr-only" />
+                {label}
               </label>
-              <label className="flex min-h-11 flex-1 cursor-pointer items-center gap-3 border-[2px] border-ink-black/15 bg-bristol px-3 py-2 has-[:checked]:border-ink-black has-[:checked]:bg-narrator-gold/45">
-                <input
-                  type="radio"
-                  name="style-direction-mode"
-                  value="neighbors"
-                  checked={mode === "neighbors"}
-                  onChange={() => setMode("neighbors")}
-                />
-                <span className="text-[0.82rem] font-semibold">{t("This direction + five neighbors")}</span>
-              </label>
-            </div>
-            {neighborsNeedText && image !== null && (
-              <p className="mt-2 text-[0.8rem] font-semibold text-hero-red">
-                {t("Add a short text description so the art director can create meaningful neighboring directions around your reference.")}
-              </p>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2.5">
+            {customCredits != null && customCredits > 0 && (
+              <CreditAmount value={customCredits} approximate label={t("credits")} className="font-meta text-xs font-semibold text-ink-soft" />
             )}
-          </fieldset>
-
-          <div className="flex flex-wrap items-center gap-3">
             <Button
-              size="lg"
+              variant="secondary"
+              size="md"
               disabled={!canSubmitCustom || busy || disabled || !!fileError}
               onClick={() => onCustom({ direction: direction.trim(), image, mode })}
             >
-              {busy ? t("PREPARING PROOF…") : mode === "single" ? t("CREATE MY PROOF") : t("CREATE SIX DIRECTIONS")}
+              {busy ? t("Preparing proof…") : mode === "single" ? t("Create my proof") : t("Create six proofs")}
             </Button>
-            {customCredits != null && customCredits > 0 && (
-              <CreditAmount
-                value={customCredits}
-                approximate
-                label={t("credits")}
-                className="text-[0.78rem] font-semibold text-ink-black/65"
-              />
-            )}
           </div>
         </div>
-      )}
+      </section>
 
-      {onRetry && <Button size="sm" onClick={onRetry} disabled={busy}>{t("TRY AGAIN")}</Button>}
-
-      {error && (
-        <ErrorNotice error={error} operation="generate" />
+      {(onRetry || error) && (
+        <div className="lg:col-span-2">
+          {error && <ErrorNotice error={error} operation="generate" />}
+          {onRetry && <Button variant="outline" size="sm" className="mt-2" onClick={onRetry} disabled={busy}>{t("Try again")}</Button>}
+        </div>
       )}
-    </Surface>
+    </div>
   );
 }
 import { ErrorNotice } from "../composites/ErrorNotice";
