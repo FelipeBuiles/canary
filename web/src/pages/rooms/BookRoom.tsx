@@ -198,7 +198,7 @@ export function BookRoom() {
         />
       )}
 
-      <div className="mt-4 flex min-h-[34rem] flex-1 flex-col border-t border-ink-black/12 studio-desktop:min-h-0 studio-desktop:flex-row">
+      <div className="flex min-h-[34rem] flex-1 flex-col studio-desktop:min-h-0 studio-desktop:flex-row">
         {bookPages.length > 0 ? (
           <BookDesk project={id} views={views} index={Math.min(deskIndex, Math.max(views.length - 1, 0))} onIndex={setDeskIndex}
             coverSrc={coverSrc} flagged={flaggedPages} onRead={() => setReaderOpen(true)} />
