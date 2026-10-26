@@ -1,7 +1,7 @@
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { castCharacters } from "../../lib/castRoster";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -24,6 +24,8 @@ import { BookStrip, BookStripPanel } from "../../components/parts/BookStrip";
 import { partStartDescription } from "../../lib/partProgress";
 import { splitProjectKey } from "../../api/projectScope";
 import { Check } from "lucide-react";
+import { CharacterTurns, ExactWords, MustHappen } from "../../components/story/BriefMustKeep";
+import { dominantScript, groupEventsBySequence, strayWords } from "../../components/story/briefGrouping";
 import { narrativeScenes } from "../../components/story/storyPhrases";
 import { useI18n } from "../../i18n";
 import type { AdaptationBrief, PartSummary, StoryBible, StoryDecision } from "../../types/api";
@@ -136,23 +138,6 @@ interface StoredBriefDraft {
   changes: Partial<AdaptationBrief>;
 }
 
-/** Phrases the Brief offered as protected language that the book does not contain. */
-function UnmatchedProtectedLanguage({ phrases }: { phrases: string[] }) {
-  const { t } = useI18n();
-  if (phrases.length === 0) return null;
-  return (
-    <section aria-label={t("Not found in the book")} className="border-l-4 border-hero-red/60 bg-surface-container px-4 py-3">
-      <h4 className="font-body text-sm font-semibold leading-6">{t("Not found in the book")}</h4>
-      <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
-        {t("These lines are not protected because the book does not contain them word for word. To keep one exactly, add the book’s wording to Protected language.")}
-      </p>
-      <ul className="mt-3 space-y-2">
-        {phrases.map((phrase, index) => <li key={index} className="whitespace-pre-wrap break-words font-body text-sm leading-6">{phrase}</li>)}
-      </ul>
-    </section>
-  );
-}
-
 const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   story_promises: "STORY PROMISES", themes: "THEMES", point_of_view: "POINT OF VIEW",
   narrator_treatment: "NARRATOR TREATMENT", tone: "TONE", ambiguities: "AMBIGUITIES TO PRESERVE",
@@ -160,6 +145,17 @@ const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   character_turns: "CHARACTER TURNS", desired_emphasis: "DESIRED EMPHASIS",
   target_page_min: "Page target: from", target_page_max: "Page target: to",
 };
+
+type DirectionKey = "tone" | "story_promises" | "themes" | "desired_emphasis" | "point_of_view" | "narrator_treatment" | "ambiguities" | "motifs";
+
+/** Guidance Adapt reads but never checks, in reading order. */
+const DIRECTION: [DirectionKey, string][] = [
+  ["tone", "Tone"], ["story_promises", "Story promises"], ["themes", "Themes"], ["desired_emphasis", "Emphasis"],
+  ["point_of_view", "Point of view"], ["narrator_treatment", "Narrator"], ["ambiguities", "Keep ambiguous"], ["motifs", "Motifs"],
+];
+
+/** [section id, label, count, items needing a look]. */
+type OutlineItem = [string, string, number?, number?];
 
 function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed }: {
   id: string;
@@ -216,6 +212,8 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
   const [restored, setRestored] = useState(() => Object.keys(changes).length > 0);
   const [saveError, setSaveError] = useState<Error | string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [directionOpen, setDirectionOpen] = useState<DirectionKey | null>("tone");
+  const [skippedCount, setSkippedCount] = useState(0);
   const operation = useRef(false);
   const draft = { ...savedBrief, ...changes };
   const dirty = Object.entries(changes).some(([key, value]) => JSON.stringify(value) !== JSON.stringify(savedBrief[key as keyof AdaptationBrief]));
@@ -321,21 +319,17 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
     t("{count, plural, one {# place} other {# places}}", { count: bible.locations.length }),
     bible.props.length > 0 ? t("{count, plural, one {# prop} other {# props}}", { count: bible.props.length }) : undefined,
   ].filter(Boolean).join(" · ");
-  const outline: [string, string, number?][] = [
-    ["tone", t("Tone")],
-    ["story-promises", t("Story promises"), count(draft.story_promises)],
-    ["essential-events", t("Essential events"), count(draft.essential_events)],
-    ["character-turns", t("Character turns"), count(draft.character_turns)],
-    ["themes", t("Themes"), count(draft.themes)],
-    ["desired-emphasis", t("Desired emphasis"), count(draft.desired_emphasis)],
+  const unmatched = savedBrief.unmatched_protected_language ?? [];
+  const script = dominantScript([...draft.essential_events, ...draft.character_turns, ...draft.story_promises, draft.tone]);
+  const strayEvents = draft.essential_events.filter((event) => strayWords(event, script).length > 0).length
+    + draft.character_turns.filter((turn) => strayWords(turn, script).length > 0).length;
+  const mustKeep: OutlineItem[] = [
+    ["essential-events", t("What must happen"), count(draft.essential_events), strayEvents],
+    ["character-turns", t("How characters change"), count(draft.character_turns)],
+    ["protected-language", t("Exact words"), count(draft.protected_language), unmatched.length],
   ];
-  const editorial: [string, string, number?][] = [
-    ["point-of-view", t("Point of view")],
-    ["narrator-treatment", t("Narrator")],
-    ["ambiguities", t("Keep ambiguous"), count(draft.ambiguities)],
-    ["motifs", t("Motifs"), count(draft.motifs)],
-    ["protected-language", t("Protected language"), count(draft.protected_language)],
-  ];
+  const direction = DIRECTION.map(([key, label]): OutlineItem => [key.replaceAll("_", "-"), t(label), count(draft[key])]);
+  const keptEvents = groupEventsBySequence(draft.essential_events.filter((event) => event.trim()), bible);
   const saveState = busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved");
 
   return (
@@ -370,8 +364,8 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
       ) : (
         <div className="flex min-h-0 flex-1">
           <nav aria-label={t("Brief sections")} className="hidden w-52 shrink-0 overflow-y-auto border-r border-ink-black/10 py-5 pl-2 studio-desktop:block">
-            <OutlineGroup label={t("Brief")} items={outline} />
-            <OutlineGroup label={t("Editorial")} items={editorial} />
+            <OutlineGroup label={t("Must keep")} items={mustKeep} />
+            <OutlineGroup label={t("Direction")} items={direction} onPick={(key) => setDirectionOpen(key.replaceAll("-", "_") as DirectionKey)} />
           </nav>
 
           <div className="benday-paper min-w-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6 sm:py-7">
@@ -432,20 +426,41 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
                   </div>
                   <fieldset disabled={busy} className="space-y-8">
                     <legend className="sr-only">{t("ADAPTATION BRIEF")}</legend>
-                    <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} quote />
-                    <BriefSection id="story-promises" title={t("STORY PROMISES")} value={draft.story_promises} onChange={(value) => change("story_promises", splitLines(value))} featured />
-                    <BriefSection id="essential-events" title={t("ESSENTIAL EVENTS")} value={draft.essential_events} onChange={(value) => change("essential_events", splitLines(value))} numbered />
-                    <BriefSection id="character-turns" title={t("CHARACTER TURNS")} value={draft.character_turns} onChange={(value) => change("character_turns", splitLines(value))} />
-                    <BriefSection id="themes" title={t("THEMES")} value={draft.themes} onChange={(value) => change("themes", splitLines(value))} />
-                    <BriefSection id="desired-emphasis" title={t("DESIRED EMPHASIS")} value={draft.desired_emphasis} onChange={(value) => change("desired_emphasis", splitLines(value))} />
-                    <p className="pt-4 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Editorial")}</p>
-                    {(["point_of_view", "narrator_treatment", "ambiguities", "motifs", "protected_language"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, Array.isArray(draft[key]) ? splitLines(value) : value)} />)}
-                    <UnmatchedProtectedLanguage phrases={savedBrief.unmatched_protected_language ?? []} />
+                    <MustHappen events={draft.essential_events} onChange={(value) => change("essential_events", value)} story={bible} script={script} onSkippedChange={setSkippedCount} />
+                    <CharacterTurns turns={draft.character_turns} onChange={(value) => change("character_turns", value)} characters={cast} script={script} />
+                    <ExactWords lines={draft.protected_language} unmatched={unmatched} onChange={(value) => change("protected_language", value)} />
+                    <section id="brief-direction" aria-labelledby="direction-title" className="scroll-mt-6 border-t border-ink-black/12 pt-8">
+                      <div className="flex items-baseline gap-2.5">
+                        <h3 id="direction-title" className="font-display text-[1.5rem] font-black uppercase leading-none tracking-[-0.025em]">{t("Direction")}</h3>
+                        <span className="font-meta text-[0.8125rem] text-ink-muted">{t("Guidance, not rules")}</span>
+                      </div>
+                      <p className="mb-4 mt-2 font-body text-sm leading-[1.5] text-ink-soft">{t("Shapes the tone and staging. Nothing checks the comic against it.")}</p>
+                      <div className="border border-ink-black/14 bg-pulp-paper">
+                        {DIRECTION.map(([key, label]) => <BriefSection key={key} collapsible id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} heading={t(label)}
+                          open={directionOpen === key} onOpenChange={(open) => setDirectionOpen(open ? key : null)}
+                          value={draft[key]} onChange={(value) => change(key, Array.isArray(draft[key]) ? splitLines(value) : value)} />)}
+                      </div>
+                    </section>
                   </fieldset>
                 </form>
               </article>
 
               <aside aria-label={t("Shape of the book")} className="flex shrink-0 flex-col gap-4 xl:sticky xl:top-0 xl:w-72">
+                <section aria-labelledby="before-approve" className="border border-ink-black/14 bg-bristol px-4 pb-2 pt-3.5">
+                  <h3 id="before-approve" className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Before you approve")}</h3>
+                  <ul className="mt-2">
+                    {strayEvents > 0 && <ApproveCheck warn target="essential-events" action={t("Review")}>
+                      <b className="font-semibold">{t("{count, plural, one {# must-have has a stray word.} other {# must-haves have a stray word.}}", { count: strayEvents })}</b>
+                    </ApproveCheck>}
+                    {unmatched.length > 0 && <ApproveCheck warn target="protected-language" action={t("Review")}>
+                      <b className="font-semibold">{t("{count, plural, one {# line isn't in the book.} other {# lines aren't in the book.}}", { count: unmatched.length })}</b> {t("It won't be kept word for word.")}
+                    </ApproveCheck>}
+                    <ApproveCheck>{t("Adapt will hold to {events} events, {turns} turns and {lines} exact lines.", {
+                      events: count(draft.essential_events) ?? 0, turns: count(draft.character_turns) ?? 0, lines: count(draft.protected_language) ?? 0,
+                    })}</ApproveCheck>
+                    {skippedCount > 0 && <ApproveCheck>{t("{count, plural, one {# event can be skipped.} other {# events can be skipped.}}", { count: skippedCount })}</ApproveCheck>}
+                  </ul>
+                </section>
                 <section className="border border-ink-black/14 bg-bristol px-4 pb-4 pt-3.5">
                   <h3 className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Target length")}</h3>
                   <p className="mt-2 font-display text-[1.75rem] font-black uppercase leading-none tracking-[-0.03em]">
@@ -460,7 +475,8 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
                     <div className="min-w-0 flex-1"><FieldLabel htmlFor="maximum-pages" className="text-xs"><span className="sr-only">{t("Page target")}: </span>{t("to")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
                   </fieldset>
                 </section>
-                <StoryShape story={bible} onOpen={() => showView("bible")} />
+                <StoryShape story={bible} onOpen={() => showView("bible")}
+                  mustHaves={keptEvents.length > 1 ? new Map(keptEvents.map((group) => [group.sequence!.number, group.items.length])) : undefined} />
               </aside>
             </div>
           </div>
@@ -496,20 +512,27 @@ function count(value: string | string[]): number | undefined {
   return Array.isArray(value) ? value.filter((item) => item.trim()).length : undefined;
 }
 
-function OutlineGroup({ label, items }: { label: string; items: [string, string, number?][] }) {
+function OutlineGroup({ label, items, onPick }: { label: string; items: OutlineItem[]; onPick?: (id: string) => void }) {
+  const { t } = useI18n();
   return (
     <div className="mb-5">
       <p className="px-3.5 pb-2 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{label}</p>
       <ul>
-        {items.map(([id, name, n]) => (
+        {items.map(([id, name, n, warn]) => (
           <li key={id}>
             <a href={`#brief-${id}`} onClick={(event) => {
               event.preventDefault();
-              document.getElementById(`brief-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              onPick?.(id);
+              // Let an opened direction row render before scrolling to it.
+              requestAnimationFrame(() => document.getElementById(`brief-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
             }}
-              className="flex min-h-8 items-center justify-between border-l-2 border-transparent pl-3.5 pr-3 font-meta text-[0.8125rem] text-ink-soft hover:border-hero-red hover:bg-surface-container hover:text-ink-black">
+              className="flex min-h-8 items-center justify-between gap-2 border-l-2 border-transparent pl-3.5 pr-3 font-meta text-[0.8125rem] text-ink-soft hover:border-hero-red hover:bg-surface-container hover:text-ink-black">
               <span>{name}</span>
-              {n !== undefined && <span className="text-[0.6875rem] tabular-nums text-ink-muted">{n}</span>}
+              <span className="flex items-center gap-1.5">
+                {!!warn && <span title={t("{count, plural, one {# to check} other {# to check}}", { count: warn })}
+                  className="inline-flex h-[1.125rem] min-w-[1.125rem] items-center justify-center border border-ink-black bg-narrator-gold px-1 text-[0.65625rem] font-bold text-ink-black">{warn}</span>}
+                {n !== undefined && <span className="text-[0.6875rem] tabular-nums text-ink-muted">{n}</span>}
+              </span>
             </a>
           </li>
         ))}
@@ -518,8 +541,28 @@ function OutlineGroup({ label, items }: { label: string; items: [string, string,
   );
 }
 
+/** One line of the approval checklist; `target` scrolls to the section to fix. */
+function ApproveCheck({ warn = false, target, action, children }: { warn?: boolean; target?: string; action?: string; children: ReactNode }) {
+  return (
+    <li className="flex gap-2.5 border-t border-ink-black/9 py-2.5 font-body text-[0.8125rem] leading-[1.45] first:border-t-0">
+      <span aria-hidden="true" className={warn
+        ? "mt-px flex h-[1.125rem] w-[1.125rem] shrink-0 items-center justify-center border border-ink-black bg-narrator-gold font-meta text-[0.6875rem] font-bold"
+        : "mt-px flex h-[1.125rem] w-[1.125rem] shrink-0 items-center justify-center bg-ready/15 text-ready"}>
+        {warn ? "!" : <Check size={12} strokeWidth={3} />}
+      </span>
+      <span className="min-w-0">
+        {children}
+        {target && action && <> <a href={`#brief-${target}`} onClick={(event) => {
+          event.preventDefault();
+          document.getElementById(`brief-${target}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }} className="underline underline-offset-2 hover:text-hero-red">{action}</a></>}
+      </span>
+    </li>
+  );
+}
+
 /** The part's sequences at a glance, sized by how many scenes each holds. */
-function StoryShape({ story, onOpen }: { story: StoryBible; onOpen: () => void }) {
+function StoryShape({ story, onOpen, mustHaves }: { story: StoryBible; onOpen: () => void; mustHaves?: Map<number, number> }) {
   const { t } = useI18n();
   const scenes = narrativeScenes(story.scenes);
   const ids = new Set(scenes.map((scene) => scene.id));
@@ -541,7 +584,10 @@ function StoryShape({ story, onOpen }: { story: StoryBible; onOpen: () => void }
               <span className="inline-flex h-[1.375rem] items-center justify-center border border-ink-black bg-pulp-paper font-meta text-[0.6875rem] font-bold">{sequence.number}</span>
               <span className="min-w-0">
                 <span className="block font-meta text-[0.8125rem] font-semibold leading-[1.3] group-hover:text-hero-red">{sequence.title}</span>
-                <span className="mt-0.5 block font-body text-[0.6875rem] text-ink-muted">{t("{count, plural, one {# scene} other {# scenes}}", { count: sequence.size })}</span>
+                <span className="mt-0.5 block font-body text-[0.6875rem] text-ink-muted">
+                  {t("{count, plural, one {# scene} other {# scenes}}", { count: sequence.size })}
+                  {mustHaves && ` · ${t("{count, plural, one {# must-have} other {# must-haves}}", { count: mustHaves.get(sequence.number) ?? 0 })}`}
+                </span>
                 <span aria-hidden="true" className="mt-1.5 block h-1 bg-surface-variant"><span className="block h-full bg-ink-black" style={{ width: `${Math.round((sequence.size / largest) * 100)}%` }} /></span>
               </span>
             </button>

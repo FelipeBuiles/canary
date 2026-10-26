@@ -169,9 +169,10 @@ describe("StoryRoom", () => {
 
     expect(screen.getByRole("heading", { name: "Story" })).toBeTruthy();
     expect(screen.getByText("The Last Incantation")).toBeTruthy();
-    expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
-    // Essential events are ordered requirements; the other lists are not.
+    // Essential events are ordered must-haves; direction rows open to their lists.
     expect(screen.getByText("The final discovery").closest("ol")).toBeTruthy();
+    expect(screen.getByText("The investigation closes its causal loop").closest("ul")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Story promises/ }));
     expect(screen.getByText("The investigation closes its causal loop").closest("ul")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Inside your story" })).toBeNull();
 
@@ -186,6 +187,23 @@ describe("StoryRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "The Archive" }));
     expect(screen.getByText("Salt-stained stone stacks.")).toBeTruthy();
     expect(screen.queryByText("a".repeat(64))).toBeNull();
+  });
+
+  it("lets a must-have be skipped, restored in place, and flags stray words", () => {
+    storyState = { data: { ...storyDecision, brief: { ...storyDecision.brief, essential_events: ["The ledger opens", "The দ্বিতীয় door", "The final discovery"] } }, isLoading: false, error: null };
+    renderRoom();
+    expect(screen.getByText(/“দ্বিতীয়” looks like a stray word/)).toBeTruthy();
+    expect(screen.getByText("1 must-have has a stray word.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove event 01" }));
+    expect(screen.getByText("1 event can be skipped.")).toBeTruthy();
+    expect(screen.getByText("Adapt will hold to 2 events, 1 turns and 0 exact lines.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Undo removing event 01" }));
+    expect(screen.queryByText("1 event can be skipped.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove event 03" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save brief" }));
+    expect(updateBrief).toHaveBeenCalledWith(expect.objectContaining({
+      changes: expect.objectContaining({ essential_events: ["The ledger opens", "The দ্বিতীয় door"] }),
+    }), expect.any(Object));
   });
 
   it("opens a focused editor, previews the changes, and saves them explicitly", () => {
