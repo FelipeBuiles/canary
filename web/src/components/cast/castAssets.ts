@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { seriesPath } from "../../api/projectScope";
 import type { EntityKind } from "../../api/storyBible";
 import type { AppearanceState, CastFailure, Character, Location, Prop } from "../../types/api";
+import { versionedUrl } from "../../lib/assetVersions";
 
 export type CastKind = "character" | "location" | "prop";
 export type CastEntry =
@@ -48,10 +49,10 @@ export const portraitUrl = (project: string, id: string) => `${filesBase(project
 /**
  * The small WebP of a project image URL, for tiles that show it at a few dozen
  * pixels (`card` for sheet-grid cards). The query token carries over, so the
- * rendition renews exactly when the master does.
+ * rendition renews exactly when the master does, and shares its version.
  */
 export function thumbnailUrl(src: string, rendition: "thumbnail" | "card" = "thumbnail") {
-  return src.replace("/files/", `/thumbnails/${rendition}/`);
+  return versionedUrl(src.replace("/files/", `/thumbnails/${rendition}/`));
 }
 
 export function looksOf(entry: CastEntry): AppearanceState[] {

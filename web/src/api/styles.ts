@@ -1,6 +1,7 @@
 import { apiFetch } from "./client";
 import { seriesPath } from "./projectScope";
 import type { CostEstimate, GenerationJob } from "../types/api";
+import { versionedUrl } from "../lib/assetVersions";
 
 export interface StyleSuggestion {
   id: string;
@@ -143,7 +144,7 @@ export function isAuthorDirection(suggestion: Pick<StyleSuggestion, "origin">): 
 
 export function proofImageUrl(projectName: string, suggestion: Pick<StyleSuggestion, "sample_preview_url" | "index">): string {
   return suggestion.sample_preview_url
-    ?? `/api${seriesPath(projectName)}/files/samples/style_${suggestion.index}.png`;
+    ?? versionedUrl(`/api${seriesPath(projectName)}/files/samples/style_${suggestion.index}.png`);
 }
 
 export function styleName(suggestion: Pick<StyleSuggestion, "label" | "display_label">): string {

@@ -11,7 +11,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from ..file_cache import private_file_response
+from ..file_cache import asset_version, private_file_response
 from pydantic import BaseModel, Field
 
 from novel_to_comic.models.draw import (
@@ -265,9 +265,9 @@ def get_page_render(
     path = TargetArtifacts(project_dir).render_path(page_number, revision)
     if not path.exists():
         raise HTTPException(404, "Page render not found")
-    # Restarting Adapt/Plan can reuse this page/revision URL for new art.
-    # These URLs must revalidate; immutability applies only within an edition.
-    return private_file_response(request, path, "image/png")
+    # Restarting Adapt/Plan can reuse this page/revision URL for new art, so
+    # only a URL carrying the master's current version is kept unasked.
+    return private_file_response(request, path, "image/png", asset_version(path))
 
 
 
@@ -317,7 +317,9 @@ def get_page_render_preview(
         raise HTTPException(404, "Page render not found") from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(422, "Page preview could not be created") from exc
-    return private_file_response(request, path, "image/webp")
+    # A rendition follows its master, so it carries the master's version.
+    master = artifacts.render_path(page_number, revision)
+    return private_file_response(request, path, "image/webp", asset_version(master))
 
 
 @router.get("/pages/generate/estimate")

@@ -319,3 +319,32 @@ def test_tiles_read_a_small_webp_that_follows_a_redraw(tmp_path: Path):
     assert client.get("/api/projects/demo/thumbnails/thumbnail/finish/preflight.json").status_code == 404
     assert client.get("/api/projects/demo/thumbnails/poster/refs/character_ann/sheet.png").status_code == 422
     assert client.get("/api/projects/demo/files/.thumbnails/thumbnail").status_code == 403
+
+
+def test_listed_versions_make_image_urls_immutable_until_a_redraw(tmp_path: Path):
+    # The UI adds the listed version to each image URL. That exact URL is kept
+    # without revalidation; a redraw lists a new version, and an old URL only
+    # revalidates, so a stale listing can never pin the wrong image.
+    client, project_dir = _client(tmp_path)
+    sheet = project_dir / "refs" / "character_ann" / "sheet.png"
+    sheet.parent.mkdir(parents=True)
+    Image.new("RGB", (64, 32), "red").save(sheet)
+    (project_dir / "refs" / "character_ann" / "sheet.meta.json").write_text("{}")
+    (project_dir / ".thumbnails").mkdir()
+    (project_dir / ".thumbnails" / "hidden.webp").write_bytes(b"x")
+    (project_dir / "parts" / "p1").mkdir(parents=True)
+    (project_dir / "parts" / "p1" / "page.png").write_bytes(b"part")
+
+    versions = client.get("/api/projects/demo/asset-versions").json()["versions"]
+    assert set(versions) == {"refs/character_ann/sheet.png"}
+    version = versions["refs/character_ann/sheet.png"]
+    for base in ("/files/", "/thumbnails/thumbnail/"):
+        url = f"/api/projects/demo{base}refs/character_ann/sheet.png"
+        assert client.get(f"{url}?t=0&v={version}").headers["cache-control"] == "private, max-age=31536000, immutable"
+        assert client.get(f"{url}?v=old").headers["cache-control"] == "private, no-cache"
+
+    Image.new("RGB", (64, 32), "blue").save(sheet)
+    redrawn = client.get("/api/projects/demo/asset-versions").json()["versions"]["refs/character_ann/sheet.png"]
+    assert redrawn != version
+    stale = client.get(f"/api/projects/demo/files/refs/character_ann/sheet.png?v={version}")
+    assert stale.headers["cache-control"] == "private, no-cache"

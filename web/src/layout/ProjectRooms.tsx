@@ -3,6 +3,7 @@ import { Navigate, useParams, useLocation } from "react-router-dom";
 import { Outlet } from "react-router-dom";
 import { useProjectStatus } from "../api/queries";
 import { useSSE } from "../hooks/useSSE";
+import { useAssetVersions } from "../hooks/useAssetVersions";
 import { trackProductEvent } from "../api/events";
 import { stationForRoute } from "../lib/stations";
 import { isNotFoundError } from "../api/client";
@@ -17,6 +18,7 @@ export function ProjectRooms() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const { data: status, error, refetch, isFetching } = useProjectStatus(id);
+  const assetsReady = useAssetVersions(id, status);
   const { t } = useI18n();
   const route = location.pathname.split("/").filter(Boolean).at(-1) ?? "";
   const station = stationForRoute(route);
@@ -56,7 +58,7 @@ export function ProjectRooms() {
     if (error) return <StateBlock title={t("Could not check station availability")}
       description={t("Try again to load your project's current progress.")} tone="danger"
       action={<Button onClick={() => void refetch()} disabled={isFetching}>{t("Try again")}</Button>} />;
-    if (!status) return <LoadingBlock label={t("Checking project progress…")} />;
+    if (!status || !assetsReady) return <LoadingBlock label={t("Checking project progress…")} />;
     if (station && access.state === "locked" && id) {
       return <StationLocked project={id} station={station} access={access} status={status} />;
     }

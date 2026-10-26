@@ -23,6 +23,7 @@ import { AnchorSection, InspectorSection, OVERLINE, RefVersionHistory, Reference
 import { useCastEntryImage } from "./useCastEntryImage";
 import { ScrollStripControls } from "../ui/ScrollStrip";
 import { useScrollStrip } from "../ui/useScrollStrip";
+import { versionedUrl } from "../../lib/assetVersions";
 
 const KIND_LABEL: Record<CastKind, string> = { character: "Character", location: "Place", prop: "Prop" };
 
@@ -59,7 +60,7 @@ function useLooks(project: string, entry: CastEntry, stageRegenerating: boolean,
     // The pending marker drops when the running Cast redraws this look, so the tile reloads then.
     return encodeURIComponent(`${refreshToken}-${lookToken(JSON.stringify([project, identity, `${id}:${stateId}`]))}${active ? `-${active.id}-${active.status}` : ""}${isUpdating(stateId) ? "-updating" : ""}`);
   };
-  const thumb = (stateId: string) => `${lookThumbUrl(project, kind, id, stateId)}?v=${version(stateId)}`;
+  const thumb = (stateId: string) => `${lookThumbUrl(project, kind, id, stateId)}?t=${version(stateId)}`;
   const generating = (stateId: string) => {
     const active = job(stateId);
     // A missing look is drawn by any Cast run; an existing one only while it is still pending update.
@@ -172,7 +173,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
     </StageFrame>
   );
 
-  const lookSrc = look ? `${lookImageUrl(project, kind, entity.id, look.id)}?t=${encodeURIComponent(lookRef.timestamp)}` : "";
+  const lookSrc = look ? versionedUrl(`${lookImageUrl(project, kind, entity.id, look.id)}?t=${encodeURIComponent(lookRef.timestamp)}`) : "";
   const lookBusy = lookRef.isSubmitting || !!lookRef.activeJob;
   const lookGenerating = !!look && (looks.generating(look.id) || lookBusy);
   const lookFailure = look ? looks.failure(look.id) : undefined;
@@ -209,7 +210,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
         {kind !== "prop" && (
           <LooksStrip
             entry={entry}
-            mainSrc={kind === "character" ? `${portraitUrl(project, entity.id)}?t=${encodeURIComponent(image.timestamp)}` : image.imageSrc}
+            mainSrc={kind === "character" ? versionedUrl(`${portraitUrl(project, entity.id)}?t=${encodeURIComponent(image.timestamp)}`) : image.imageSrc}
             mainFallback={image.imageSrc}
             mainDrawing={image.isGenerating}
             looks={looks}
