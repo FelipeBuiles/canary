@@ -29,7 +29,7 @@ import { ProofComparison } from "../../components/style/ProofComparison";
 import { Button } from "../../components/ui/Button";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } from "../../components/composites";
+import { ApprovalBar, RoomHeader, ConfirmDrawer, RerunStageAction, RoomNoticeRow, RoomShell } from "../../components/composites";
 import { Sheet } from "../../components/composites/Sheet";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -381,7 +381,9 @@ export function StyleRoom() {
           job={activeBatchJob}
           // Existing proofs belong to earlier batches, not this new suggestion run.
           fallbackPhase={isStageGenerating && suggestions.length > 0 ? "proofs" : "directions"}
-          title={isStageGenerating ? t("GENERATING STYLE OPTIONS") : t("GENERATING ADDITIONAL STYLES")}
+          title={isStageGenerating ? t("Drawing style options") : t("Drawing more styles")}
+          // With proofs on the table, progress is one line; before the first proof it is the room.
+          compact={suggestions.length > 0}
         />
       )}
     </>
@@ -432,10 +434,10 @@ export function StyleRoom() {
         ].filter(Boolean).join(" · ")}
       />
 
-      {(hasNotices || letteringOpen) && (
-        <div className="space-y-3 px-4 pt-4 sm:px-6 studio-desktop:px-5">
-          {notices}
-          {letteringOpen && <BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} />}
+      {hasNotices && suggestions.length > 0 && <RoomNoticeRow>{notices}</RoomNoticeRow>}
+      {letteringOpen && (
+        <div className="px-4 pt-4 sm:px-6 studio-desktop:px-5">
+          <BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} />
         </div>
       )}
 
@@ -457,10 +459,15 @@ export function StyleRoom() {
           <div className="mx-auto w-full max-w-[68rem]">
             <h2 id="find-the-look" className="font-display text-[2.5rem] font-black uppercase leading-[0.9] tracking-[-0.04em] sm:text-[3.25rem]">{t("Find the look")}</h2>
             <p className="mt-3 max-w-[40rem] font-body text-base leading-6 text-pulp-paper/80">{t("Every proof draws the same scene from your story, so you compare styles, not scenes.")}</p>
+            {suggestionFailure && <div className="mt-6 bg-bristol px-4 py-1 text-ink-black">{notices}</div>}
             <div className="mt-7">{composer}</div>
           </div>
         </section>
-      ) : suggestions.length === 0 ? null : !letteringOpen && (
+      ) : suggestions.length === 0 ? (
+        <section aria-label={t("Style proofs")} className="benday-ink flex flex-1 items-center justify-center px-4 py-8 sm:px-8">
+          {notices}
+        </section>
+      ) : !letteringOpen && (
         <div className="flex min-h-[34rem] flex-1 flex-col studio-desktop:min-h-0 studio-desktop:flex-row">
           <section aria-label={t("Style proofs")} className="benday-ink flex min-w-0 flex-1 flex-col text-pulp-paper">
             <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-5 py-2.5">

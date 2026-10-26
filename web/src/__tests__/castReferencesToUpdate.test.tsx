@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -53,6 +53,12 @@ function Search() {
   return <p data-testid="search">{useLocation().search}</p>;
 }
 
+/** The references sit behind one notice chip; opening it shows the list. */
+async function openList() {
+  fireEvent.click(await screen.findByRole("button", { expanded: false, name: /needs a new image|references to update/ }));
+  await screen.findByRole("heading", { name: "References to update" });
+}
+
 function renderReferences(entry: string, castStatus: StageStatus, onResume = vi.fn(), resumeDisabled = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={client}><I18nProvider><MemoryRouter initialEntries={[entry]}>
@@ -70,7 +76,7 @@ const edited: ReferenceFreshness[] = [
 it("lists new and changed references, offering to keep only the changed ones", async () => {
   server.references = edited;
   renderReferences("/project/p1/cast", "complete");
-  await screen.findByRole("heading", { name: "References to update" });
+  await openList();
   expect(screen.getByRole("listitem", { name: "Wooden sphinx" }).textContent).toContain("New, no image yet");
   expect(screen.getByRole("listitem", { name: "Ines" }).textContent).toContain("Changed since its image");
   expect(screen.getAllByRole("button", { name: "Keep current image" })).toHaveLength(1);
@@ -88,7 +94,7 @@ it("reopens an approved Cast and opens its confirmation when arriving from the S
 it("leaves the update to the author when Cast can't run yet", async () => {
   server.references = edited;
   const onResume = renderReferences("/project/p1/cast?references=update", "complete", vi.fn(), true);
-  await screen.findByRole("heading", { name: "References to update" });
+  await openList();
   await waitFor(() => expect(screen.getByTestId("search").textContent).toBe(""));
   expect(onResume).not.toHaveBeenCalled();
   expect(server.calls.some((call) => call.method === "POST")).toBe(false);
@@ -98,6 +104,7 @@ it("resumes a pending Cast directly from the update button", async () => {
   server.references = edited;
   const user = userEvent.setup();
   const onResume = renderReferences("/project/p1/cast", "pending");
+  await openList();
   await user.click(await screen.findByRole("button", { name: "Update images" }));
   expect(onResume).toHaveBeenCalledTimes(1);
   expect(server.calls.some((call) => call.path.endsWith("/cast/reopen"))).toBe(false);
@@ -112,6 +119,7 @@ const redrawnLooks: ReferenceFreshness[] = [
 it("groups looks drawn from a redrawn main image and never sends them to the Story Bible", async () => {
   server.references = redrawnLooks;
   renderReferences("/project/p1/cast", "awaiting_review");
+  await openList();
   const group = await screen.findByRole("listitem", { name: "Ines" });
   expect(group.textContent).toContain("Its main image was redrawn, so these 2 looks were drawn from the previous one:");
   expect(group.textContent).toContain("Storm gear · Wedding dress");
@@ -124,6 +132,7 @@ it("redraws a group's looks one job each, only after a priced confirmation", asy
   server.references = redrawnLooks;
   const user = userEvent.setup();
   renderReferences("/project/p1/cast", "awaiting_review");
+  await openList();
   const redraw = await screen.findByRole("button", { name: /Redraw looks.*8 credits/ });
   await user.click(redraw);
   expect(server.calls.some((call) => call.method === "POST")).toBe(false);
@@ -140,6 +149,7 @@ it("keeps every redrawn look of a group at once", async () => {
   server.references = redrawnLooks;
   const user = userEvent.setup();
   renderReferences("/project/p1/cast", "awaiting_review");
+  await openList();
   await user.click(await screen.findByRole("button", { name: "Keep looks as they are" }));
   await waitFor(() => expect(server.calls.filter((call) => call.path.endsWith("/cast/references/keep"))).toHaveLength(2));
 });
@@ -148,6 +158,7 @@ it("stops offering looks once their redraw is queued, and shows them redrawing",
   server.references = redrawnLooks;
   const user = userEvent.setup();
   renderReferences("/project/p1/cast", "awaiting_review");
+  await openList();
   await user.click(await screen.findByRole("button", { name: /Redraw looks.*8 credits/ }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Redraw looks" }));
 
@@ -162,6 +173,7 @@ it("treats looks a main-image job brings along as already redrawing", async () =
   server.references = redrawnLooks;
   server.jobs = [queued("main", { char_id: "ines", with_looks: ["storm"] })];
   renderReferences("/project/p1/cast", "awaiting_review");
+  await openList();
   const status = await screen.findByRole("status");
   expect(status.textContent).toContain("Redrawing: Storm gear");
   const group = screen.getByRole("listitem", { name: "Ines" });

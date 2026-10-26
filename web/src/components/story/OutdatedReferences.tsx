@@ -1,6 +1,7 @@
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { ConfirmDrawer } from "../composites/ConfirmDrawer";
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { RoomNotice } from "../composites/RoomNotice";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueries } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
@@ -50,7 +51,6 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
   const reopen = useReopenCast();
   const pending = referencesToUpdate(data?.references);
   const [search, setSearch] = useSearchParams();
-  const sectionRef = useRef<HTMLElement>(null);
   const requested = useRef(search.get("references") === "update");
   // An approved Cast reopens first; a pending one resumes directly.
   const approved = castStatus === "complete" || castStatus === "awaiting_review";
@@ -64,18 +64,17 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
     requested.current = false;
     setSearch((params) => { params.delete("references"); return params; }, { replace: true });
     if (!pending.length) return;
-    sectionRef.current?.scrollIntoView?.({ block: "start" });
     if (!resumeDisabled) update();
   });
   if (!pending.length) return null;
-  return <ReferenceList project={project} bible={bible} pending={pending} sectionRef={sectionRef}
+  return <ReferenceList project={project} bible={bible} pending={pending}
     onUpdate={update} updateDisabled={resumeDisabled || reopen.isPending} updateError={reopen.error} />;
 }
 
 /** The pending references, grouped per entry; references already being redrawn are not offered again. */
-function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDisabled, updateError }: {
+function ReferenceList({ project, bible, pending, onUpdate, updateDisabled, updateError }: {
   project: string; bible: StoryBible; pending: ReferenceFreshness[];
-  sectionRef: RefObject<HTMLElement | null>; onUpdate: () => void; updateDisabled: boolean; updateError: Error | null;
+  onUpdate: () => void; updateDisabled: boolean; updateError: Error | null;
 }) {
   const { t } = useI18n();
   const keep = useKeepReference();
@@ -116,20 +115,18 @@ function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDi
   };
 
   return (
-    <section ref={sectionRef} className="border border-ink-black bg-[color-mix(in_srgb,var(--color-narrator-gold)_22%,var(--color-bristol))] px-4 py-3 shadow-[3px_3px_0_0_var(--color-ink-black)]" aria-label={t("References to update")}>
+    <RoomNotice tone="attention" title={t("References to update")}
+      label={groups.size === 1
+        ? t("{name} needs a new image", { name: [...groups.values()][0].name })
+        : t("{count} references to update", { count: String(groups.size) })}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="flex items-center gap-2 font-meta text-sm font-semibold">
-            <span aria-hidden="true" className="size-2.5 shrink-0 border border-ink-black bg-narrator-gold" />{t("References to update")}
-          </h2>
-          <p className="mt-0.5 font-body text-xs text-ink-muted">
-            {t("Pages keep using the current images until you update or keep them.")}
-          </p>
-        </div>
+        <p className="min-w-0 flex-1 font-body text-sm text-ink-muted">
+          {t("Pages keep using the current images until you update or keep them.")}
+        </p>
         {actionable && <Button size="sm" variant="secondary" disabled={updateDisabled} onClick={onUpdate}
           title={t("Cast makes the new images and regenerates every changed one you haven't kept. You'll see the cost first.")}>{t("Update images")}</Button>}
       </div>
-      <ul className="mt-2 divide-y divide-ink-black/12 border-t border-ink-black/12">
+      <ul className="mt-3 divide-y divide-ink-black/12 border-t border-ink-black/12">
         {[...groups.values()].map((group) => (
           <li key={`${group.kind}:${group.entityId}`} className="space-y-1.5 py-2" aria-label={group.name}>
             <div className="flex flex-wrap items-center gap-3">
@@ -181,7 +178,7 @@ function ReferenceList({ project, bible, pending, sectionRef, onUpdate, updateDi
         ))}
       </ul>
       {(keep.error || updateError) && <ErrorNotice error={(keep.error ?? updateError)} operation="save" />}
-    </section>
+    </RoomNotice>
   );
 }
 

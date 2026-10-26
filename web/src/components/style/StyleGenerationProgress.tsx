@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GenerationJob } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { Icon } from "../ui/Icon";
+import { RoomNotice } from "../composites/RoomNotice";
 import { proofCounts, shortlistOf, STEPS, stylePhaseOf, type StylePhase } from "./styleBatch";
 
 /**
@@ -35,12 +36,14 @@ function formatElapsed(seconds: number): string {
 }
 
 export function StyleGenerationProgress({
-  job, fallbackPhase, title,
+  job, fallbackPhase, title, compact = false,
 }: {
   job: GenerationJob | undefined;
   /** Used when no batch job carries a phase (for example a pipeline-run Style stage). */
   fallbackPhase: StylePhase;
   title: string;
+  /** One line in the room's notice row, for when proofs already fill the table. */
+  compact?: boolean;
 }) {
   const { t } = useI18n();
   const phase = stylePhaseOf(job, fallbackPhase);
@@ -49,30 +52,22 @@ export function StyleGenerationProgress({
   const shortlist = shortlistOf(job);
   const { done, total } = proofCounts(job);
 
-  return (
-    <section aria-label={t("Style generation progress")}
-      className="@container mt-4 border-[2px] border-ink-black bg-narrator-gold p-3 text-ink-black md:p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 max-w-full items-center gap-2">
-          <span aria-hidden className="animate-press-blink h-2.5 w-2.5 shrink-0 bg-hero-red" />
-          <span className="min-w-0 font-meta text-[0.7rem] font-bold tracking-[0.08em] [overflow-wrap:anywhere]">{title}</span>
-        </div>
-        {elapsed !== null && (
-          <span className="max-w-full font-meta text-[0.68rem] font-bold tabular-nums tracking-[0.08em] [overflow-wrap:anywhere]"
-            aria-label={t("Elapsed {time}", { time: formatElapsed(elapsed) })}>
-            {formatElapsed(elapsed)}
-          </span>
-        )}
-      </div>
-
-      <ol aria-label={t("Style generation steps")} className="mt-3 grid grid-cols-1 gap-[3px] @min-[22rem]:grid-cols-3">
+  const clock = elapsed !== null && (
+    <span className="font-meta text-xs font-medium tabular-nums text-ink-muted"
+      aria-label={t("Elapsed {time}", { time: formatElapsed(elapsed) })}>
+      {formatElapsed(elapsed)}
+    </span>
+  );
+  const body = (
+    <>
+      <ol aria-label={t("Style generation steps")} className="grid grid-cols-1 gap-1 @min-[22rem]:grid-cols-3">
         {STEPS.map((item, index) => (
           <li key={item.phase} aria-current={index === step ? "step" : undefined}
-            className={`flex min-h-9 min-w-0 items-center gap-1.5 px-2 py-1.5 font-meta text-[0.6rem] font-bold uppercase leading-tight tracking-[0.06em] ${
+            className={`flex min-h-9 min-w-0 items-center gap-2 px-2.5 py-1.5 font-meta text-xs font-medium leading-tight ${
               index < step ? "bg-ink-black text-bristol"
-                : index === step ? "bg-bristol text-ink-black" : "bg-pulp-paper/60 text-ink-soft"
+                : index === step ? "bg-chip-gold text-ink-black" : "bg-surface-container text-ink-soft"
             }`}>
-            <Icon name={index < step ? "check" : index === step ? "loader" : "circle"} size={12}
+            <Icon name={index < step ? "check" : index === step ? "loader" : "circle"} size={13}
               className={index === step ? "shrink-0 motion-safe:animate-spin" : "shrink-0"} />
             <span className="min-w-0 [overflow-wrap:anywhere]">
               {t(item.label)}
@@ -84,24 +79,22 @@ export function StyleGenerationProgress({
         ))}
       </ol>
 
-      <p role="status" aria-live="polite" className="mt-3 font-body text-[0.84rem] leading-relaxed">
+      <p role={compact ? undefined : "status"} aria-live={compact ? undefined : "polite"} className="mt-3 font-body text-sm leading-6">
         {t(PHASE_COPY[phase])}
         {phase === "queued" && job?.queue_position ? ` ${t("Position {n} in line.", { n: String(job.queue_position) })}` : ""}
       </p>
       {phase !== "queued" && (
-        <p className="mt-1 font-body text-xs leading-5 text-ink-black/70">
+        <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
           {t("A full batch usually takes a couple of minutes. You can leave this room; the proofs keep painting.")}
         </p>
       )}
 
       {phase === "production" && shortlist.length > 0 && (
-        <ul aria-label={t("Chosen directions")} className="mt-3 grid gap-[3px] sm:grid-cols-2 lg:grid-cols-3">
+        <ul aria-label={t("Chosen directions")} className="mt-3 grid gap-1 sm:grid-cols-2">
           {shortlist.map((entry) => (
-            <li key={`${entry.role}:${entry.label}`} className="min-w-0 bg-bristol px-3 py-2">
+            <li key={`${entry.role}:${entry.label}`} className="min-w-0 border border-ink-black/10 px-3 py-2">
               <div className="truncate font-display text-sm font-bold leading-tight">{entry.label}</div>
-              <div className="mt-0.5 truncate font-meta text-[0.62rem] font-bold uppercase tracking-[0.06em] text-ink-muted">
-                {entry.medium}
-              </div>
+              <div className="mt-0.5 truncate font-meta text-xs text-ink-muted">{entry.medium}</div>
               {entry.story_fit && (
                 <p className="mt-1 line-clamp-2 font-body text-xs leading-5 text-ink-black/75">{entry.story_fit}</p>
               )}
@@ -109,6 +102,35 @@ export function StyleGenerationProgress({
           ))}
         </ul>
       )}
+    </>
+  );
+
+  if (compact) {
+    const current = step >= 0 ? STEPS[step] : null;
+    const stepText = current
+      ? `${t(current.label)}${current.phase === "proofs" && total > 0 ? ` ${done}/${total}` : ""}`
+      : t("Waiting to start");
+    return (
+      <section aria-label={t("Style generation progress")}>
+        <RoomNotice tone="working" title={title}
+          label={<>{title} · {stepText}{elapsed !== null && <> · <span className="tabular-nums">{formatElapsed(elapsed)}</span></>}</>}>
+          <div className="@container">{body}</div>
+        </RoomNotice>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-label={t("Style generation progress")}
+      className="@container w-full max-w-[40rem] border border-ink-black bg-bristol p-5 text-ink-black shadow-float">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="flex min-w-0 items-center gap-2 font-meta text-sm font-semibold">
+          <span aria-hidden className="animate-press-blink size-2 shrink-0 bg-hero-red" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
+        </h2>
+        {clock}
+      </div>
+      {body}
     </section>
   );
 }
