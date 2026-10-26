@@ -1,10 +1,8 @@
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, ChevronRight, Search, Undo2 } from "lucide-react";
+import { ArrowRight, Pencil, Plus, Search, Undo2, X } from "lucide-react";
 import { useI18n } from "../../i18n";
-import { RoomTabs } from "../composites/RoomTabs";
-import { SectionHeader } from "../composites/SectionHeader";
 import { Sheet } from "../composites/Sheet";
 import { Button } from "../ui/Button";
 import { FieldLabel, TextField } from "../ui/Field";
@@ -18,20 +16,21 @@ import { useProjectStatus } from "../../api/queries";
 import { StoryScenes } from "./StoryScenes";
 import { referencesToUpdate, UPDATE_REFERENCES_SEARCH } from "./castReferences";
 import { known, narrativeScenes, readablePhrase, sceneNumbers } from "./storyPhrases";
+import { cn } from "../../lib/cn";
+import { mainImageUrl, portraitUrl, type CastKind } from "../cast/castAssets";
 import {
   useEditImpact, useMergeEntity, useRemoveEntity, useRestoreExcluded, useStoryBibleEditor, useUndoEdit,
 } from "../../api/seriesQueries";
 import type { EditImpact, EntityKind, StoryBibleChange, StoryBibleEditor as Editor } from "../../api/storyBible";
 import type { Character, ExcludedEntity, Location, Prop, Scene, StoryBible } from "../../types/api";
 
-type Tab = "scenes" | EntityKind | "removed";
 type Entry = {
   id: string; name: string; aliases?: string[]; origin?: string; visual_anchor: string;
   appearance_states?: { id: string; label: string }[];
 };
 type Translate = ReturnType<typeof useI18n>["t"];
 
-const TAB_LABELS: Record<Tab, string> = { scenes: "Scenes", characters: "Characters", locations: "Places", props: "Props", removed: "Removed" };
+const TAB_LABELS: Record<EntityKind, string> = { characters: "Characters", locations: "Places", props: "Props" };
 const EXCLUDED_KIND: Record<ExcludedEntity["kind"], EntityKind> = { character: "characters", location: "locations", prop: "props" };
 
 export interface EntityFocus { kind: EntityKind; id: string }
@@ -52,6 +51,7 @@ type Open =
 
 /** Where entry cards look up scenes, names and parts. */
 interface CardContext {
+  project?: string;
   bible: StoryBible;
   editor?: Editor;
   /** This part's scenes, numbered in reading order. */
@@ -61,14 +61,18 @@ interface CardContext {
 
 /**
  * The story at a glance and the author's view of the shared Story Bible:
- * this part's scenes are read-only; every part reads the entries.
+ * a list of every entry beside this part's scene board. Picking an entry
+ * shows where it appears and what the Bible holds for it; editing, merging
+ * and removing happen in its sheet.
  */
 export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props) {
   const { t } = useI18n();
   const { data: editor, error, isLoading, refetch } = useStoryBibleEditor(project);
-  const [tab, setTab] = useState<Tab>(focus?.kind ?? (story ? "scenes" : "characters"));
+  const [selected, setSelected] = useState<EntityFocus | null>(focus ?? null);
   const [opened, setOpened] = useState<Open | null>(null);
   const [showAllCharacters, setShowAllCharacters] = useState(false);
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [query, setQuery] = useState("");
   const unavailable = isNotFoundError(error) || (!editor && !isLoading && !error);
   if (!story) {
     if (unavailable) return null;
@@ -81,60 +85,120 @@ export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props
   const close = () => { setOpened(null); if (focus) onFocusClosed?.(); };
   const excluded = editor?.story_bible.excluded_entities ?? [];
   const recurring = castCharacters(bible);
-  const entries = (kind: EntityKind) => (kind === "characters" && !showAllCharacters
-    ? recurring : bible[kind]) as unknown as Entry[];
-  const sceneCount = story ? narrativeScenes(story.scenes).length : 0;
-  const tabs = ((story ? ["scenes"] : []).concat(["characters", "locations", "props"]) as Tab[]).map((key) => ({
-    key, label: t(TAB_LABELS[key]), count: key === "scenes" ? sceneCount : entries(key as EntityKind).length,
-    active: tab === key, onClick: () => setTab(key),
-  }));
-  const entityTab = tab === "scenes" || tab === "removed" ? null : tab;
-  const context: CardContext = { bible, editor, partScenes: story?.scenes ?? [], numbers: sceneNumbers(story?.scenes ?? []) };
+  const needle = query.trim().toLocaleLowerCase();
+  const entries = (kind: EntityKind) => ((kind === "characters" && !showAllCharacters ? recurring : bible[kind]) as unknown as Entry[])
+    .filter((entry) => !needle || [entry.name, ...(entry.aliases ?? [])].some((name) => name.toLocaleLowerCase().includes(needle)));
+  const context: CardContext = { project, bible, editor, partScenes: story?.scenes ?? [], numbers: sceneNumbers(story?.scenes ?? []) };
   const entryOf = (kind: EntityKind, id: string) =>
     (bible[kind] as unknown as Entry[]).find((item) => item.id === id);
+  const current = selected && entryOf(selected.kind, selected.id) ? selected : null;
+  const imageFor = (kind: EntityKind, id: string) => castImage(project, editor, kind, id);
+  const appears = (kind: EntityKind, id: string) => (scene: Scene) =>
+    kind === "characters" ? scene.character_ids.includes(id) : kind === "locations" ? scene.location_id === id : false;
+  const partScenes = story ? narrativeScenes(story.scenes) : [];
+  const hits = current && current.kind !== "props" ? partScenes.filter(appears(current.kind, current.id)).length : 0;
+  const pick = (kind: EntityKind, id: string) => {
+    setShowRemoved(false);
+    setSelected(current?.kind === kind && current.id === id ? null : { kind, id });
+  };
 
   return (
-    <section id="story-bible" tabIndex={-1} className="min-w-0 space-y-6" aria-label={story ? t("Inside your story") : t("Characters, places and props")}>
-      <SectionHeader
-        kicker={t("STORY BIBLE")}
-        title={story ? t("Inside your story") : t("CHARACTERS, PLACES & PROPS")}
-        description={story
-          ? t("Scenes come from this part and are read-only; shape the adaptation in the brief above. Every part shares the characters, places and props: open one to fix what extraction got wrong, merge a duplicate or remove it.")
-          : t("Every part shares these entries. Open one to fix what extraction got wrong, merge a duplicate or remove it. You can undo your latest change.")}
-        actions={editor && entityTab && <Button size="sm" variant="outline" onClick={() => setOpened({ mode: "edit", kind: entityTab })}>{t(KIND_LABELS[entityTab].add)}</Button>}
-      />
-      {error && !isNotFoundError(error) && <ErrorNotice error={error} operation="load" onRetry={() => void refetch()} />}
-      {editor && <UndoBar project={project} editor={editor} />}
-      {editor && <ReferencesToUpdate project={project} editor={editor} />}
-      {editor && <DuplicateSuggestions project={project} editor={editor}
-        onCompare={(kind, id, into) => setOpened({ mode: "merge", kind, id, into })} />}
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <RoomTabs ariaLabel={t("Story Bible sections")} className="max-w-full" tabs={tabs} />
-        {editor && (excluded.length > 0 || tab === "removed") && (
-          <button type="button" aria-pressed={tab === "removed"} onClick={() => setTab(tab === "removed" ? "characters" : "removed")}
-            className={`min-h-11 font-meta text-xs uppercase tracking-[0.1em] underline decoration-ink-black/30 underline-offset-4 hover:decoration-ink-black ${tab === "removed" ? "text-ink-black decoration-ink-black" : "text-ink-muted"}`}>
-            {t("Removed")} <span className="ml-1 tabular-nums">{excluded.length}</span>
-          </button>
+    <section id="story-bible" tabIndex={-1} aria-label={story ? t("Inside your story") : t("Characters, places and props")}
+      className="flex min-h-0 min-w-0 flex-1 flex-col focus:outline-none">
+      <h2 className="sr-only">{story ? t("Inside your story") : t("CHARACTERS, PLACES & PROPS")}</h2>
+      {(error && !isNotFoundError(error)) || editor ? (
+        <div className="space-y-3 px-4 pt-4 empty:hidden sm:px-6 studio-desktop:px-5">
+          {error && !isNotFoundError(error) && <ErrorNotice error={error} operation="load" onRetry={() => void refetch()} />}
+          {editor && <UndoBar project={project} editor={editor} />}
+          {editor && <ReferencesToUpdate project={project} editor={editor} />}
+          {editor && <DuplicateSuggestions project={project} editor={editor}
+            onCompare={(kind, id, into) => setOpened({ mode: "merge", kind, id, into })} />}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex min-h-0 flex-1 flex-col border-t border-ink-black/12 studio-desktop:flex-row">
+        <aside aria-label={t("Story Bible entries")} className="flex max-h-[26rem] shrink-0 flex-col border-b border-ink-black/12 studio-desktop:max-h-none studio-desktop:w-[16.5rem] studio-desktop:border-b-0 studio-desktop:border-r">
+          <div className="shrink-0 px-3 pb-1.5 pt-3">
+            <FieldLabel htmlFor="story-bible-search" className="sr-only">{t("Find an entry")}</FieldLabel>
+            <div className="relative">
+              <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted" />
+              <TextField id="story-bible-search" type="search" className="min-h-9 pl-8 text-[0.8125rem]" placeholder={t("Find an entry")} value={query} onChange={(event) => setQuery(event.target.value)} />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+            {(["characters", "locations", "props"] as const).map((kind) => (
+              <div key={kind}>
+                <div className="flex items-center justify-between pb-1 pl-4 pr-2 pt-3.5">
+                  <h3 className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+                    {t(TAB_LABELS[kind])} <span className="ml-1 tabular-nums">{entries(kind).length}</span>
+                  </h3>
+                  {editor && <button type="button" aria-label={t(KIND_LABELS[kind].add)} title={t(KIND_LABELS[kind].add)}
+                    onClick={() => setOpened({ mode: "edit", kind })}
+                    className="inline-flex h-7 w-7 items-center justify-center text-ink-muted hover:bg-surface-container hover:text-ink-black">
+                    <Plus size={15} aria-hidden="true" />
+                  </button>}
+                </div>
+                <ul>
+                  {entries(kind).map((entry) => (
+                    <EntryRow key={entry.id} kind={kind} entry={entry} context={context}
+                      image={imageFor(kind, entry.id)} sceneCount={kind === "props" ? undefined : partScenes.filter(appears(kind, entry.id)).length}
+                      active={current?.kind === kind && current.id === entry.id} onPick={() => pick(kind, entry.id)} />
+                  ))}
+                  {entries(kind).length === 0 && <li className="px-4 py-1.5 font-body text-xs text-ink-muted">{needle ? t("No entry matches.") : t("Nothing here yet.")}</li>}
+                </ul>
+                {kind === "characters" && recurring.length < bible.characters.length && (
+                  <button type="button" onClick={() => setShowAllCharacters(!showAllCharacters)}
+                    className="mx-4 mt-1 font-meta text-xs text-ink-soft underline decoration-ink-black/25 underline-offset-4 hover:text-ink-black">
+                    {showAllCharacters ? t("Show recurring characters only") : t("Show all source participants")}
+                  </button>
+                )}
+              </div>
+            ))}
+            {editor && (excluded.length > 0 || showRemoved) && (
+              <button type="button" aria-pressed={showRemoved} onClick={() => { setShowRemoved(!showRemoved); setSelected(null); }}
+                className={`mx-4 mt-4 font-meta text-xs underline underline-offset-4 ${showRemoved ? "text-ink-black decoration-ink-black" : "text-ink-muted decoration-ink-black/25 hover:text-ink-black"}`}>
+                {t("Removed")} <span className="ml-1 tabular-nums">{excluded.length}</span>
+              </button>
+            )}
+          </div>
+        </aside>
+
+        <div className="flex min-h-[24rem] min-w-0 flex-1 flex-col bg-surface-container/60 studio-desktop:min-h-0">
+          {showRemoved && editor ? (
+            <div className="overflow-y-auto px-4 py-5 sm:px-6"><RemovedEntries project={project} editor={editor} /></div>
+          ) : story ? <>
+            <div className="flex min-h-12 shrink-0 items-center gap-3 px-4 sm:px-5">
+              {current ? (
+                <span className="inline-flex min-h-[1.875rem] items-center gap-2 bg-ink-black pl-2.5 pr-1 font-meta text-[0.8125rem] font-medium text-pulp-paper">
+                  <span aria-hidden="true" className="h-2 w-2 bg-narrator-gold" />
+                  {current.kind === "props"
+                    ? entryOf(current.kind, current.id)!.name
+                    : t("{name} · in {count} of {total} scenes", { name: entryOf(current.kind, current.id)!.name, count: hits, total: partScenes.length })}
+                  <button type="button" aria-label={t("Show every scene")} onClick={() => setSelected(null)}
+                    className="inline-flex h-6 w-6 items-center justify-center hover:bg-pulp-paper/15"><X size={13} aria-hidden="true" /></button>
+                </span>
+              ) : (
+                <p className="font-meta text-[0.8125rem] text-ink-soft">{t("Every scene, in story order. Pick an entry to see where it appears.")}</p>
+              )}
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-5">
+              <StoryScenes story={story}
+                isMatch={current && current.kind !== "props" ? appears(current.kind, current.id) : undefined}
+                imageFor={(id) => imageFor("locations", id)} />
+            </div>
+          </> : !current && (
+            <p className="px-5 py-6 font-body text-sm text-ink-muted">{t("Choose an entry to see what the Story Bible holds for it.")}</p>
+          )}
+        </div>
+
+        {current && !showRemoved && (
+          <EntryPanel key={`${current.kind}:${current.id}`} kind={current.kind} entry={entryOf(current.kind, current.id)!} context={context}
+            image={imageFor(current.kind, current.id)} onClose={() => setSelected(null)}
+            onShow={(id) => pick("characters", id)}
+            onEdit={editor ? () => setOpened({ mode: "edit", kind: current.kind, id: current.id }) : undefined} />
         )}
       </div>
-      {tab === "characters" && recurring.length < bible.characters.length && (
-        <Button size="sm" variant="outline" onClick={() => setShowAllCharacters(!showAllCharacters)}>
-          {showAllCharacters ? t("Show recurring characters only") : t("Show all source participants")}
-        </Button>
-      )}
-      {tab === "scenes" && story ? (
-        <StoryScenes story={story} />
-      ) : tab === "removed" && editor ? (
-        <RemovedEntries project={project} editor={editor} />
-      ) : entityTab && (
-        <ul className="grid gap-x-8 md:grid-cols-2">
-          {entries(entityTab).map((entry) => (
-            <EntityCard key={entry.id} kind={entityTab} entry={entry} context={context}
-              onOpen={editor ? () => setOpened({ mode: "edit", kind: entityTab, id: entry.id }) : undefined} />
-          ))}
-          {entries(entityTab).length === 0 && <li className="py-6 font-body text-sm text-ink-muted">{t("Nothing here yet.")}</li>}
-        </ul>
-      )}
+
       {editor && open?.mode === "edit" && (
         <EntitySheet key={`${open.kind}:${open.id ?? "new"}`} project={project} editor={editor} kind={open.kind} entityId={open.id}
           onClose={close}
@@ -153,6 +217,170 @@ export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props
         <RemoveSheet project={project} editor={editor} kind={open.kind} entry={entryOf(open.kind, open.id)!} onClose={close} />
       )}
     </section>
+  );
+}
+
+const CAST_KIND: Record<EntityKind, CastKind> = { characters: "character", locations: "location", props: "prop" };
+
+/** An entry's Cast image, once Cast has drawn one; before Cast runs there is none to show. */
+function castImage(project: string, editor: Editor | undefined, kind: EntityKind, id: string) {
+  const drawn = editor?.references?.some((ref) => ref.kind === kind && ref.entity_id === id && ref.state_id === null && ref.status !== "missing");
+  return drawn ? mainImageUrl(project, CAST_KIND[kind], id) : undefined;
+}
+
+function initials(name: string) {
+  const words = name.replace(/[^\p{L}\p{N}\s'-]/gu, " ").split(/\s+/).filter(Boolean);
+  const meaningful = words.filter((word) => !/^(the|a|an|mr|mrs|ms|dr)$/i.test(word));
+  const pickFrom = meaningful.length ? meaningful : words;
+  return pickFrom.slice(0, 2).map((word) => word.charAt(0).toLocaleUpperCase()).join("") || "?";
+}
+
+/** Shows a Cast image when it loads, otherwise the entry's initials. */
+function Thumb({ src, name, wide, className }: { src?: string; name: string; wide?: boolean; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span aria-hidden="true" className={cn("relative flex shrink-0 items-center justify-center overflow-hidden border border-ink-black/20 bg-[#e9e4cf] font-display text-[0.8125rem] font-black tracking-[-0.02em] text-ink-black",
+      wide ? "h-7 w-[2.875rem]" : "h-[2.125rem] w-[2.125rem]", className)}>
+      {src && !failed
+        ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} className="absolute inset-0 h-full w-full object-cover" />
+        : initials(name)}
+    </span>
+  );
+}
+
+function entryMeta(kind: EntityKind, entry: Entry) {
+  const details = entry as Entry & Partial<Character> & Partial<Location>;
+  return kind === "characters" ? [details.age_range, details.gender].filter(known)
+    : kind === "locations" ? [readablePhrase(details.time_of_day), readablePhrase(details.mood)].filter(known) : [];
+}
+
+/** One entry in the list: who or what it is at a glance, and whether its Cast image needs work. */
+function EntryRow({ kind, entry, context, image, sceneCount, active, onPick }: {
+  kind: EntityKind; entry: Entry; context: CardContext; image?: string; sceneCount?: number; active: boolean; onPick: () => void;
+}) {
+  const { t } = useI18n();
+  const { editor } = context;
+  const stale = referencesToUpdate(editor?.references).filter((ref) => ref.entity_id === entry.id);
+  const marker = !stale.length ? null
+    : stale.some((ref) => ref.status === "outdated") ? t("Cast image out of date") : t("No Cast image yet");
+  const meta = entryMeta(kind, entry).slice(0, kind === "locations" ? 1 : 2);
+  if (sceneCount !== undefined) meta.push(t("{count, plural, one {# scene} other {# scenes}}", { count: sceneCount }));
+  const subId = `entry-${kind}-${entry.id}-sub`;
+  return (
+    <li className="relative">
+      <button type="button" aria-label={entry.name} aria-describedby={subId} aria-pressed={active} onClick={onPick}
+        className={cn("relative flex min-h-12 w-full items-center gap-2.5 px-4 py-1.5 text-left",
+          active ? "bg-ink-black text-pulp-paper before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-hero-red" : "hover:bg-surface-container")}>
+        <Thumb src={kind === "characters" && image ? portraitUrl(context.project ?? "", entry.id) : image} name={entry.name} wide={kind === "locations"}
+          className={active ? "border-narrator-gold bg-narrator-gold" : undefined} />
+        <span className="min-w-0">
+          <span className="block font-meta text-[0.8125rem] font-semibold leading-[1.2]">{entry.name}</span>
+          <span id={subId} className={cn("mt-0.5 block truncate font-body text-[0.6875rem]", active ? "text-bristol/65" : "text-ink-muted")}>{meta.join(" · ")}</span>
+        </span>
+      </button>
+      {(entry.origin === "author" || marker) && (
+        <p className="flex flex-wrap gap-x-2 pb-1.5 pl-[3.75rem] pr-3 font-meta text-[0.625rem] uppercase tracking-[0.1em]">
+          {entry.origin === "author" && <span className="text-on-gold">{t("Added by you")}</span>}
+          {marker && (
+            <Link to={{ pathname: "../cast", search: UPDATE_REFERENCES_SEARCH }} relative="path" className="text-hero-red underline">{marker}</Link>
+          )}
+        </p>
+      )}
+    </li>
+  );
+}
+
+/** What the Story Bible holds for one entry, beside the board; its sheet edits it. */
+function EntryPanel({ kind, entry, context, image, onClose, onShow, onEdit }: {
+  kind: EntityKind; entry: Entry; context: CardContext; image?: string;
+  onClose: () => void; onShow: (characterId: string) => void; onEdit?: () => void;
+}) {
+  const { t } = useI18n();
+  const { bible, editor, partScenes, numbers } = context;
+  const details = entry as Entry & Partial<Character> & Partial<Location> & Partial<Prop>;
+  const cited = editor?.citations[entry.id] ?? [];
+  const meta = entryMeta(kind, entry);
+  const affect = kind === "characters" ? readablePhrase(details.baseline_affect) : "";
+  const names = new Map(bible.characters.map((character) => [character.id, character.name]));
+  const relationships = (details.relationships ?? []).flatMap((relationship) => {
+    const name = names.get(relationship.character_id);
+    return name && relationship.relationship ? [{ id: relationship.character_id, name, relationship: relationship.relationship }] : [];
+  });
+  // A first appearance may lie in an earlier part; name the part when it isn't numbered here.
+  const firstScene = kind === "locations" || !details.first_appearance_scene ? undefined
+    : [...bible.scenes, ...partScenes].find((scene) => scene.id === details.first_appearance_scene);
+  const firstPart = firstScene && !numbers.has(firstScene.id) ? editor?.parts.find((part) => part.id === firstScene.part_id)?.title : undefined;
+  const firstAppears = firstScene && [numbers.get(firstScene.id) ?? firstPart, firstScene.title].filter(Boolean).join(" · ");
+  const settings = kind === "locations"
+    ? partScenes.filter((scene) => scene.location_id === entry.id && numbers.has(scene.id)).map((scene) => numbers.get(scene.id)!) : [];
+  const looks = entry.appearance_states ?? [];
+  const kindLabel = { characters: t("Character"), locations: t("Place"), props: t("Prop") }[kind];
+  const [imageFailed, setImageFailed] = useState(false);
+  return (
+    <aside aria-label={entry.name} className="flex max-h-[40rem] shrink-0 flex-col border-t border-ink-black bg-bristol studio-desktop:max-h-none studio-desktop:w-[26rem] studio-desktop:border-l studio-desktop:border-t-0 studio-desktop:shadow-[-18px_0_40px_-24px_rgba(27,28,21,0.45)]">
+      <div className="shrink-0 px-6 pb-4 pt-5">
+        <div className="flex items-center">
+          <p className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{[kindLabel, ...meta].join(" · ")}</p>
+          <button type="button" aria-label={t("Close")} onClick={onClose}
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center text-ink-soft hover:bg-surface-container hover:text-ink-black"><X size={16} aria-hidden="true" /></button>
+        </div>
+        <h3 className="mt-1.5 break-words font-display text-[1.875rem] font-black uppercase leading-[0.95] tracking-[-0.03em]">{entry.name}</h3>
+        {!!entry.aliases?.length && <p className="mt-2 font-meta text-[0.8125rem] text-ink-muted">{t("Also: {names}", { names: entry.aliases.join(", ") })}</p>}
+        {entry.origin === "author" && <p className="mt-1 font-meta text-[0.625rem] uppercase tracking-[0.1em] text-on-gold">{t("Added by you")}</p>}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {image && !imageFailed && (
+          <div className="border-t border-ink-black/10 px-6 py-4">
+            <img src={image} alt={t("{name} Cast reference", { name: entry.name })} onError={() => setImageFailed(true)}
+              className="block max-h-44 w-full object-contain object-left outline outline-1 outline-ink-black/15" />
+          </div>
+        )}
+        <div className="border-t border-ink-black/10 px-6 py-4">
+          <h4 className="mb-2 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("On the page")}</h4>
+          {affect && <p className="mb-2 font-body text-sm italic leading-6 text-ink-black/80">{affect}</p>}
+          <p className="whitespace-pre-line font-body text-sm leading-[1.6] text-ink-black">{readableAnchor(entry.visual_anchor)}</p>
+        </div>
+        {relationships.length > 0 && (
+          <div className="border-t border-ink-black/10 px-6 py-4">
+            <h4 className="mb-2 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Relationships")}</h4>
+            <ul className="space-y-1.5">
+              {relationships.map((relationship) => (
+                <li key={relationship.id}>
+                  <button type="button" onClick={() => onShow(relationship.id)}
+                    className="flex min-h-9 w-full items-center justify-between gap-3 border border-ink-black/12 px-2.5 text-left font-meta text-[0.8125rem] hover:border-ink-black">
+                    <span className="font-semibold">{relationship.name}</span>
+                    <span className="text-ink-muted">{relationship.relationship}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {looks.length > 0 && (
+          <div className="border-t border-ink-black/10 px-6 py-4">
+            <h4 className="mb-2 font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Looks")}</h4>
+            <ul className="space-y-1">
+              {looks.map((look) => <li key={look.id} className="flex items-center gap-2.5 font-meta text-[0.8125rem]"><span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 border border-ink-black bg-bristol" />{look.label}</li>)}
+            </ul>
+          </div>
+        )}
+        {(firstAppears || settings.length > 0 || cited.length > 0) && (
+          <dl className="space-y-1.5 border-t border-ink-black/10 px-6 py-4 font-body text-[0.8125rem] leading-5">
+            {firstAppears && <div className="flex gap-2"><dt className="shrink-0 text-ink-muted">{t("First appears")}</dt><dd className="min-w-0">{firstAppears}</dd></div>}
+            {settings.length > 0 && <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-muted">{t("{count, plural, one {Scene} other {Scenes}}", { count: settings.length })}</dt>
+              <dd className="min-w-0 font-meta tabular-nums">{settings.join(", ")}</dd>
+            </div>}
+            {cited.length > 0 && <div><dd className="text-ink-muted">{t("Used in {parts}", { parts: cited.join(", ") })}</dd></div>}
+          </dl>
+        )}
+      </div>
+      {onEdit && (
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-ink-black/12 bg-pulp-paper px-6 py-3">
+          <Button size="sm" variant="secondary" onClick={onEdit}><Pencil size={13} aria-hidden="true" />{t("Edit details")}</Button>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -176,16 +404,16 @@ function UndoBar({ project, editor }: { project: string; editor: Editor }) {
   if (!editor.undo) return null;
   const { change, blocked } = editor.undo;
   return (
-    <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-l-4 border-narrator-gold bg-surface-container px-4 py-3">
-      <p className="min-w-0 flex-1 font-body text-sm">
-        <span className="mr-2 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Last change")}</span>
+    <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <p className="min-w-0 font-meta text-[0.8125rem] text-ink-soft">
+        <span className="mr-1.5 text-ink-muted">{t("Last change")}:</span>
         {describeChange(change, t)}
-        {blocked && <span className="mt-1 block text-xs text-ink-muted">{t("An adapted part now uses what this change added, so it can't be undone.")}</span>}
+        {blocked && <span className="ml-2 text-xs text-ink-muted">{t("An adapted part now uses what this change added, so it can't be undone.")}</span>}
       </p>
       {undo.error && <ErrorNotice error={undo.error} operation="save" />}
-      <Button size="sm" variant="outline" disabled={!!blocked || undo.isPending}
+      <Button size="xs" variant="outline" className="border-transparent" disabled={!!blocked || undo.isPending}
         onClick={() => undo.mutate({ project, revision: editor.revision })}>
-        <Undo2 size={16} aria-hidden="true" className="mr-2 inline" />{undo.isPending ? t("Undoing…") : t("Undo")}
+        <Undo2 size={13} aria-hidden="true" />{undo.isPending ? t("Undoing…") : t("Undo")}
       </Button>
     </div>
   );
@@ -204,39 +432,31 @@ function ReferencesToUpdate({ project, editor }: { project: string; editor: Edit
     ([...bible.characters, ...bible.locations, ...bible.props] as unknown as Entry[]).map((entity) => [entity.id, entity]),
   );
   return (
-    <section aria-label={t("Cast images to update")} className="space-y-3 border-l-4 border-hero-red bg-surface-container px-4 py-4">
-      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
-        <div className="min-w-0 flex-1">
-          <h3 className="font-meta text-xs font-bold uppercase tracking-[0.12em]">
-            {t("{count, plural, one {# Cast image to update} other {# Cast images to update}}", { count: pending.length })}
-          </h3>
-          <p className="mt-1 font-body text-sm text-ink-muted">
-            {t("Your edits changed or added these entries. Pages draw them from Cast images, so update the images before drawing.")}
-          </p>
-        </div>
-        <Button size="sm" className="shrink-0" disabled={busy}
-          onClick={() => navigate({ pathname: "../cast", search: UPDATE_REFERENCES_SEARCH }, { relative: "path" })}>
-          {t("Update in Cast")}<ArrowRight size={16} aria-hidden="true" className="ml-2 inline" />
-        </Button>
+    <section aria-label={t("Cast images to update")} className="flex flex-wrap items-center gap-x-4 gap-y-2 border border-ink-black bg-narrator-gold/35 px-3.5 py-2">
+      <div className="min-w-0 flex-1">
+        <h3 className="inline font-meta text-[0.8125rem] font-semibold">
+          {t("{count, plural, one {# Cast image to update} other {# Cast images to update}}", { count: pending.length })}
+        </h3>
+        <ul className="inline">
+          {pending.map((ref) => {
+            const entity = entities.get(ref.entity_id);
+            const look = ref.state_id ? entity?.appearance_states?.find((state) => state.id === ref.state_id)?.label ?? ref.state_id : null;
+            return (
+              <li key={`${ref.entity_id}:${ref.state_id ?? ""}`} className="ml-3 inline font-body text-[0.8125rem]">
+                <span className="font-semibold">{entity?.name ?? ref.entity_id}</span>
+                {look && <span className="text-ink-soft"> · {look}</span>}
+                <span className="ml-1.5 text-xs text-ink-muted">({ref.status === "missing" ? t("New, no image yet") : t("Changed since its image")})</span>
+              </li>
+            );
+          })}
+        </ul>
+        {busy && <p className="mt-0.5 font-body text-xs text-ink-muted">{t("Work is running on this project. Update these once it finishes.")}</p>}
       </div>
-      <ul className="space-y-1 font-body text-sm">
-        {pending.map((ref) => {
-          const entity = entities.get(ref.entity_id);
-          const look = ref.state_id ? entity?.appearance_states?.find((state) => state.id === ref.state_id)?.label ?? ref.state_id : null;
-          return (
-            <li key={`${ref.entity_id}:${ref.state_id ?? ""}`}>
-              <span className="font-bold">{entity?.name ?? ref.entity_id}</span>
-              {look && <span className="text-ink-muted"> · {look}</span>}
-              <span className="ml-2 font-meta text-[0.65rem] uppercase tracking-[0.12em] text-ink-muted">
-                {ref.status === "missing" ? t("New, no image yet") : t("Changed since its image")}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="font-body text-xs text-ink-muted">
-        {busy ? t("Work is running on this project. Update these once it finishes.") : t("Cast shows the cost before generating anything.")}
-      </p>
+      <Button size="sm" variant="secondary" className="shrink-0" disabled={busy}
+        title={t("Cast shows the cost before generating anything.")}
+        onClick={() => navigate({ pathname: "../cast", search: UPDATE_REFERENCES_SEARCH }, { relative: "path" })}>
+        {t("Update in Cast")}<ArrowRight size={14} aria-hidden="true" />
+      </Button>
     </section>
   );
 }
@@ -285,85 +505,6 @@ function DuplicateSuggestions({ project, editor, onCompare }: {
         })}
       </ul>
     </section>
-  );
-}
-
-/** Who or what an entry is, at a glance; the whole card opens its editor when one is available. */
-function EntityCard({ kind, entry, context, onOpen }: {
-  kind: EntityKind; entry: Entry; context: CardContext; onOpen?: () => void;
-}) {
-  const { t } = useI18n();
-  const { bible, editor, partScenes, numbers } = context;
-  const details = entry as Entry & Partial<Character> & Partial<Location> & Partial<Prop>;
-  const cited = editor?.citations[entry.id] ?? [];
-  const stale = referencesToUpdate(editor?.references).filter((ref) => ref.entity_id === entry.id);
-  const marker = !stale.length ? null
-    : stale.some((ref) => ref.status === "outdated") ? t("Cast image out of date") : t("No Cast image yet");
-  const meta = kind === "characters" ? [details.age_range, details.gender].filter(known)
-    : kind === "locations" ? [readablePhrase(details.time_of_day), readablePhrase(details.mood)].filter(known) : [];
-  const affect = kind === "characters" ? readablePhrase(details.baseline_affect) : "";
-  const names = new Map(bible.characters.map((character) => [character.id, character.name]));
-  const relationships = (details.relationships ?? []).flatMap((relationship) => {
-    const name = names.get(relationship.character_id);
-    return name && relationship.relationship ? [{ name, relationship: relationship.relationship }] : [];
-  });
-  // A first appearance may lie in an earlier part; name the part when it isn't numbered here.
-  const firstScene = kind === "locations" || !details.first_appearance_scene ? undefined
-    : [...bible.scenes, ...partScenes].find((scene) => scene.id === details.first_appearance_scene);
-  const firstPart = firstScene && !numbers.has(firstScene.id) ? editor?.parts.find((part) => part.id === firstScene.part_id)?.title : undefined;
-  const firstAppears = firstScene && [numbers.get(firstScene.id) ?? firstPart, firstScene.title].filter(Boolean).join(" · ");
-  const settings = kind === "locations"
-    ? partScenes.filter((scene) => scene.location_id === entry.id && numbers.has(scene.id)).map((scene) => numbers.get(scene.id)!) : [];
-  return (
-    <li className={`group relative flex min-w-0 items-start gap-3 border-b border-ink-black/15 px-3 py-6 ${onOpen ? "hover:bg-surface-container/60" : ""}`}>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 className="font-display text-xl font-bold leading-tight">
-            {onOpen ? (
-              <button type="button" onClick={onOpen}
-                className="text-left underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-ink-black">
-                {entry.name}
-              </button>
-            ) : entry.name}
-          </h3>
-          {entry.origin === "author" && <span className="font-meta text-[0.6rem] uppercase tracking-[0.12em] text-narrator-gold">{t("Added by you")}</span>}
-          {marker && (
-            <Link to={{ pathname: "../cast", search: UPDATE_REFERENCES_SEARCH }} relative="path"
-              className="relative z-10 font-meta text-[0.6rem] uppercase tracking-[0.12em] text-hero-red underline">
-              {marker}
-            </Link>
-          )}
-        </div>
-        {meta.length > 0 && <p className="mt-1.5 font-meta text-xs text-ink-muted">{meta.join(" · ")}</p>}
-        {!!entry.aliases?.length && <p className="mt-1 font-body text-xs text-ink-muted">{t("Also: {names}", { names: entry.aliases.join(", ") })}</p>}
-        {affect && <p className="mt-3 font-body text-sm italic leading-6 text-ink-black/80">{affect}</p>}
-        <p className="mt-3 whitespace-pre-line font-body text-sm leading-7 text-ink-black">{readableAnchor(entry.visual_anchor)}</p>
-        {(relationships.length > 0 || firstAppears || settings.length > 0) && (
-          <dl className="mt-4 space-y-1.5 text-xs leading-5 text-ink-muted">
-            {relationships.map((relationship) => (
-              <div key={relationship.name} className="flex flex-wrap gap-x-1.5">
-                <dt className="font-bold text-ink-black">{relationship.name}</dt>
-                <dd className="min-w-0">· {relationship.relationship}</dd>
-              </div>
-            ))}
-            {firstAppears && (
-              <div className="flex gap-1.5">
-                <dt className="shrink-0">{t("First appears")}</dt>
-                <dd className="min-w-0 text-ink-black">{firstAppears}</dd>
-              </div>
-            )}
-            {settings.length > 0 && (
-              <div className="flex gap-1.5">
-                <dt className="shrink-0">{t("{count, plural, one {Scene} other {Scenes}}", { count: settings.length })}</dt>
-                <dd className="min-w-0 font-meta tabular-nums text-ink-black">{settings.join(", ")}</dd>
-              </div>
-            )}
-          </dl>
-        )}
-        {cited.length > 0 && <p className="mt-1.5 font-body text-xs text-ink-muted">{t("Used in {parts}", { parts: cited.join(", ") })}</p>}
-      </div>
-      {onOpen && <ChevronRight size={20} aria-hidden="true" className="mt-1 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />}
-    </li>
   );
 }
 

@@ -87,8 +87,11 @@ vi.mock("../api/client", async (original) => ({
 
 afterEach(() => { server.calls = []; server.castIds = undefined; server.undo = null; server.duplicates = []; server.references = undefined; server.props = []; server.running = false; localStorage.clear(); });
 
-const openEntry = async (user: ReturnType<typeof userEvent.setup>, name: string) =>
-  user.click(await screen.findByRole("button", { name }));
+/** Picks the entry in the list, then opens its editor from the entry panel. */
+const openEntry = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+  await user.click(await screen.findByRole("button", { name }));
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
+};
 
 function CastLocation() {
   const location = useLocation();
@@ -108,12 +111,13 @@ function renderEditor(story?: Editor["story_bible"]) {
 it("hides internal subject labels in Story Bible rows and description editors", async () => {
   const user = userEvent.setup();
   const view = renderEditor();
-  const mara = (await screen.findByText("Mara")).closest("li")!;
-  expect(within(mara).getByText("Short black hair, grey coat.")).toBeTruthy();
+  await user.click(await screen.findByRole("button", { name: "Ines" }));
   expect(screen.getByText("Long red hair.")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Mara" }));
+  expect(screen.getByText("Short black hair, grey coat.")).toBeTruthy();
   expect(view.container.textContent).not.toMatch(/\b1woman\b/);
 
-  await openEntry(user, "Mara");
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
   const sheet = screen.getByRole("dialog", { name: "Edit Mara" });
   const description = within(sheet).getByLabelText("Physical description *") as HTMLTextAreaElement;
   expect(description.value).toBe("short black hair, grey coat.");
@@ -190,10 +194,10 @@ it("keeps the editor focused on recurring cast and lets authors inspect every so
 it("keeps what adapted parts cite and previews a removal before it happens", async () => {
   const user = userEvent.setup();
   renderEditor();
-  const mara = (await screen.findByText("Mara")).closest("li")!;
-  expect(within(mara).getByText("Used in Book One")).toBeTruthy();
-  expect(within(mara).queryByRole("button", { name: "Remove" })).toBeNull();  // never on the list
-  await openEntry(user, "Mara");
+  await user.click(await screen.findByRole("button", { name: "Mara" }));
+  expect(screen.getByText("Used in Book One")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();  // never on the list or panel
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
   let sheet = screen.getByRole("dialog", { name: "Edit Mara" });
   expect(within(sheet).getByText(/Book One already uses this entry/)).toBeTruthy();
   expect((within(sheet).getByRole("button", { name: "Remove from the story…" }) as HTMLButtonElement).disabled).toBe(true);
@@ -294,23 +298,23 @@ it("shows this part's scenes read-only beside who and where the shared entries a
     ? { ...character, baseline_affect: "guarded_and_precise", relationships: [{ character_id: "ines", relationship: "estranged sister" }] }
     : character) });
   expect(screen.getByRole("heading", { name: "Inside your story" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: /^Scenes\s*1$/ }).getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByRole("heading", { name: "The storm" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Add a character" })).toBeNull();
 
   // Once loaded, entries come from the shared editor copy, not this part's snapshot.
-  await user.click(await screen.findByRole("button", { name: /^Characters\s*2$/ }));
-  const mara = screen.getByRole("heading", { name: "Mara" }).closest("li")!;
-  expect(within(mara).getByText("adult · female")).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: /^Characters\s*2$/ })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Mara" }));
+  const mara = screen.getByRole("heading", { name: "Mara", level: 3 }).closest("aside")!;
+  expect(within(mara).getByText("Character · adult · female")).toBeTruthy();
   expect(within(mara).queryByText("· estranged sister")).toBeNull();
-  // The first appearance lies in an earlier part, so the card names it.
+  // The first appearance lies in an earlier part, so the panel names it.
   expect(within(mara).getByText("Book One · The light")).toBeTruthy();
   expect(within(mara).getByText("Used in Book One")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Add a character" })).toBeTruthy();
 
-  await user.click(screen.getByRole("button", { name: /^Places\s*1$/ }));
-  const lamp = screen.getByRole("heading", { name: "Lamp room" }).closest("li")!;
-  expect(within(lamp).getByText("Calm")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Lamp room" }));
+  const lamp = screen.getByRole("heading", { name: "Lamp room", level: 3 }).closest("aside")!;
+  expect(within(lamp).getByText(/Calm/)).toBeTruthy();
   expect(within(lamp).getByText("01")).toBeTruthy();
 
   await user.click(screen.getByRole("button", { name: /Removed/ }));
@@ -332,7 +336,6 @@ it("lists Cast images that edits left missing or out of date and leads to Cast t
   expect(within(notice).getByText("Wooden sphinx").parentElement!.textContent).toContain("New, no image yet");
   expect(within(notice).getByText("Ines").parentElement!.textContent).toContain("Changed since its image");
 
-  await user.click(screen.getByRole("button", { name: /^Props\s*1$/ }));
   const sphinx = screen.getByRole("button", { name: "Wooden sphinx" }).closest("li")!;
   expect(within(sphinx).getByRole("link", { name: "No Cast image yet" }).getAttribute("href"))
     .toBe("/project/p1~part_0002/cast?references=update");

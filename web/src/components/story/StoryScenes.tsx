@@ -1,10 +1,20 @@
+import { useState } from "react";
 import { MapPin, Users } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import type { Scene, StoryBible } from "../../types/api";
 import { narrativeScenes, readablePhrase, sceneNumbers } from "./storyPhrases";
 
-/** This part's extracted scenes, read-only: shape the adaptation in the brief. */
-export function StoryScenes({ story }: { story: StoryBible }) {
+/**
+ * This part's extracted scenes as a board, read-only: one column per
+ * sequence, in reading order. `isMatch` dims the scenes an entry isn't in;
+ * `imageFor` returns a place's Cast plate when one exists.
+ */
+export function StoryScenes({ story, isMatch, imageFor }: {
+  story: StoryBible;
+  isMatch?: (scene: Scene) => boolean;
+  imageFor?: (locationId: string) => string | undefined;
+}) {
   const { t } = useI18n();
   const scenes = narrativeScenes(story.scenes);
   const excludedSourceMatter = scenes.length < story.scenes.length;
@@ -32,56 +42,71 @@ export function StoryScenes({ story }: { story: StoryBible }) {
 
   if (!scenes.length) return <p className="py-8 text-sm text-ink-muted">{t("No scenes were extracted from this manuscript.")}</p>;
 
-  function sceneRow(scene: Scene, index: number, group: Scene[]) {
+  function sceneCard(scene: Scene, index: number, group: Scene[]) {
     const number = numbers.get(scene.id) ?? "";
     const location = scene.location_id === null ? undefined : locations.get(scene.location_id);
     const cast = scene.character_ids.flatMap((id) => characters.get(id) ?? []);
     // A beat marks where the story moves; repeating it on every scene is noise.
     const beat = scene.narrative_beat === group[index - 1]?.narrative_beat ? "" : readablePhrase(scene.narrative_beat);
+    const image = scene.location_id ? imageFor?.(scene.location_id) : undefined;
     const Heading = grouped ? "h4" : "h3";
+    const dimmed = isMatch ? !isMatch(scene) : false;
     return (
-      <li key={scene.id} className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]">
-        <span aria-label={`${t("SCENE")} ${Number(number)}`} className="row-span-2 pt-1 font-display text-3xl font-black tabular-nums text-hero-red md:text-5xl xl:row-span-1">
-          {number}
-        </span>
-        <article className="min-w-0">
-          {beat && <p className="mb-1.5 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{beat}</p>}
-          <Heading className="font-display text-lg font-bold leading-tight md:text-xl">{scene.title}</Heading>
-          <p className="mt-3 whitespace-pre-line text-sm leading-7 text-ink-black">{scene.summary}</p>
+      <li key={scene.id} className={cn("border border-ink-black/16 bg-bristol transition-opacity duration-150", dimmed && "opacity-30")}>
+        <div className={cn("relative", image ? "h-12 overflow-hidden bg-ink-black" : "px-2.5 pt-2.5")}>
+          {image && <PlateBand src={image} />}
+          <span aria-label={`${t("SCENE")} ${Number(number)}`}
+            className={cn("inline-flex h-[1.375rem] min-w-[1.625rem] items-center justify-center border border-ink-black bg-pulp-paper px-1 font-meta text-[0.6875rem] font-bold tabular-nums", image && "absolute left-1.5 top-1.5")}>
+            {number}
+          </span>
+        </div>
+        <article className="min-w-0 px-2.5 pb-3 pt-2">
+          {beat && <p className="mb-1 font-meta text-[0.625rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{beat}</p>}
+          <Heading className="font-meta text-[0.8125rem] font-semibold leading-[1.3] text-ink-black">{scene.title}</Heading>
+          <p className="mt-1.5 line-clamp-3 whitespace-pre-line font-body text-xs leading-[1.5] text-ink-soft" title={scene.summary}>{scene.summary}</p>
+          {(location || cast.length > 0 || multipleChapters) && (
+            <div className="mt-2 space-y-0.5 font-body text-[0.6875rem] leading-[1.45] text-ink-muted">
+              {multipleChapters && <p className="font-meta">{t("Chapter")} {scene.chapter}</p>}
+              {location && <p className="flex items-start gap-1"><MapPin className="mt-px shrink-0" size={11} aria-hidden="true" /><span className="min-w-0">{location}</span></p>}
+              {cast.length > 0 && <p className="flex items-start gap-1"><Users className="mt-px shrink-0" size={11} aria-hidden="true" /><span className="min-w-0">{cast.join(", ")}</span></p>}
+            </div>
+          )}
         </article>
-        {(location || cast.length > 0 || multipleChapters) && (
-          <div className="col-start-2 flex min-w-0 flex-wrap gap-x-5 gap-y-2 text-xs leading-5 text-ink-muted xl:col-start-3 xl:flex-col xl:border-l xl:border-ink-black/15 xl:pl-5 xl:pt-1">
-            {multipleChapters && <span className="font-meta">{t("Chapter")} {scene.chapter}</span>}
-            {location && <span className="inline-flex items-start gap-1.5"><MapPin className="mt-0.5 shrink-0" size={14} aria-hidden="true" />{location}</span>}
-            {cast.length > 0 && <span className="inline-flex items-start gap-1.5"><Users className="mt-0.5 shrink-0" size={14} aria-hidden="true" />{cast.join(", ")}</span>}
-          </div>
-        )}
       </li>
     );
   }
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-4">
       {excludedSourceMatter && <p className="text-sm text-ink-muted">{t("Author notes and other non-story material are excluded from adaptation.")}</p>}
-      {groups.map((group) => (
-        <section key={group.key} aria-label={group.title || undefined}>
-          {group.title && (
-            <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b-2 border-ink-black pb-3">
-              {group.number > 0 && <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.6rem] font-bold uppercase tracking-[0.12em] text-ink-black">{t("Sequence {number}", { number: group.number })}</span>}
-              <h3 className="font-display text-xl font-black uppercase leading-tight tracking-[-0.02em] md:text-2xl">{group.title}</h3>
-            </header>
-          )}
-          <ol className="divide-y divide-ink-black/15 border-b border-ink-black/15">
-            {group.scenes.map(sceneRow)}
-          </ol>
-          {group.turn && (
-            <p className="mt-4 border-l-4 border-narrator-gold py-1 pl-4 text-sm leading-6 text-ink-black md:ml-[5.5rem]">
-              <span className="mr-2 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Turn")}</span>
-              {group.turn}
-            </p>
-          )}
-        </section>
-      ))}
+      <div className={grouped ? "grid auto-cols-[minmax(13.5rem,1fr)] grid-flow-col gap-4" : ""}>
+        {groups.map((group) => (
+          <section key={group.key} aria-label={group.title || undefined} className="min-w-0">
+            {group.title && (
+              <header className="px-0.5 pb-3 pt-1">
+                <div className="flex items-center gap-2">
+                  {group.number > 0 && <span className="inline-flex h-[1.375rem] items-center border border-ink-black bg-narrator-gold px-1.5 font-meta text-[0.625rem] font-bold uppercase tracking-[0.1em] text-ink-black">{t("Sequence {number}", { number: group.number })}</span>}
+                  <span className="font-meta text-[0.6875rem] text-ink-muted">{t("{count, plural, one {# scene} other {# scenes}}", { count: group.scenes.length })}</span>
+                </div>
+                <h3 className="mt-2 font-display text-base font-black uppercase leading-[1.02] tracking-[-0.02em]">{group.title}</h3>
+                {group.turn && <p className="mt-1.5 line-clamp-3 font-body text-xs leading-[1.45] text-ink-soft" title={group.turn}>
+                  <span className="sr-only">{t("Turn")}: </span>{group.turn}
+                </p>}
+              </header>
+            )}
+            <ol className={grouped ? "space-y-2.5" : "grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2.5"}>
+              {group.scenes.map(sceneCard)}
+            </ol>
+          </section>
+        ))}
+      </div>
     </div>
   );
+}
+
+/** A place's plate as the scene card's header strip; absent or broken plates leave the ink band. */
+function PlateBand({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} className="absolute inset-0 h-full w-full object-cover" />;
 }
