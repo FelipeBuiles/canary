@@ -330,6 +330,71 @@ model_list:
     input_cost_per_token: 3.0e-07
     cache_read_input_token_cost: 6.0e-09
     output_cost_per_token: 1.2e-06
+# Text through Runware's OpenAI-compatible chat endpoint, a second quota for
+# Vertex rate limits (litellm_handlers/runware_text.py). One request per call,
+# no streaming; the handler folds thinking Runware reports outside
+# completion_tokens into billed output. Rates are Runware's catalog prices
+# (GET /v1/models and model pages, 2026-10-27). allowed_openai_params lets the
+# app's controls reach the custom provider with drop_params off.
+- model_name: runware-gemini-4-argon
+  litellm_params:
+    model: runware-text/google-gemini-4-argon
+    api_key: os.environ/RUNWARE_API_KEY
+    api_base: https://api.runware.ai/v1/chat/completions
+    allowed_openai_params: &runware_text_params
+    - response_format
+    - reasoning_effort
+    - max_completion_tokens
+    - max_tokens
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_vision: true
+    supports_native_streaming: false
+    max_input_tokens: 1048576
+    # Runware's catalog limit; matches the 32,768 ceiling seen on Vertex.
+    max_output_tokens: 32768
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
+- model_name: runware-deepseek-v4.1-flash-1017
+  litellm_params:
+    model: runware-text/deepseek-v4-1-flash-1017
+    api_key: os.environ/RUNWARE_API_KEY
+    api_base: https://api.runware.ai/v1/chat/completions
+    allowed_openai_params: *runware_text_params
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_native_streaming: false
+    max_input_tokens: 1048576
+    max_output_tokens: 1048576
+    input_cost_per_token: 1.5e-07
+    cache_read_input_token_cost: 1.0e-08
+    output_cost_per_token: 6.0e-07
+# Listed on runware.ai (status compatible-only) but rejected by the API for
+# this account as of 2026-10-27; the route waits for Runware to enable it.
+- model_name: runware-gpt-6.1-terra
+  litellm_params:
+    model: runware-text/openai-gpt-6-1-terra
+    api_key: os.environ/RUNWARE_API_KEY
+    api_base: https://api.runware.ai/v1/chat/completions
+    allowed_openai_params: *runware_text_params
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_native_streaming: false
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
+    input_cost_per_token: 1.0e-06
+    cache_read_input_token_cost: 5.0e-08
+    output_cost_per_token: 5.0e-06
+    input_cost_per_token_above_272k_tokens: 2.0e-06
+    cache_read_input_token_cost_above_272k_tokens: 1.0e-07
+    output_cost_per_token_above_272k_tokens: 7.5e-06
 - model_name: image-sunburst
   litellm_params:
     model: fal-queue/openai/gpt-image-2.5/sunburst
@@ -393,5 +458,7 @@ litellm_settings:
     custom_handler: litellm_handlers.textract.textract_llm
   - provider: runware
     custom_handler: litellm_handlers.runware_provider.runware_image_llm
+  - provider: runware-text
+    custom_handler: litellm_handlers.runware_text.runware_text_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -38,6 +38,7 @@ COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_hand
 COPY litellm_handlers/image_previews.py /app/litellm_handlers/
 COPY litellm_handlers/textract.py /app/litellm_handlers/
 COPY litellm_handlers/runware_provider.py /app/litellm_handlers/
+COPY litellm_handlers/runware_text.py /app/litellm_handlers/
 COPY scripts/gateway_state.py /app/gateway_state.py
 # The refresh command supplies a digest of the Dockerfile, lockfiles, patches,
 # and startup helper. Direct builds remain untracked until refreshed once.

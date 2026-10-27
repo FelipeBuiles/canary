@@ -248,6 +248,22 @@ class AdaptationLedgerEntry(BaseModel):
         return self
 
 
+class AdaptationAmendment(BaseModel):
+    """One scoped author change to an accepted adaptation.
+
+    An amendment edits named beats in place instead of re-running Adapt, so a
+    page planned from an earlier revision stays valid while none of the beats
+    it cites changed since. A full Adapt run starts a new lineage with none.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    change_id: str = Field(min_length=1)
+    from_revision: int = Field(ge=1)
+    from_sha256: str = Field(min_length=64, max_length=64)
+    changed_beat_ids: tuple[str, ...] = Field(min_length=1)
+
+
 class BookAdaptation(RevisionedArtifact):
     """Canonical book-level adaptation, before page allocation."""
 
@@ -258,6 +274,25 @@ class BookAdaptation(RevisionedArtifact):
     beats: tuple[AdaptedBeat, ...] = Field(min_length=1)
     ledger: tuple[AdaptationLedgerEntry, ...] = Field(min_length=1)
     editorial_issues: tuple[EditorialIssue, ...] = ()
+    # Omitted while empty, so adaptations without amendments keep their hash.
+    amendments: tuple[AdaptationAmendment, ...] = Field(
+        default=(), exclude_if=lambda value: not value,
+    )
+
+    def cites_current_beats(self, revision: int, sha256: str, beat_ids) -> bool:
+        """Whether a page pinned to (revision, sha256) still matches every beat it cites.
+
+        True for this exact revision, or for an earlier one this adaptation was
+        amended from when no amendment since then changed a cited beat.
+        """
+
+        if (revision, sha256) == (self.revision, self.content_sha256):
+            return True
+        for index, amendment in enumerate(self.amendments):
+            if (amendment.from_revision, amendment.from_sha256) == (revision, sha256):
+                changed = {beat_id for later in self.amendments[index:] for beat_id in later.changed_beat_ids}
+                return not changed & set(beat_ids)
+        return False
 
     @model_validator(mode="after")
     def _validate_book(self) -> "BookAdaptation":

@@ -18,6 +18,9 @@ aliases:
   bedrock-claude-haiku-5-5: bedrock/converse/global.anthropic.claude-haiku-5-5
   deepseek-v4.1-flash: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
   mimo-v2.6-pro: openrouter/xiaomi/mimo-v2.6-pro
+  runware-gemini-4-argon: runware-text/google-gemini-4-argon
+  runware-deepseek-v4.1-flash-1017: runware-text/deepseek-v4-1-flash-1017
+  runware-gpt-6.1-terra: runware-text/openai-gpt-6-1-terra
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
   image-flare: openai/gpt-image-2.5-flare
@@ -140,6 +143,32 @@ model_overrides:
     mode: chat
     max_input_tokens: 1048576
     max_output_tokens: 131072
+  # Runware text catalog rates (GET /v1/models, model pages; 2026-10-27).
+  # Responses report no cost; usage includes thinking (litellm_handlers/runware_text.py).
+  runware-text/google-gemini-4-argon:
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
+    mode: chat
+    max_input_tokens: 1048576
+    max_output_tokens: 32768
+  runware-text/deepseek-v4-1-flash-1017:
+    input_cost_per_token: 1.5e-07
+    cache_read_input_token_cost: 1.0e-08
+    output_cost_per_token: 6.0e-07
+    mode: chat
+    max_input_tokens: 1048576
+    max_output_tokens: 1048576
+  runware-text/openai-gpt-6-1-terra:
+    input_cost_per_token: 1.0e-06
+    cache_read_input_token_cost: 5.0e-08
+    output_cost_per_token: 5.0e-06
+    input_cost_per_token_above_272k_tokens: 2.0e-06
+    cache_read_input_token_cost_above_272k_tokens: 1.0e-07
+    output_cost_per_token_above_272k_tokens: 7.5e-06
+    mode: chat
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
   # https://www.together.ai/models/deepseek-v4-1-flash (verified 2026-09-24).
   # Unprefixed key also covers the provider model returned in usage responses.
   deepseek-ai/DeepSeek-V4.1-Flash:

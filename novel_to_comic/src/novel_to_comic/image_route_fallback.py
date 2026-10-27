@@ -175,9 +175,12 @@ class RouteCircuit:
     """
 
     def __init__(self, *, threshold: int = 3, cooldown_seconds: float = 900.0,
-                 route: str = "openai", next_route: str = "FAL") -> None:
+                 route: str = "openai", next_route: str = "FAL", subject: str = "Sunburst",
+                 metric: str = "canary_image_route_circuit_opened_total") -> None:
         self._route = route
         self._next_route = next_route
+        self._subject = subject
+        self._metric = metric
         self._threshold = threshold
         self._cooldown = cooldown_seconds
         self._failures = 0
@@ -194,10 +197,10 @@ class RouteCircuit:
         if self._failures >= self._threshold:
             self._open_until = time.monotonic() + self._cooldown
             self._failures = 0
-            logger.error("%s Sunburst route disabled for %.0fs after %d consecutive failures; "
-                         "images go straight to %s", self._route, self._cooldown, self._threshold,
-                         self._next_route)
-            increment_metric("canary_image_route_circuit_opened_total", route=self._route)
+            logger.error("%s %s route disabled for %.0fs after %d consecutive failures; "
+                         "calls go straight to %s", self._route, self._subject, self._cooldown,
+                         self._threshold, self._next_route)
+            increment_metric(self._metric, route=self._route)
 
     def reset(self) -> None:
         self._failures = 0

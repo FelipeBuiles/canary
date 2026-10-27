@@ -24,6 +24,9 @@ made without a user in the AI request context: API models are operator-funded
 and priced from provider usage; Claude and Codex subscription models use the
 local subscription allowance and cost no credits or USD.
 
+Arms never switch routes: the Vertex→Runware rate-limit fallback is off
+inside Labs, so a cell's spend and output come from the model it names.
+
 A failed arm can be retried by hand. The retry rebuilds the arm's workspace
 from the source project and reruns every stage of its phase; it refuses to run
 if the prepared inputs no longer match the fingerprint the arm recorded, so
@@ -48,6 +51,7 @@ from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.artifacts import story_bible_path
 from novel_to_comic.config import load_config
 from novel_to_comic.text_models import default_reasoning, reasoning_options
+from novel_to_comic.text_route_fallback import pinned_text_routes
 from novel_to_comic.stages import REGISTRY, clean_cascade
 from novel_to_comic.state import STAGE_NAMES, PipelineState, StageState, load_state, save_state
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
@@ -508,7 +512,8 @@ async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: 
         try:
             # Each arm is one variant of the run's experiment on an opaque fixture ID.
             with ai_span(f"labs.{stage}", experiment_id=run_id, variant=cell_id, fixture_id=storage.fixture_id(source)), \
-                    ai_request_context(stage=stage, project_name=f"labs/{run_id}/{cell_id}"):
+                    ai_request_context(stage=stage, project_name=f"labs/{run_id}/{cell_id}"), \
+                    pinned_text_routes():
                 await REGISTRY[stage].run(config, workspace, StageRuntime(stage, state, workspace))
         except Exception as exc:
             error = clean_exception_message(exc)

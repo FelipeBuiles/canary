@@ -43,8 +43,6 @@ from novel_to_comic.workspace import part_ordinal, series_root
 if TYPE_CHECKING:
     from novel_to_comic.editorial import (
         StoredEditorialDecision,
-        StoryChangeDirective,
-        StoryChangeProposal,
     )
 
 
@@ -1184,32 +1182,6 @@ class TargetArtifacts:
     def editorial_decisions_path(self) -> Path:
         return self.editorial_dir / "decisions.json"
 
-    @property
-    def story_changes_dir(self) -> Path:
-        return self.project_dir / "story_changes"
-
-    def story_change_path(self, proposal_id: str) -> Path:
-        if (
-            not proposal_id
-            or proposal_id.strip() != proposal_id
-            or any(
-                part in {"", ".", ".."}
-                for part in Path(proposal_id).parts
-            )
-            or Path(proposal_id).is_absolute()
-            or not all(
-                character.isalnum() or character in {"_", "-"}
-                for character in proposal_id
-            )
-        ):
-            raise ValueError("story-change proposal id must be a safe relative name")
-        return self.story_changes_dir / f"proposal_{proposal_id}.json"
-
-    def story_directive_path(self, stage: str) -> Path:
-        if stage not in {"adapt", "plan"}:
-            raise ValueError("story-change directive stage must be 'adapt' or 'plan'")
-        return self.story_changes_dir / f"directive_{stage}.json"
-
     def read_editorial_decisions(self) -> tuple[StoredEditorialDecision, ...]:
         """Return revision-scoped keep/reopen records; absent means none."""
 
@@ -1238,57 +1210,65 @@ class TargetArtifacts:
         temporary.write_bytes(payload)
         os.replace(temporary, path)
 
-    def write_story_change(self, proposal: StoryChangeProposal) -> None:
+    @property
+    def notes_dir(self) -> Path:
+        # Outside adapt/ and plan/, which stage re-runs clear.
+        return self.project_dir / "notes"
 
-        self._write_model(self.story_change_path(proposal.id), proposal)
+    def note_change_path(self, change_id: str) -> Path:
+        if not re.fullmatch(r"note_[0-9a-f]{12}", change_id or ""):
+            raise ValueError("note change id must look like note_<12 hex>")
+        return self.notes_dir / f"{change_id}.json"
 
-    def read_story_change(self, proposal_id: str) -> StoryChangeProposal:
-        from novel_to_comic.editorial import StoryChangeProposal
+    def write_note_change(self, change) -> None:
+        self._write_model(self.note_change_path(change.id), change)
 
-        return self._read_model(
-            "story_change", self.story_change_path(proposal_id), StoryChangeProposal
-        )
+    def read_note_change(self, change_id: str):
+        from novel_to_comic.models.note_change import NoteChange
 
-    def list_story_changes(self) -> tuple[StoryChangeProposal, ...]:
-        from novel_to_comic.editorial import StoryChangeProposal
+        return self._read_model("note_change", self.note_change_path(change_id), NoteChange)
 
-        proposals: list[StoryChangeProposal] = []
-        directory = self.story_changes_dir
-        if directory.is_dir():
-            for path in sorted(directory.glob("proposal_*.json")):
-                proposals.append(
-                    self._read_model("story_change", path, StoryChangeProposal)
-                )
-        proposals.sort(key=lambda proposal: (proposal.created_at, proposal.id))
-        return tuple(proposals)
+    def list_note_changes(self) -> tuple:
+        from novel_to_comic.models.note_change import NoteChange
 
-    def write_story_directive(self, directive: StoryChangeDirective) -> None:
-        self._write_model(self.story_directive_path(directive.stage), directive)
+        if not self.notes_dir.is_dir():
+            return ()
+        changes = [self._read_model("note_change", path, NoteChange)
+                   for path in self.notes_dir.glob("note_*.json")]
+        return tuple(sorted(changes, key=lambda change: (change.created_at, change.id)))
 
-    def peek_story_directive(self, stage: str) -> StoryChangeDirective | None:
-        """Return the pending directive without consuming it.
+    def _note_snapshot_files(self) -> list[Path]:
+        pages = sorted((self.project_dir / "plan" / "pages").glob("page_*.json"))
+        return [self.adaptation_path, self.plan_path, *pages,
+                self.narrative_review_path("adapt"), self.narrative_review_path("plan")]
 
-        A file that exists but no longer parses raises instead of passing
-        ``None`` back: callers would otherwise run a billed generation that
-        silently ignores its approved instruction.
-        """
+    @locked_mutation
+    def snapshot_for_note(self, change_id: str) -> None:
+        """Copy the canonical Adapt and Plan files a carried note may rewrite."""
 
-        from novel_to_comic.editorial import StoryChangeDirective, StoryDirectiveError
+        snapshot = self.notes_dir / change_id
+        if snapshot.exists():
+            shutil.rmtree(snapshot)
+        for path in self._note_snapshot_files():
+            if path.exists():
+                destination = snapshot / path.relative_to(self.project_dir)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, destination)
 
-        path = self.story_directive_path(stage)
-        if not path.exists():
-            return None
-        try:
-            return StoryChangeDirective.model_validate_json(path.read_text())
-        except ValidationError as exc:
-            raise StoryDirectiveError(
-                f"stored {stage} story-change directive {path.name} is "
-                "unreadable; apply the story change again to rewrite it "
-                "before any generation runs"
-            ) from exc
+    @locked_mutation
+    def restore_note_snapshot(self, change_id: str) -> None:
+        """Put back exactly the files the snapshot held; archived page revisions stay."""
 
-    def clear_story_directive(self, stage: str) -> None:
-        self.story_directive_path(stage).unlink(missing_ok=True)
+        snapshot = self.notes_dir / change_id
+        if not snapshot.is_dir():
+            raise ArtifactMissing("note_snapshot", snapshot)
+        for path in self._note_snapshot_files():
+            saved = snapshot / path.relative_to(self.project_dir)
+            if saved.exists():
+                shutil.copy2(saved, path)
+            else:
+                path.unlink(missing_ok=True)
+        self.invalidate_finish()
 
     def write_preflight(self, preflight: FinishPreflight) -> None:
         self._write_model(self.preflight_path, preflight)

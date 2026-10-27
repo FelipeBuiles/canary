@@ -909,8 +909,19 @@ async def interpret_page_corrections(page_number: int, body: PageCorrectionCreat
         result = await prepared.run(user_id=user_id, project_id=project_id)
     except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    from novel_to_comic.correction_interpreter import claim_for
+    from novel_to_comic.note_scope import NoteScopeError
+
+    def reading_body(reading):
+        try:
+            claim = claim_for(reading, prepared.page)
+        except (NoteScopeError, ValueError):
+            claim = None
+        return {**reading.model_dump(include={"change_id", "route", "instruction", "reason"}),
+                "claim": claim.model_dump(mode="json") if claim is not None else None}
+
     return {"page_number": page_number, "parent_render_revision": body.parent_render_revision,
-            "changes": [reading.model_dump() for reading in result.value.changes]}
+            "changes": [reading_body(reading) for reading in result.value.changes]}
 
 
 @router.get("/pages/{page_number}/visual-review/estimate")

@@ -86,6 +86,15 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `reason` | `str | None` | `None` |
 | `preserved_function` | `str` | `Field(min_length=1)` |
 
+## AdaptationAmendment _(adaptation.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `change_id` | `str` | `Field(min_length=1)` |
+| `from_revision` | `int` | `Field(ge=1)` |
+| `from_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `changed_beat_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+
 ## StoryPosition _(appearance.py)_
 
 | Field | Type | Default |
@@ -229,6 +238,46 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `characters` | `list[BookCharacter]` | `[]` |
 | `themes` | `list[str]` | `[]` |
 | `motifs` | `list[str]` | `[]` |
+
+## OpeningSnapshot _(cold_open.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `version` | `Literal[1]` | `1` |
+| `bible` | `StoryBible` |  |
+| `text` | `str` | `Field(min_length=1)` |
+| `whole_source` | `bool` |  |
+
+## ColdOpenLook _(cold_open.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` |  |
+| `label` | `str` |  |
+| `medium` | `str` |  |
+| `status` | `Literal['queued', 'printing', 'ready', 'failed']` | `'queued'` |
+| `error` | `str | None` | `None` |
+
+## ColdOpenRecord _(cold_open.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `version` | `Literal[1]` | `1` |
+| `part_id` | `str` |  |
+| `status` | `Literal['printing', 'ready', 'failed']` | `'printing'` |
+| `scene_id` | `str | None` | `None` |
+| `scene_title` | `str` | `''` |
+| `scene_summary` | `str` | `''` |
+| `chapter` | `int | None` | `None` |
+| `looks` | `list[ColdOpenLook]` | `Field(default_factory=list)` |
+| `ranking` | `Literal['model', 'catalog']` | `'catalog'` |
+| `proof_copy` | `dict | None` | `None` |
+| `favorite_look_id` | `str | None` | `None` |
+| `adopted_look_ids` | `list[str]` | `Field(default_factory=list)` |
+| `provider_cost_usd` | `float` | `0.0` |
+| `unknown_cost_calls` | `int` | `0` |
+| `started_at` | `str` |  |
+| `finished_at` | `str | None` | `None` |
 
 ## CropOCRLine _(crop_ocr.py)_
 
@@ -823,6 +872,45 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `z_index` | `int` | `Field(default=0, ge=-1000, le=1000)` |
 | `tight_box` | `bool` | `True` |
 | `resolved` | `ResolvedLettering | None` | `None` |
+
+## FactCheck _(note_change.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `breaks_fact` | `bool` |  |
+| `panels` | `tuple[int, ...]` | `()` |
+| `evidence` | `str` | `''` |
+
+## NoteStamp _(note_change.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `adaptation_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `plan_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `story_bible_revision` | `int` | `Field(ge=1)` |
+
+## NoteChange _(note_change.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(pattern='^note_[0-9a-f]{12}$')` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `note` | `str` | `Field(min_length=1, max_length=1000)` |
+| `claim` | `NoteClaim` |  |
+| `scope` | `NoteScope` |  |
+| `status` | `NoteChangeStatus` | `'proposed'` |
+| `previewed` | `NoteStamp` |  |
+| `checks` | `tuple[FactCheck, ...]` | `()` |
+| `pages` | `tuple[int, ...]` | `()` |
+| `state_id` | `str | None` | `None` |
+| `added_state` | `bool` | `False` |
+| `redraw_pages` | `tuple[int, ...]` | `()` |
+| `applied` | `NoteStamp | None` | `None` |
+| `created_at` | `str` | `Field(min_length=1)` |
+| `applied_at` | `str | None` | `None` |
+| `undone_at` | `str | None` | `None` |
 
 ## ApprovedPageRange _(page.py)_
 

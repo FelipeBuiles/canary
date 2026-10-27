@@ -81,10 +81,17 @@ retained as current reference.
 
 ## Active future work
 
+- [Observable deployed environment updates](proposals/deployed-environment-updates.md):
+  proposed operator plan/apply/watch workflow for public settings and encrypted
+  bundles, sharing release safety gates with durable host-side progress.
 - [Cold Open](proposals/cold-open-2026-10-26.md): one Canary-paid page of the
   opening in three looks during Extract, with fingerprint-gated adoption into
   Style. Implemented October 27 and tested provider-free; house looks not yet
   generated or reviewed.
+- [The Director](proposals/director-2026-10-27.md): October 27 decision that a
+  book-wide chat does not belong; page notes carry through to every page they
+  touch, at the owning layer, with code-resolved page lists. Implemented and
+  tested provider-free; not yet run against paid providers.
 - [Textract second-pass OCR](proposals/textract-second-pass-ocr.md): October 7
   architecture and cost exploration, account-specific credit-access limits,
   and a bounded pilot proposal; no live OCR or production activation.

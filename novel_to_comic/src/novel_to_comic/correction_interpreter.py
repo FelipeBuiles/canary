@@ -26,7 +26,7 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 FEATURE = "draw.correction_interpret"
 # A page render costs roughly this much prompt text in image tokens.
 _IMAGE_PROMPT_CHARS = 4_400
-_OUTPUT_CHARS_PER_CHANGE = 600
+_OUTPUT_CHARS_PER_CHANGE = 900
 
 _SYSTEM = (
     "You prepare an author's change requests for a comic page before an image model edits it. "
@@ -41,6 +41,18 @@ class ChangeReading(BaseModel):
     route: Literal["draw", "plan", "script"]
     instruction: str = Field(min_length=1, max_length=1000)
     reason: str = Field(min_length=1, max_length=400)
+    # What the request reaches beyond this page's art. Facts only: code, not
+    # the model, finds the pages (note_scope).
+    reach: Literal["page", "beyond_page"] = "page"
+    entity_id: str | None = None
+    fact: str | None = Field(default=None, max_length=600)
+    look_id: str | None = None
+    look_label: str | None = Field(default=None, max_length=80)
+    look_anchor: str | None = Field(default=None, max_length=1200)
+    lettering_item_id: str | None = None
+    new_text: str | None = Field(default=None, max_length=2000)
+    new_speaker_entity_id: str | None = None
+    panel: int | None = Field(default=None, ge=1)
 
 
 class CorrectionReadings(BaseModel):
@@ -61,15 +73,34 @@ def _page_facts(page: ComicPage, inventory: ApprovedVisualReferenceInventory) ->
     return [
         {
             "panel": content.order,
-            "shows": [names.get(entity_id, entity_id) for entity_id in content.entity_ids],
+            "shows": [{"id": entity_id, "name": names.get(entity_id, entity_id),
+                       "look": content.appearance_states.get(entity_id)} for entity_id in content.entity_ids],
             "visual_intent": content.visual_intent,
             "lettering": [
-                {"kind": item.kind, "speaker": item.speaker, "delivery": item.delivery, "text": item.text}
+                {"id": item.id, "kind": item.kind, "speaker": item.speaker, "delivery": item.delivery,
+                 "text": item.text}
                 for item in content.lettering
             ],
         }
         for content in sorted(page.content, key=lambda content: content.order)
     ]
+
+
+def _looks(page: ComicPage, inventory: ApprovedVisualReferenceInventory) -> list[dict]:
+    """Each visible entity's descriptions, so a fact can name an existing look or a new one."""
+    visible = list(dict.fromkeys(entity_id for content in page.content for entity_id in content.entity_ids))
+    entries = []
+    for entity_id in visible:
+        references = [reference for reference in inventory.references if reference.entity_id == entity_id]
+        base = next((reference for reference in references if reference.appearance_state_id is None), None)
+        if base is None or base.kind not in ("character", "location", "prop"):
+            continue
+        entries.append({
+            "id": entity_id, "name": base.label or entity_id, "description": base.visual_anchor,
+            "looks": [{"look_id": reference.appearance_state_id, "description": reference.visual_anchor}
+                      for reference in references if reference.appearance_state_id is not None],
+        })
+    return entries
 
 
 def _requests(changes: tuple[CorrectionChange, ...]) -> list[dict]:
@@ -117,9 +148,22 @@ def interpretation_prompt(
         f"{lettering_rule}\n"
         "A request mixing kinds takes the route of its main change and names the rest in the reason. "
         "The reason is one short sentence for the author, in plain language.\n\n"
+        "Then say how far the request reaches; leave every field below empty when it is about this page "
+        "alone:\n"
+        "- A script request about one line: set lettering_item_id to that line's id, and new_text to its "
+        "exact new wording and/or new_speaker_entity_id to the character who should say it. A script "
+        "request about a missing or unclear story moment: set panel to the panel where it belongs.\n"
+        "- A draw or plan request that states a fact which should also hold on later pages (clothing, "
+        "hair, an injury, something carried, a place's layout), as in 'she took her apron off a few pages "
+        "back' or 'the staircase is on the right of the door': set reach to beyond_page, entity_id to the "
+        "character, place or prop, and fact to one plain sentence of what holds. If one of its looks "
+        "already matches, set look_id. If its description contradicts the fact, set look_label to a short "
+        "name for the new look and look_anchor to a complete description of it in that look, written "
+        "from its current description with only the fact changed. If its description already agrees "
+        "with the fact, set neither: only the art is wrong.\n\n"
         "Return one entry per request, in the same order, with its change_id.\n\n"
-        + json.dumps({"panels": _page_facts(page, inventory), "requests": _requests(changes)},
-                     ensure_ascii=False)
+        + json.dumps({"panels": _page_facts(page, inventory), "descriptions": _looks(page, inventory),
+                      "requests": _requests(changes)}, ensure_ascii=False)
     )
 
 
@@ -166,3 +210,25 @@ async def interpret_changes(
             raise ValueError("the change check did not return one reading per request; try again")
         readings = CorrectionReadings(changes=tuple(by_id[change_id] for change_id in expected))
     return ApiResult(value=readings, usage=result.usage)
+
+
+def claim_for(reading: ChangeReading, page: ComicPage):
+    """The typed claim a reading names, for note_scope to resolve; None when page-local."""
+    from novel_to_comic.note_scope import BeatClaim, LineClaim, LookClaim
+
+    item_ids = {item.id for content in page.content for item in content.lettering}
+    if reading.route == "script":
+        if reading.lettering_item_id in item_ids and (reading.new_text or reading.new_speaker_entity_id):
+            return LineClaim(lettering_item_id=reading.lettering_item_id, text=reading.new_text,
+                             speaker_entity_id=reading.new_speaker_entity_id)
+        panel = next((content for content in page.content if content.order == reading.panel), None)
+        beat_ids = panel.beat_ids if panel is not None else page.cited_beat_ids
+        return BeatClaim(beat_ids=tuple(beat_ids)[:6], note=reading.instruction)
+    if reading.reach == "beyond_page" and reading.entity_id and (reading.fact or "").strip():
+        visible = {entity_id for content in page.content for entity_id in content.entity_ids}
+        if reading.entity_id not in visible:
+            return None
+        return LookClaim(entity_id=reading.entity_id, fact=reading.fact.strip(), start_page=page.page_number,
+                         state_id=reading.look_id or None, look_label=reading.look_label or None,
+                         look_anchor=reading.look_anchor or None)
+    return None

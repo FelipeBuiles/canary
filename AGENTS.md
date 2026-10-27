@@ -46,6 +46,13 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   Sunburst submission, for Draw pages and Style/Cast images alike. Canary
   absorbs the lost attempt's cost, but it is still recorded in provenance,
   never hidden. Do not extend this to other routes.
+- The second approved route switch (2026-10-27): `run_rate_limit_fallback`
+  (`text_route_fallback.py`, behind `CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`)
+  moves a Vertex Argon text call to `runware-gemini-4-argon` only after Vertex
+  answers 429, a definite and unbilled non-submission. It never switches on
+  timeouts, 5xx or unknown outcomes, never returns to Vertex within a call,
+  records both attempts, and is off inside Labs. Do not extend it to other
+  models or failure kinds.
 - OCR observes base art only: unwanted comic lettering for hybrid profiles,
   canonical-copy checks for integrated profiles, including retained baked editions. It is optional evidence.
   Visual concerns require visual review;

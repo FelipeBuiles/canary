@@ -145,6 +145,7 @@ COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_hand
 COPY litellm_handlers/image_previews.py /app/litellm_handlers/
 COPY litellm_handlers/textract.py /app/litellm_handlers/
 COPY litellm_handlers/runware_provider.py /app/litellm_handlers/
+COPY litellm_handlers/runware_text.py /app/litellm_handlers/
 
 # Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
 # for readiness → supervises litellm and the web process together).

@@ -185,7 +185,7 @@ def page_source_view(target: TargetArtifacts, page_number: int) -> dict:
         raise PageSourceStale(
             "The adaptation no longer matches the manuscript. Re-run Adapt, then Plan."
         )
-    if page.adaptation_sha256 != adaptation.content_sha256:
+    if not page.cites_adaptation(adaptation):
         raise PageSourceStale(
             f"Page {page_number} was planned from an older adaptation. Re-run Plan."
         )

@@ -663,10 +663,7 @@ def finish_book(
                     ),
                 )
             )
-        if (
-            page.adaptation_revision != adaptation.revision
-            or page.adaptation_sha256 != adaptation.content_sha256
-        ):
+        if not page.cites_adaptation(adaptation):
             failures.append(
                 _failure(
                     page_number=selected.page_number,

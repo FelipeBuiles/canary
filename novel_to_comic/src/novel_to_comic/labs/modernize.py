@@ -41,6 +41,7 @@ from novel_to_comic.config import load_config
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.state import load_state
 from novel_to_comic.text_models import default_reasoning, reasoning_options
+from novel_to_comic.text_route_fallback import pinned_text_routes
 
 from . import stage_models, storage
 
@@ -473,7 +474,8 @@ async def run_arm(user_root: Path, run_id: str, project: str, arm: dict[str, Any
             "dev_model_selections": {}, "text_reasoning_efforts": {}, "text_reasoning_effort": arm["reasoning"],
         })
         with ai_span("labs.modernize", experiment_id=run_id, variant=cell_id, fixture_id=storage.fixture_id(project)), \
-                ai_request_context(stage="modernize", project_name=f"labs/{run_id}/{cell_id}"):
+                ai_request_context(stage="modernize", project_name=f"labs/{run_id}/{cell_id}"), \
+                pinned_text_routes():
             result = await generate_json(
                 config, arm["model"], system_prompt(controls), user_content(source["paragraphs"]),
                 temperature=0.4, max_output_tokens=max_output_tokens(source["words"]),

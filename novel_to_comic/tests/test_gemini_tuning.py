@@ -156,3 +156,12 @@ def test_registry_section_keeps_its_domain_variants_and_id_references():
         schema["properties"]["characters"]["items"]["anyOf"])
     assert actual["$defs"]["KnownCharacterId"] == schema["$defs"]["KnownCharacterId"]
     assert actual["$defs"]["Scene"]["properties"]["location_id"] == schema["$defs"]["Scene"]["properties"]["location_id"]
+
+
+@pytest.mark.parametrize("feature", ["extract.story_bible", "brief.infer", "adapt.lettering", "adapt.book",
+                                     "plan.map", "plan.detail", "text.generate"])
+def test_runware_argon_sends_the_prompt_vertex_argon_would(feature):
+    request = {"system_prompt": "Rules.", "user_content": "Source.", "feature": feature,
+               "json_schema": extraction_schema(), "json_mode": False}
+    assert tuned_request("runware-gemini-4-argon", request) == tuned_request("gemini-4-argon", request)
+    assert gemini_tuning_enabled("runware-gemini-4-argon")

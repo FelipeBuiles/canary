@@ -5,6 +5,8 @@ pools:
   # Runware recommends 2-4 concurrent requests per model (docs, 2026-10-23).
   runware_images: 4
   vertex_text: 16
+  # Runware publishes no text rate limits; Plan and Adapt fan out shards.
+  runware_text: 8
 budgets:
   openai_images:
     aliases: [image-sunburst-openai, image-flare]
@@ -53,3 +55,12 @@ budgets:
       adapt.lettering: 4096
       plan.narrative_review: 512
       adapt.narrative_review: 512
+  runware_text:
+    provider: runware
+    pool: runware_text
+    per_model: true
+    # No published minute allowance: concurrency and shared 429 cooldowns
+    # only. The text estimator still sizes each call.
+    output_weight: 1
+    image_input_tokens: 1120
+    estimated_output_tokens: 8192

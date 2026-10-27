@@ -113,7 +113,7 @@ async def test_review_jobs_can_queue_during_a_stage_and_replay_once(tmp_path, su
 @pytest.mark.parametrize("suffix, expected", [
     ("/pages/2/issues", 200), ("/pages/2/issues/issue/accept", 200),
     ("/pages/2/issues/issue/dismiss", 200), ("/pages/3/issues", 409),
-    ("/editorial/decisions", 200), ("/story-changes/preview", 200),
+    ("/editorial/decisions", 200), ("/notes/preview", 200),
     ("/config", 409), ("/reset/cast", 409), ("/regen-extract", 409),
 ])
 @run_async

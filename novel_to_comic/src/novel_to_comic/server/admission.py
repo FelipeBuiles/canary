@@ -30,7 +30,7 @@ _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate
 # These routes only admit durable work. Execution owns artifact changes, so
 # accepting a correction never requires the author to wait for a stage.
 _QUEUED = re.compile(r"^/(?:regen-(?:ref|state-ref|plate|prop)(?:-instructed)?|cover|styles/(?:direction|generate-samples|validation)|pages/\d+/(?:generate|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
-_REVIEW = re.compile(r"^/(?:pages/\d+/(?:corrections/preview|issues(?:/[^/]+/(?:accept|dismiss))?)|editorial/decisions|story-changes/preview)$")
+_REVIEW = re.compile(r"^/(?:pages/\d+/(?:corrections/preview|issues(?:/[^/]+/(?:accept|dismiss))?)|editorial/decisions|notes/preview)$")
 
 
 _PART_ROUTE = re.compile(r"^/parts/(part_\d{4})(/.*)?$")

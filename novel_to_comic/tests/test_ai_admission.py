@@ -319,6 +319,9 @@ def test_buffered_and_streamed_calls_share_capacity_and_usage(monkeypatch):
     (EDIT, image("image-sunburst-runware"), "runware_images", 4),
     (CHAT, {"model": "gemini-3.8-flash", "messages": [{"role": "user", "content": "review"}],
             "metadata": {"metadata": {"feature": "plan.narrative_review"}}}, "vertex_text", 16),
+    *[(CHAT, {"model": model, "messages": [{"role": "user", "content": "plan"}], "max_completion_tokens": 32768,
+              "metadata": {"metadata": {"feature": "plan.detail"}}}, "runware_text", 8)
+      for model in ("runware-gemini-4-argon", "runware-deepseek-v4.1-flash-1017", "runware-gpt-6.1-terra")],
 ])
 def test_production_limits_admit_twelve_images_and_sixteen_vertex_calls(monkeypatch, url, params, pool, limit):
     gate = admission.new_controller()
