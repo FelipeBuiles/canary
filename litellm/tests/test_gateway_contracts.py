@@ -150,12 +150,14 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     from litellm_handlers.fal_provider import FalQueueLLM
     from litellm_handlers.openai_image_stream import OpenAIImageStreamLLM
     from litellm_handlers.runware_provider import RunwareImageLLM
+    from litellm_handlers.runware_text import RunwareTextLLM
     from litellm_handlers.vertex_multimodal import VertexMultimodalLLM
 
     assert version("litellm") == "1.101.0"
     assert issubclass(FalQueueLLM, CustomLLM)
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
     assert issubclass(RunwareImageLLM, CustomLLM)
+    assert issubclass(RunwareTextLLM, CustomLLM)
     assert issubclass(VertexMultimodalLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     aliases = [route["model_name"] for route in config["model_list"]]
@@ -166,7 +168,7 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
         "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware",
         "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-argon",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
-        "ocr-textract",
+        "ocr-textract", "runware-gemini-4-argon", "runware-deepseek-v4.1-flash-1017", "runware-gpt-6.1-terra",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
         "provider": "vertex-multimodal",
@@ -183,10 +185,14 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     }, {
         "provider": "runware",
         "custom_handler": "litellm_handlers.runware_provider.runware_image_llm",
+    }, {
+        "provider": "runware-text",
+        "custom_handler": "litellm_handlers.runware_text.runware_text_llm",
     }]
     for dockerfile in ("Dockerfile", "litellm/Dockerfile"):
         source = (ROOT / dockerfile).read_text()
-        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal", "textract", "runware_provider"):
+        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal", "textract", "runware_provider",
+                        "runware_text"):
             assert f"litellm_handlers/{handler}.py" in source
 
 
@@ -449,6 +455,15 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     monkeypatch.setattr(httpx.Client, "send", send)
     monkeypatch.setattr(litellm, "model_cost", _bundled_cost_map())
     monkeypatch.setattr(litellm, "drop_params", False)
+    if wire.provider_key == "runware":
+        # The proxy registers config.yaml's custom_provider_map the same way.
+        from litellm.utils import custom_llm_setup
+
+        from litellm_handlers.runware_text import runware_text_llm
+
+        monkeypatch.setattr(litellm, "custom_provider_map",
+                            [{"provider": "runware-text", "custom_handler": runware_text_llm}])
+        custom_llm_setup()
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
               "required": ["ok"], "additionalProperties": False}
     # The app's request shape for this alias (see ai/client.py).

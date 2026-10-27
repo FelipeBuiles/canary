@@ -60,6 +60,12 @@ class TextModel:
     # call to attend to more pages.
     review_window_pages: int = 12
     review_window_source_chars: int = 24_000
+    # Another route to the same model shares that model's prompt tuning
+    # (``gemini_tuning``) so a fallback sends what the primary would.
+    tuning: str = ""
+    # A route to the same model that takes a call Vertex rejects with 429
+    # (``text_route_fallback``); it must share this model's tuning and controls.
+    rate_limit_fallback: str = ""
 
 
 TEXT_MODELS = (
@@ -84,7 +90,8 @@ TEXT_MODELS = (
               temperature=False, streaming=False, effort="low",
               native_vertex_thinking=True, schema_instructions=True,
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
-              review_window_pages=48, review_window_source_chars=120_000),
+              review_window_pages=48, review_window_source_chars=120_000,
+              rate_limit_fallback="runware-gemini-4-argon"),
     # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).
@@ -115,12 +122,38 @@ TEXT_MODELS = (
               temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000, schema_instructions=True),
+    # Runware routes (litellm_handlers/runware_text.py): a second quota when
+    # Vertex rate-limits. Probed 2026-10-27: Argon honours reasoning_effort and
+    # reads images; none of these stream through the handler.
+    TextModel("runware-gemini-4-argon", "Gemini 4 Argon · Runware", "Runware", "runware",
+              temperature=False, streaming=False, effort="low", schema_instructions=True,
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=32_768, review_window_pages=48,
+              review_window_source_chars=120_000, tuning="gemini-4-argon"),
+    # JSON mode verified; native schema support unprobed, so schema instructions.
+    TextModel("runware-deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash 1017 · Runware", "Runware", "runware",
+              temperature=False, streaming=False, effort="low", schema_instructions=True,
+              vision=False, thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096),
+    # Rejected by Runware's API for this account as of 2026-10-27 (see
+    # litellm/config.yaml); vision is unverified there.
+    TextModel("runware-gpt-6.1-terra", "GPT-6.1 Terra · Runware", "Runware", "runware",
+              temperature=False, streaming=False, effort="medium", vision=False,
+              max_output_tokens=128_000),
     TextModel("mimo-v2.6-pro", "MiMo V2.6 Pro", "OpenRouter", "openrouter",
               token_limit_field="max_tokens"),
     TextModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "Together AI", "together_ai",
               token_limit_field="max_tokens"),
 )
 TEXT_MODEL_BY_ID = {model.id: model for model in TEXT_MODELS}
+_SHARED_CONTROLS = ("vision", "schema_instructions", "json_mode", "effort", "review_window_pages",
+                    "review_window_source_chars")
+for _model in TEXT_MODELS:
+    if _model.rate_limit_fallback:
+        _fallback = TEXT_MODEL_BY_ID[_model.rate_limit_fallback]
+        if _fallback.tuning != _model.id or _fallback.rate_limit_fallback or any(
+            getattr(_fallback, name) != getattr(_model, name) for name in _SHARED_CONTROLS
+        ):
+            raise ValueError(f"{_fallback.id} cannot take {_model.id}'s rate-limited calls")
 # Mock and test aliases outside the catalog get the plain OpenAI shape.
 DEFAULT_TEXT_WIRE = TextModel("", "", "", "")
 
@@ -129,8 +162,13 @@ def text_wire(model: str) -> TextModel:
     return TEXT_MODEL_BY_ID.get(model, DEFAULT_TEXT_WIRE)
 
 
+def tuning_model(model: str) -> str:
+    """The model whose prompt tuning this route sends."""
+    return text_wire(model).tuning or model
+
+
 def is_gemini_model(model: str) -> bool:
-    wire = text_wire(model)
+    wire = text_wire(tuning_model(model))
     return wire.provider_key in {"vertex_ai", "gemini"} and wire.id.startswith("gemini-")
 
 
@@ -212,7 +250,7 @@ _bound_text_job: ContextVar[TextModelJob | None] = ContextVar("text_model_job", 
 
 def request_reasoning(config: Config, model: str, feature: str) -> str:
     job = _bound_text_job.get()
-    if job is not None and job.model != model:
+    if job is not None and model not in {job.model, text_wire(job.model).rate_limit_fallback}:
         raise ValueError(f"Model job {job.name} is bound to {job.model}, not {model}")
     owner = job.name if job is not None else reasoning_stage(feature)
     effort = config.text_reasoning_efforts.get(owner, default_reasoning(model, config.text_reasoning_effort))

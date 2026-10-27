@@ -50,5 +50,13 @@
   "deepseek-v4.1-flash:False:False": "713cbb872e421e9a2fa91fee27fbf360e18d06acbac219627ed5b44b0b403a25",
   "deepseek-v4.1-flash:False:True": "a509892d9e7e6f984e8c91cbeed6f6c5519a61dfa9092717f866b939c82b301e",
   "deepseek-v4.1-flash:True:False": "20ccb4dccae47b9e8409ff376a62e360fa0d5e36c4139fffc6742af82d5b296e",
-  "deepseek-v4.1-flash:True:True": "b410ac46511a12e58065ec8a3f623ac9c77c84a0d052050a51b96e3f83c04854"
+  "deepseek-v4.1-flash:True:True": "b410ac46511a12e58065ec8a3f623ac9c77c84a0d052050a51b96e3f83c04854",
+  "runware-deepseek-v4.1-flash-1017:False:False": "a2b3a1284795b365c6b30805ca1344e3c1e989c8da0d674ea414c803cd68b279",
+  "runware-deepseek-v4.1-flash-1017:True:False": "d21226e2f908defd2b3f301f72b84b6c320bdfb31935e36bf5fa83ceb392c899",
+  "runware-gemini-4-argon:False:False": "20bdc7fc5760213752f2413955f48bf82c35a898723136cbcae15fb7aa7df197",
+  "runware-gemini-4-argon:False:True": "6d607837e32c463a5fc497ff53152372f1b105c332ad3a17641969c47154a885",
+  "runware-gemini-4-argon:True:False": "7fa9b7726854c5c67691c783887c5f5f730d28ab50248a0873d9b68763fe38bb",
+  "runware-gemini-4-argon:True:True": "162812d5f37c2d59bb6d01a2fb5feb5610827314a06f9cfa36f8d9b4654e99a9",
+  "runware-gpt-6.1-terra:False:False": "0ab5bb25e08e507ae5ef952f162085ad2e838f692b508bc2de32d3606155e9d4",
+  "runware-gpt-6.1-terra:True:False": "a599364f1f4887e034bfb1d21ffc000ec3958a0ee3971003bd0ae121763ba606"
 }

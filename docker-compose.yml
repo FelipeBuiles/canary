@@ -80,6 +80,7 @@ services:
       # ─── Web app ─────────────────────────────────────────────────────────
       CANARY_TEXTRACT_ENABLED: ${CANARY_TEXTRACT_ENABLED:-false}
       CANARY_RUNWARE_FIRST_ENABLED: ${CANARY_RUNWARE_FIRST_ENABLED:-false}
+      CANARY_RUNWARE_TEXT_FALLBACK_ENABLED: ${CANARY_RUNWARE_TEXT_FALLBACK_ENABLED:-false}
       CANARY_ENV: ${CANARY_ENV:-development}
       CANARY_VERSION: ${CANARY_VERSION:-local}
       POSTHOG_PROJECT_TOKEN: ${POSTHOG_PROJECT_TOKEN:-}

@@ -231,6 +231,15 @@ class ComicPage(RevisionedArtifact):
         default=None, exclude_if=lambda value: value is None,
     )
 
+    @property
+    def cited_beat_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(beat_id for item in self.content for beat_id in item.beat_ids))
+
+    def cites_adaptation(self, adaptation) -> bool:
+        """Planned from this adaptation, or from one amended since without touching its beats."""
+        return adaptation.cites_current_beats(
+            self.adaptation_revision, self.adaptation_sha256, self.cited_beat_ids)
+
     @model_validator(mode="after")
     def _validate_page(self) -> "ComicPage":
         content_ids = [item.id for item in self.content]

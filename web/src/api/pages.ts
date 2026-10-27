@@ -13,6 +13,7 @@ import type {
   StageValidation,
 } from "../types/api";
 import { versionedUrl } from "../lib/assetVersions";
+import type { NoteClaim } from "./notes";
 
 
 export function getAdaptation(project: string): Promise<BookAdaptation> {
@@ -316,6 +317,8 @@ export interface ChangeReading {
   route: "draw" | "plan" | "script";
   instruction: string;
   reason: string;
+  /** What the change reaches beyond this page's art; null when it stays on the page. */
+  claim: NoteClaim | null;
 }
 
 export interface ChangeReadings {

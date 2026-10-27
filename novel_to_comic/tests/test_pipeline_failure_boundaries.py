@@ -128,7 +128,7 @@ def adaptation_work(tmp_path):
              ".checkpoints/adapt/responses/old.json", ".checkpoints/adapt/work/budget.json",
              ".checkpoints/plan/work/budget.json"]
     upstream = ["source/source.json", "brief/adaptation_brief.json", "samples/style.png",
-                "refs/character.png", "story_changes/directive_adapt.json"]
+                "refs/character.png", "notes/note_aaaaaaaaaaaa.json"]
     for name in paths + upstream:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)

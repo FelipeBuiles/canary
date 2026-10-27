@@ -105,7 +105,8 @@ def test_check_route_prices_then_reads_without_touching_the_draft(tmp_path: Path
     response = client.post(f"{PAGES}/corrections/interpret", json=body)
     assert response.status_code == 200, response.text
     assert response.json()["changes"] == [{"change_id": "move", "route": "plan",
-                                           "instruction": "Move the line to panel 1.", "reason": "Panel layout."}]
+                                           "instruction": "Move the line to panel 1.", "reason": "Panel layout.",
+                                           "claim": None}]
     after = artifacts.read_issues(1) if artifacts.issues_path(1).exists() else ()
     assert after == issues_before
 

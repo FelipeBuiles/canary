@@ -189,8 +189,11 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 - `adaptation_shards.py`: provider-free shard algebra behind Adapt repairs:
   partition a candidate, plan scoped repairs, splice them back with a complete
   source ledger.
-- `editorial.py`, `server/routers/editorial.py`: revision-scoped decisions,
-  story-change preview/apply; all routes under `/api/projects/{project_id}`.
+- `editorial.py`, `server/routers/editorial.py`: revision-scoped keep/reopen
+  decisions on Adapt and Plan findings.
+- `note_scope.py`, `note_calls.py`, `server/note_changes.py`,
+  `server/routers/notes.py`: carry one page note to every page it touches
+  (a line, a story moment, or a look over a run of pages).
 - `generation_checkpoints.py`: input-keyed resumable structured responses.
 - `clients/validated_call.py`, `text_models.py`: job-bound validation attempts,
   checkpoint revalidation, correction feedback, usage observers and telemetry.

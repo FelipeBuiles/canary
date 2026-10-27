@@ -619,6 +619,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(pages.router, prefix=part_prefix, tags=["pages"])
     app.include_router(export.router, prefix=f"{part_prefix}/export", tags=["export"])
     app.include_router(editorial.router, prefix=part_prefix, tags=["stages"])
+    from .routers import notes as notes_router
+    app.include_router(notes_router.router, prefix=part_prefix, tags=["pages"])
     app.include_router(
         config.router,
         prefix="/api/projects/{project_id}/config",

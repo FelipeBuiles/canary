@@ -15,6 +15,7 @@ import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { ConfirmDrawer } from "../composites";
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { Button } from "../ui/Button";
+import { CarryThrough } from "./CarryThrough";
 
 /**
  * One paid read of the draft against the current render: each change comes
@@ -125,10 +126,8 @@ export function ChangeReadingNote({ project, pageNumber, reading, current, locke
           {replan.isPending ? t("Re-planning…") : t("RE-PLAN THIS PAGE")}
         </Button>
       )}
-      {reading.route === "script" && (
-        <p className="font-body text-xs leading-5">
-          {t("Change this line in Story, then re-plan the page. A redraw can’t change the script.")}
-        </p>
+      {reading.claim && (
+        <CarryThrough project={project} pageNumber={pageNumber} note={reading.instruction} claim={reading.claim} />
       )}
       {replan.error && <ErrorNotice error={replan.error} operation="generate" />}
       <ConfirmDrawer

@@ -1369,19 +1369,38 @@ less-graphic intent, without adding a top-level `depiction` field to
 `FrozenPageGenerationRequest` or rehashing stored requests to invent one.
 
 ## Editorial workflow
-This workflow is a backend API contract; the Pages room exposes no storyboard
-or story-change UI.
 
 Adapt/Plan findings are revision-scoped: keep/reopen dispositions apply only
 while both the editorial revision and the individual issue fingerprint still
-match; drifted evidence resurfaces as open. A story-change preview persists
-only a resumable proposal with truthful whole-book impact and a projected
-(never billed) chain estimate — no generation, no canonical mutation. Apply
-requires an explicit accept of that cost and impact: Adapt reruns Adapt+Plan,
-Plan reruns Plan only, always whole-book; selected pages focus the
-instruction, never bound regeneration; Draw is never auto-queued and stays
-separately estimated. Stale previews (client echo or canonical drift) are
-rejected; applied proposals go read-only.
+match; drifted evidence resurfaces as open.
+
+### Carried notes
+
+The page change check (`corrections/interpret`) may name what a change reaches
+beyond the page's art, as a typed claim: a script line (`line`), a missing or
+unclear story moment (`beat`), or a look or place fact over a run of pages
+(`look`). The model names the fact; `note_scope` finds the pages from the plan
+and adaptation. Routes live under `/parts/{part_id}/notes`.
+
+- Preview resolves the pages and writes only `notes/<id>.json`. Free.
+- Checks (look only) ask, per other drawn page in the run, whether its current
+  art breaks the fact. Each is a paid page check; nothing changes.
+- Apply is one funded call that writes everything or nothing, stamped against
+  the adaptation, plan and Story Bible revision it previewed:
+  - `line`: a typed edit of one `LetteringItem` in the adaptation and on its
+    page. No model writes the line.
+  - `beat`: one call rewrites only the named beats (same ids, order and source
+    units), then only the pages citing them are re-planned.
+  - `look`: a new look is added to the series Story Bible (timeline at the
+    start page's scene) or an existing one reused; only the chosen pages'
+    panels are bound to it. The adaptation is unchanged.
+  Script changes are recorded as `AdaptationAmendment`s. A ComicPage stays
+  valid while none of the beats it cites changed since its pinned revision, so
+  untouched pages keep their art. Both narrative reviews run as in a stage
+  run; any new invariant failure or review failure restores the snapshot.
+- Undo restores the snapshot (and removes an added look) while the adaptation
+  and plan are still the ones apply wrote. Drawn art stays in page history.
+- Nothing redraws. Changed drawn pages go out of date for the author to redraw.
 
 ### Pages review context
 
@@ -1739,6 +1758,19 @@ Provenance records `{"from_route": "runware", "reason": ...}` with any OpenAI
 fallback under `then`. Pages drawn on Runware have no partial previews.
 Turning the switch off changes only new editions and wires: both Sunburst
 identities stay spendable, so every existing edition keeps its route.
+
+Text calls have one route switch. With `CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`
+set, a Vertex `gemini-4-argon` call that the gateway answers with 429 moves once
+to `runware-gemini-4-argon`, the same model with Argon's prompt tuning, on its
+first rate limit (`text_route_fallback.py`). A 429 is a definite, unbilled
+non-submission. The failed Vertex attempt and the Runware attempt are separate
+AI events, each with its own call guarantee, and usage records `runware` as the
+provider. The first 429 opens a per-worker circuit, so for five minutes Argon
+calls go straight to Runware. Timeouts, 5xx and unknown outcomes never switch,
+a call never returns to Vertex, and Runware's own 429s use the normal retry
+budget. Checkpoints stay keyed on the stage's configured model, so a stage
+whose calls are split across the two routes resumes normally. Labs arms are
+pinned to the model they name.
 
 While the switch is on, approving Cast (directly, or when a "Continue" run
 passes review) sends each distinct approved reference file Draw may use to the

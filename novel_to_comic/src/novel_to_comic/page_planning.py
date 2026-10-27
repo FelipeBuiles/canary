@@ -2859,10 +2859,7 @@ def validate_book_plan(
     failures: list[InvariantFailure] = []
     issues: list[EditorialIssue] = []
     for page in pages:
-        if (
-            page.adaptation_revision != adaptation.revision
-            or page.adaptation_sha256 != adaptation.content_sha256
-        ):
+        if not page.cites_adaptation(adaptation):
             failures.append(
                 InvariantFailure(
                     id=(
@@ -2871,7 +2868,7 @@ def validate_book_plan(
                     ),
                     owner_stage="plan",
                     code="adaptation_authority_mismatch",
-                    message="Canonical pages must cite the current BookAdaptation.",
+                    message="Canonical pages must cite the current beats of the BookAdaptation.",
                     artifact_ids=[f"page_{page.page_number:03d}"],
                     evidence=[
                         f"Expected Adapt revision/hash {adaptation.revision}/"
@@ -3960,7 +3957,7 @@ def _author_concern(page_number: int, request: str) -> EditorialIssue:
 
 
 def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferenceInventory, page_number: int,
-                   author_request: str = ""):
+                   author_request: str = "", lettering_ids: tuple[str, ...] | None = None):
     adaptation = artifacts.read_adaptation()
     plan = artifacts.read_plan()
     if (plan.adaptation_revision, plan.adaptation_sha256) != (adaptation.revision, adaptation.content_sha256):
@@ -3976,9 +3973,13 @@ def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferen
     ) + ((_author_concern(page_number, author_request),) if author_request.strip() else ())
     if not concerns:
         raise ValueError(f"Page {page_number}'s plan has no problem to repair.")
+    entries = [_page_map_entry(page) for page in pages]
+    if lettering_ids is not None:
+        # An amended script can move lines on or off this page.
+        entries[page_number - 1] = entries[page_number - 1].model_copy(update={"lettering_ids": lettering_ids})
     page_map = _BookPageMap(
         rhythm_summary=plan.rhythm_summary or "Accepted page plan.",
-        pages=tuple(_page_map_entry(page) for page in pages),
+        pages=tuple(entries),
     )
     return adaptation, plan, pages, target_range, concerns, page_map
 
@@ -3990,11 +3991,12 @@ def estimate_page_replan_cost(
     *,
     model: str,
     author_request: str = "",
+    lettering_ids: tuple[str, ...] | None = None,
 ) -> float:
     """One local detail call plus its bounded repair attempts."""
 
     adaptation, _plan, _pages, _range, concerns, page_map = _replan_inputs(
-        artifacts, references, page_number, author_request)
+        artifacts, references, page_number, author_request, lettering_ids)
     prompt = _detail_batch_prompt(
         adaptation, references, page_map, start=page_number - 1, stop=page_number, concerns=concerns,
         story_tone=artifacts.read_brief().tone,
@@ -4017,6 +4019,8 @@ async def replan_page(
     model: str,
     author_request: str = "",
     editable_lettering: bool = False,
+    lettering_ids: tuple[str, ...] | None = None,
+    review: bool = True,
 ) -> ComicPage:
     """Re-detail one page whose accepted plan fails validation, or that the
     author asked to change.
@@ -4031,7 +4035,7 @@ async def replan_page(
     """
 
     adaptation, plan, pages, target_range, concerns, page_map = _replan_inputs(
-        artifacts, references, page_number, author_request)
+        artifacts, references, page_number, author_request, lettering_ids)
     index = page_number - 1
     drafts = tuple(_page_draft(page) for page in pages)
     pin_by_beat = {
@@ -4074,6 +4078,10 @@ async def replan_page(
     )
     if remaining:
         raise PlanInvariantError(PlanValidation(invariant_failures=remaining))
+    if not review:
+        # The caller re-plans several pages and reviews them once, together.
+        _write_replanned(artifacts, plan, revised)
+        return revised
     # Draw is gated on a narrative review of exactly these pages. Review the
     # candidate before publishing it; a failing review leaves the accepted
     # plan and its passing review in place.
@@ -4091,6 +4099,11 @@ async def replan_page(
         if previous_review is not None:
             artifacts.write_narrative_review("plan", previous_review)
         raise PlanInvariantError(PlanValidation(invariant_failures=tuple(review_failures)))
+    _write_replanned(artifacts, plan, revised)
+    return revised
+
+
+def _write_replanned(artifacts: TargetArtifacts, plan: BookPlan, revised: ComicPage) -> None:
     revised_plan = BookPlan.model_validate({
         **plan.model_dump(mode="json"),
         "revision": plan.revision + 1,
@@ -4098,10 +4111,9 @@ async def replan_page(
         "pages": [
             PlannedPageRevision(
                 page_number=revised.page_number, revision=revised.revision, content_sha256=revised.content_sha256,
-            ).model_dump(mode="json") if entry.page_number == page_number else entry.model_dump(mode="json")
+            ).model_dump(mode="json") if entry.page_number == revised.page_number else entry.model_dump(mode="json")
             for entry in plan.pages
         ],
     })
     artifacts.write_page(revised)
     artifacts.write_plan(revised_plan)
-    return revised

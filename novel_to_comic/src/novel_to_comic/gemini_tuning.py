@@ -11,7 +11,7 @@ from copy import deepcopy
 from typing import Any, Iterator
 
 from novel_to_comic.ai.prompt_parts import cache_join
-from novel_to_comic.text_models import is_gemini_model, text_wire
+from novel_to_comic.text_models import is_gemini_model, text_wire, tuning_model
 
 _ENABLED: ContextVar[bool] = ContextVar("gemini_tuning_enabled", default=True)
 
@@ -156,7 +156,7 @@ MODEL_ADDENDA: dict[str, dict[str, str]] = {
 
 def _addendum(model: str, feature: str) -> str:
     shared = ADDENDA.get(feature, "")
-    extra = MODEL_ADDENDA.get(model, {}).get(feature, "")
+    extra = MODEL_ADDENDA.get(tuning_model(model), {}).get(feature, "")
     return shared + extra if shared else (_HEADER + extra if extra else "")
 
 
@@ -195,7 +195,7 @@ def tuned_request(model: str, request: dict[str, Any]) -> dict[str, Any]:
         # These routes send every structured call as JSON mode with the compiled
         # schema as instructions; see ai/gemini_schema.py and TextModel.
         schema = gemini_output_schema(result["json_schema"])
-        if model in _CONTRACT_AFTER_CONTENT:
+        if tuning_model(model) in _CONTRACT_AFTER_CONTENT:
             result["user_content"] = cache_join(result.get("user_content", ""), output_contract(schema))
         else:
             result["system_prompt"] = schema_instructions(result.get("system_prompt", ""), schema)

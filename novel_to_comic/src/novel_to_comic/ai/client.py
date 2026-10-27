@@ -13,6 +13,7 @@ import random
 import re
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,9 @@ def _stream_text_enabled() -> bool:
 # down, not reporting a failure. Backoff windows double from the base up to
 # the cap (4/8/16/32/60s), so the full budget rides out a quota refill cycle.
 _MAX_RATE_LIMIT_RETRIES = 5
+# A call with a rate-limit route switches on its first 429 instead
+# (``text_route_fallback``).
+_rate_limit_retries: ContextVar[int] = ContextVar("rate_limit_retries", default=_MAX_RATE_LIMIT_RETRIES)
 _RATE_LIMIT_BASE_DELAY = 4.0
 _RATE_LIMIT_MAX_DELAY = 60.0
 # How many extra times to re-issue a structured-object call when the model
@@ -142,6 +146,7 @@ class _RetryPacer:
         self.last_exc: Exception | None = None
         self._transient_attempts = 0
         self._rate_limit_attempts = 0
+        self._max_rate_limit_retries = _rate_limit_retries.get()
 
     def record_retryable_status(self, response: httpx.Response) -> None:
         self.last_exc = httpx.HTTPStatusError(
@@ -163,7 +168,7 @@ class _RetryPacer:
         """Sleep before the next attempt, or re-raise once the budget is spent."""
         if rate_limited:
             self._rate_limit_attempts += 1
-            if self._rate_limit_attempts > _MAX_RATE_LIMIT_RETRIES:
+            if self._rate_limit_attempts > self._max_rate_limit_retries:
                 raise self.last_exc  # type: ignore[misc]
             if retry_after is not None:
                 delay = retry_after + random.uniform(0.0, 1.0)
@@ -178,7 +183,7 @@ class _RetryPacer:
                 "Rate limited (429), waiting %.1fs before retry %d/%d",
                 delay,
                 self._rate_limit_attempts,
-                _MAX_RATE_LIMIT_RETRIES,
+                self._max_rate_limit_retries,
             )
         else:
             self._transient_attempts += 1
@@ -1670,8 +1675,19 @@ def _api_equivalent_cost(model: str, usage: UsageRecord) -> float | None:
 
 
 async def _chat_completion(**kwargs: Any) -> dict[str, Any]:
-    with generation_probe():
-        return await _chat_completion_once(**kwargs)
+    from novel_to_comic.text_route_fallback import run_rate_limit_fallback
+
+    async def attempt(model: str, primary: bool) -> dict[str, Any]:
+        token = _rate_limit_retries.set(0) if primary else None
+        try:
+            # Each route's attempt is its own provider call and telemetry probe.
+            with generation_probe():
+                return await _chat_completion_once(**{**kwargs, "model": model})
+        finally:
+            if token is not None:
+                _rate_limit_retries.reset(token)
+
+    return await run_rate_limit_fallback(kwargs["model"], kwargs.get("feature", ""), attempt)
 
 
 async def _chat_completion_once(

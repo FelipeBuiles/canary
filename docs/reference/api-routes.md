@@ -61,8 +61,6 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/editorial` | `get_editorial` | `editorial.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/editorial/source` | `get_editorial_source` | `editorial.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/editorial/decisions` | `post_editorial_decisions` | `editorial.py` |
-| `POST` | `/api/projects/{project}/parts/{part_id}/story-changes/preview` | `preview_story_change` | `editorial.py` |
-| `POST` | `/api/projects/{project}/parts/{part_id}/story-changes/{proposal_id}/apply` | `apply_story_change` | `editorial.py` |
 | `POST` | `/api/events` | `ingest_web_event` | `events.py` |
 | `POST` | `/api/events/account` | `observe_account` | `events.py` |
 | `POST` | `/api/events/ga4-signup` | `claim_ga4_signup` | `events.py` |
@@ -102,6 +100,13 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/lettering/translation-estimate` | `get_translation_estimate` | `lettering.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/lettering/locale` | `post_stored_locale` | `lettering.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/lettering/translate` | `post_translation` | `lettering.py` |
+| `GET` | `/api/projects/{project}/parts/{part_id}/notes` | `list_notes` | `notes.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/notes/preview` | `preview_note` | `notes.py` |
+| `GET` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/checks/estimate` | `estimate_note_checks` | `notes.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/checks` | `check_note_pages` | `notes.py` |
+| `GET` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/estimate` | `estimate_note_apply` | `notes.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/apply` | `apply_note` | `notes.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/undo` | `undo_note` | `notes.py` |
 | `POST` | `/api/ops/billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}` | `get_page` | `pages.py` |

@@ -169,6 +169,7 @@ def _extract_routes() -> list[dict]:
         "lettering.py": part,  # included by pages.py
         "export.py": f"{part}/export",
         "editorial.py": part,
+        "notes.py": part,
         "files.py": "/api/projects/{project}",
         "parts.py": "/api/projects/{project}",
         "story_bible.py": "/api/projects/{project}",
