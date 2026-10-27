@@ -120,6 +120,22 @@ Cast belong to the series.
   Source-unit ordinals continue across parts; offsets are relative to the
   part's text. The extraction delta records what the part added, so replacing
   or deleting an unadapted part withdraws exactly that.
+  The first part also writes `source/opening.json` (`OpeningSnapshot`) after
+  its first section, or after a short book's single call, and publishes an
+  `opening` stage snapshot. It is not an authority: only the Cold Open reads
+  it, and every stage reads the published Story Bible.
+- **Cold Open.** Not a stage. Server orchestration admits it on the `opening`
+  snapshot, once per account in production (`CANARY_COLD_OPEN_PER_ACCOUNT`: unset
+  means 1 in production and no limit elsewhere; 0 turns it off) and once per project. It draws the opening's Style proof scene
+  in three house looks under `cold_open/` at the series root, with every model
+  call sponsored (`AIRequestContext.sponsor`): recorded at provider cost,
+  never authorized against or debited from the author. It is ambient work
+  (`AMBIENT_JOB_KINDS`): admission, busy checks and stage status ignore it,
+  so it never holds back a checkpoint or a stage; only project deletion waits
+  for it. Style adopts a Cold
+  Open proof into its picker only when the proof's request fingerprint equals
+  the one Style would build; the author's favorite is a highlight, never a
+  selection.
 - **Brief.** A later part's draft takes `themes`, `point_of_view`,
   `narrator_treatment`, `tone`, `motifs` and `transformation_level` from the
   nearest earlier approved Brief; the author can still edit them. Its

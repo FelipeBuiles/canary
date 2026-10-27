@@ -21,7 +21,7 @@ from .auth import SESSION_COOKIE_NAME, get_current_user
 from .action_policy import request_policy
 from .body_limit import form_part_cap_bytes
 from .deps import project_key
-from .generation_jobs import generation_jobs_snapshot
+from .generation_jobs import AMBIENT_JOB_KINDS, generation_jobs_snapshot
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
 # Correction previews read the same page inputs as submission and must remain
@@ -64,19 +64,22 @@ def _job_part(job) -> str | None:
     return job_part_id(job)
 
 
-def _active_jobs(app, key: str) -> list:
+def _active_jobs(app, key: str, *, ambient: bool = False) -> list:
+    """Live project jobs; ``ambient`` also counts Canary's own (``AMBIENT_JOB_KINDS``)."""
     return [job for job in generation_jobs_snapshot(app)
-            if job.project_name == key and job.status in {"queued", "running"}]
+            if job.project_name == key and job.status in {"queued", "running"}
+            and (ambient or getattr(job, "kind", None) not in AMBIENT_JOB_KINDS)]
 
 
-def project_busy(app, key: str, part: str | None = None, *, series: bool = False) -> bool:
+def project_busy(app, key: str, part: str | None = None, *, series: bool = False,
+                 ambient: bool = False) -> bool:
     """Whether new work must wait for work already in the project.
 
     Parts progress independently: a part's stage waits only for that part's
     jobs and series work (Style, Cast), and a series stage waits only for
     series work. Without a part or series scope the whole project counts.
     """
-    for job in _active_jobs(app, key):
+    for job in _active_jobs(app, key, ambient=ambient):
         if series:
             if _job_part(job) is None:
                 return True

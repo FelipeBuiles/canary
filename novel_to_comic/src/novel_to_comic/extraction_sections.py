@@ -23,6 +23,7 @@ from novel_to_comic.extraction_schema import extraction_schema
 from novel_to_comic.extraction_review import (
     ExtractionReview, SOURCE_REVIEW_INSTRUCTIONS, apply_source_review, constrain_review_schema, end_look_candidates,
 )
+from novel_to_comic.models.cold_open import OpeningSnapshot
 from novel_to_comic.models.story_bible import StorySequence, StoryBible
 from novel_to_comic.source_extraction import source_units
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -864,6 +865,8 @@ async def extract_sections(
         ctx.record_item_done()
         ctx.progress(index, len(sections) + 2)
         ctx.log(f"Source section {index}/{len(sections)} ready in {time.monotonic() - started:.1f}s.")
+        if index == 1 and registry is None:
+            publish_opening(ctx, project_dir, bible, text=section, whole_source=False)
 
     assert bible is not None
     prior_scenes = [scene for scene in bible.scenes if scene.part_id != part_id]
@@ -923,6 +926,17 @@ async def extract_sections(
     ctx.record_item_done()
     ctx.progress(len(sections) + 1, len(sections) + 2)
     return bible
+
+
+def publish_opening(ctx, project_dir, bible: StoryBible, *, text: str, whole_source: bool) -> None:
+    """Leave the book's opening for the Cold Open while Extract reads on.
+
+    Only the first part has an opening. The snapshot is never an authority:
+    later stages read the published Story Bible.
+    """
+    TargetArtifacts(project_dir).write_opening_snapshot(OpeningSnapshot(
+        bible=bible, text=text, whole_source=whole_source))
+    ctx.snapshot({"opening": {"scenes": len(bible.scenes), "characters": len(bible.characters)}})
 
 
 def estimate_sections(

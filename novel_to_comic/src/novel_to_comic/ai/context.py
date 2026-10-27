@@ -32,6 +32,9 @@ class AIRequestContext:
     is_correction: bool = False
     source_scope: str | None = None
     source_unit_ids: tuple[str, ...] = ()
+    # Canary pays for these calls itself (the Cold Open). They are recorded with
+    # their provider cost but never authorized against or debited from the user.
+    sponsor: str | None = None
 
 
 _current_ai_request_context: ContextVar[AIRequestContext] = ContextVar(
@@ -72,6 +75,7 @@ def ai_request_context(
     job_id: str | None = None,
     page_number: int | None = None,
     is_correction: bool = False,
+    sponsor: str | None = None,
 ) -> Iterator[AIRequestContext]:
     """Temporarily set request metadata for AI calls in this context."""
 
@@ -85,6 +89,7 @@ def ai_request_context(
         job_id=job_id,
         page_number=page_number,
         is_correction=is_correction,
+        sponsor=sponsor,
     )
     token = _current_ai_request_context.set(context)
     try:

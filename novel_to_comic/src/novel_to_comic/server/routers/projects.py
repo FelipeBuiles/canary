@@ -62,6 +62,7 @@ from ..ratelimit import cost_limit, create_limit, limiter, preview_limit
 from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
+    AMBIENT_JOB_KINDS,
     generation_job_payload,
     generation_jobs_snapshot,
 )
@@ -746,6 +747,8 @@ def _project_status_payload(
                    for job in generation_jobs_snapshot(request.app)
                    if job.project_name == project_key(user_id, project_id)
                    and job.status in {"queued", "running"}
+                   # The Cold Open reports in the Story room, never as a stage.
+                   and job.kind not in AMBIENT_JOB_KINDS
                    and job_part_id(job) in {None, part}]
     active_stages = {job["stage"] for job in active_jobs}
     stages = {}
@@ -866,7 +869,10 @@ def delete_project(
     project_dir: Path = Depends(get_project_dir),
     user_id: str = Depends(get_current_user),
 ):
-    if _is_project_running(user_id, project_id, request):
+    from ..admission import project_busy
+
+    # Deletion also waits for Canary's own work, which writes into the project.
+    if project_busy(request.app, project_key(user_id, project_id), ambient=True):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 
     from .. import publications

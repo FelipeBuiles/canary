@@ -42,6 +42,34 @@ export interface StylesData {
   suggestions: StyleSuggestion[];
   active_index: number | null;
   active_id: string | null;
+  /** The look the author liked on their Cold Open pages: a highlight, never a selection. */
+  cold_open_favorite_id?: string | null;
+}
+
+export interface ColdOpenLook {
+  id: string;
+  label: string;
+  medium: string;
+  status: "queued" | "printing" | "ready" | "failed";
+  error: string | null;
+  /** Style adopted this proof as one of its own. */
+  adopted: boolean;
+  image_url: string | null;
+  /** Series-relative image-preview target while the page prints. */
+  preview_target: string;
+}
+
+/** One Canary-paid page of the author's opening, in three looks. */
+export interface ColdOpen {
+  status: "printing" | "ready" | "failed" | "interrupted";
+  phase: "reading" | "printing" | null;
+  scene_title: string;
+  scene_summary: string;
+  chapter: number | null;
+  /** The balloons carry lines from the passage rather than role labels. */
+  story_copy: boolean;
+  looks: ColdOpenLook[];
+  favorite_look_id: string | null;
 }
 
 export interface StyleDirectionResponse {
@@ -82,6 +110,16 @@ export interface StyleDirectionEstimate extends CostEstimate {
 
 export function getStyles(project: string): Promise<StylesData> {
   return apiFetch(`${seriesPath(project)}/styles`);
+}
+
+export function getColdOpen(project: string): Promise<{ cold_open: ColdOpen | null }> {
+  return apiFetch(`${seriesPath(project)}/cold-open`);
+}
+
+export function setColdOpenFavorite(project: string, lookId: string | null): Promise<{ favorite_look_id: string | null }> {
+  return apiFetch(`${seriesPath(project)}/cold-open/favorite`, {
+    method: "POST", body: JSON.stringify({ look_id: lookId }),
+  });
 }
 
 export function suggestStyles(project: string, directionId?: string): Promise<{ status: string; job?: GenerationJob }> {

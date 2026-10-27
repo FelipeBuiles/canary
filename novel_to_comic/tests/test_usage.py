@@ -12,6 +12,8 @@ from novel_to_comic.usage import (
     calculate_cost,
     calculate_cost_breakdown,
     estimate_image_cost,
+    estimate_text_cost,
+    thinking_allowance,
 )
 
 
@@ -255,3 +257,28 @@ def test_api_zero_dollars_with_activity_retains_minimum():
         input_tokens=1, cost_usd=0,
     )
     assert usage_to_credit_debit(usage) == (1, 0.0)
+
+
+def test_small_call_thinking_allowance_tracks_recorded_style_usage():
+    # Recorded totals, 45 days to 2026-10-27: Argon Style briefs billed p95 160
+    # output tokens and proof copy 66; Flash briefs reached 1,356 when they thought.
+    brief = 200 + thinking_allowance("gemini-4-argon", 900, 200)
+    copy = 100 + thinking_allowance("gemini-4-argon", 700, 100)
+    assert 1_356 <= brief < 2_000
+    assert 1_356 <= copy < brief
+    flat = get_flat_estimate("gemini-4-argon", 900 * 4, 800)
+    assert estimate_text_cost("gemini-4-argon", 900 * 4, output_chars=800) < flat / 2
+
+
+def test_large_call_thinking_allowance_keeps_the_route_ceiling():
+    assert thinking_allowance("gemini-4-argon", 12_000, 9_000) == 4_096
+    assert thinking_allowance("claude-opus-5-5", 30_000, 8_000) == 4_096
+    assert thinking_allowance("mimo-v2.6-pro", 900, 200) == 0
+
+
+def get_flat_estimate(model: str, input_chars: int, output_chars: int) -> float:
+    from novel_to_comic.model_costs import get_pricing_resolver
+    from novel_to_comic.text_models import text_wire
+
+    output = output_chars // 4 + text_wire(model).estimated_thinking_tokens
+    return get_pricing_resolver().estimate_text_cost(model, input_chars // 4, output).cost_usd

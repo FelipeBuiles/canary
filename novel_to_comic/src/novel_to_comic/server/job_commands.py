@@ -80,12 +80,18 @@ class SuggestArguments(Arguments):
     lifecycle_owned: bool = False
 
 
+class ColdOpenArguments(Arguments):
+    # The opening snapshot is read from the part workspace at execution.
+    part_dir: str
+
+
 ARGUMENT_MODELS = {
     "pipeline": PipelineArguments, "page_draw": PageArguments,
     "cover": Arguments, "cast_asset": CastArguments,
     "cast_instruction": InstructionArguments, "lettering_translation": TranslationArguments,
     "style_sample": StyleArguments, "style_validation": StyleArguments,
     "style_direction": DirectionArguments, "style_suggest": SuggestArguments,
+    "cold_open": ColdOpenArguments,
 }
 
 
@@ -94,7 +100,7 @@ class JobCommand(BaseModel):
     version: int = Field(default=1, ge=1, le=1)
     operation: Literal["pipeline", "page_draw", "cover", "cast_asset", "cast_instruction",
                        "lettering_translation", "style_sample", "style_validation",
-                       "style_direction", "style_suggest"]
+                       "style_direction", "style_suggest", "cold_open"]
     project_dir: str
     config: dict[str, Any]
     one_shot_image_model_alias: str | None = None
@@ -103,6 +109,8 @@ class JobCommand(BaseModel):
     user_id: str = ""
     project_id: str | None = None
     reservation_credits: int = Field(default=0, ge=0)
+    # Canary-paid work (``AIRequestContext.sponsor``) reserves and debits nothing.
+    sponsor: Literal["cold_open"] | None = None
     ledger_job_id: str = ""
     debit_description: str = "Generation"
     traceparent: str = Field(default="", pattern=r"^(?:[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2})?$")
@@ -112,6 +120,8 @@ class JobCommand(BaseModel):
     @model_validator(mode="after")
     def validate_arguments(self):
         self.arguments = ARGUMENT_MODELS[self.operation].model_validate(self.arguments).model_dump(mode="json")
+        if self.sponsor is not None and (self.operation != "cold_open" or self.reservation_credits):
+            raise ValueError("Only the Cold Open is Canary-paid, and it reserves no credits")
         if self.operation == "cast_instruction":
             from novel_to_comic.cast_reference_inputs import parse_reference_input
             for reference in self.arguments["attachments"]:

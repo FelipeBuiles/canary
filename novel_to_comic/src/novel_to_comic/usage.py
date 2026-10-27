@@ -172,6 +172,20 @@ def _count_tokens_approx(text: str) -> int:
     return max(0, int(words * 1.1 + punct))
 
 
+# Hidden thinking grows with the call. Over 45 days to 2026-10-27, Argon Style
+# briefs and proof copy billed under 200 output tokens in total, while Flash
+# sometimes spent ~1.5k thinking on the same calls. The route's flat allowance
+# stays the ceiling, so no estimate rises above what it was.
+MIN_THINKING_TOKENS = 1_024
+
+
+def thinking_allowance(model: str, input_tokens: int, answer_tokens: int) -> int:
+    ceiling = text_wire(model).estimated_thinking_tokens
+    if not ceiling:
+        return 0
+    return min(ceiling, MIN_THINKING_TOKENS + answer_tokens + input_tokens // 4)
+
+
 def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0) -> float:
     """Pre-call cost estimate. Pass the actual input text for best accuracy (~±15%),
     or a character count for a rougher estimate (~±30%).
@@ -183,7 +197,8 @@ def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0)
     if route_for("text", model) is not None:
         return 0.0
     input_tokens = estimate_token_count(input_text)
-    output_tokens = estimate_token_count(output_chars) + text_wire(model).estimated_thinking_tokens
+    answer_tokens = estimate_token_count(output_chars)
+    output_tokens = answer_tokens + thinking_allowance(model, input_tokens, answer_tokens)
     breakdown = get_pricing_resolver().estimate_text_cost(model, input_tokens, output_tokens)
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)

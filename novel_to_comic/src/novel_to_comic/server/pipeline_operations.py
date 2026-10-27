@@ -99,11 +99,24 @@ def part_order_blocker(part_dir: Path | None, stage: str) -> str | None:
     return None
 
 
-def _wrap_on_event(queue: asyncio.Queue):
+def _wrap_on_event(queue: asyncio.Queue, observe=None):
     def handler(event: dict) -> None:
         queue.put_nowait(event)
+        if observe is not None:
+            observe(event)
 
     return handler
+
+
+def _cold_open_observer(app, user_id: str, project_id: str | None, part_dir: Path, config):
+    """Admit the Cold Open when Extract announces it has read the book's opening."""
+    def observe(event: dict) -> None:
+        if event.get("type") == "stage_snapshot" and "opening" in (event.get("snapshot") or {}):
+            from .cold_open_jobs import start_cold_open
+
+            start_cold_open(app, user_id=user_id, project_id=project_id, part_dir=part_dir, config=config)
+
+    return observe
 
 
 async def _run_stage(
@@ -114,6 +127,7 @@ async def _run_stage(
     queue: asyncio.Queue,
     *_unused,
     user_id: str | None = None,
+    observe=None,
     **_unused_kwargs,
 ) -> None:
     stage_obj = REGISTRY.get(stage)
@@ -125,7 +139,7 @@ async def _run_stage(
             stage,
             state,
             project_dir,
-            on_event=_wrap_on_event(queue),
+            on_event=_wrap_on_event(queue, observe),
         )
         with ctx.image_previews():
             await stage_obj.run(config, project_dir, ctx)
@@ -276,7 +290,9 @@ async def _run_stage_with_credits(
                 "attempt_id": attempt_id,
             },
         )
-        await _run_stage(stage, config, project_dir, state, queue, user_id=user_id)
+        observe = (_cold_open_observer(app, user_id, project_id, project_dir, config)
+                   if stage == "extract" and app is not None else None)
+        await _run_stage(stage, config, project_dir, state, queue, user_id=user_id, observe=observe)
 
     try:
         if stage == "draw":

@@ -634,6 +634,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["cast"],
     )
+    from .routers import cold_open as cold_open_router
+    app.include_router(cold_open_router.router, prefix="/api/projects/{project_id}", tags=["cold-open"])
     # Registered last: the asset reader owns a greedy `{file_path:path}` route,
     # so every named project route must be matched before it is considered.
     app.include_router(files.router, prefix=part_prefix, tags=["files"])

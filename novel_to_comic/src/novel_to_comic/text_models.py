@@ -50,8 +50,9 @@ class TextModel:
     # Models whose thinking cannot be disabled bill it against the same output
     # limit as the answer; callers size limits for the answer alone.
     thinking_headroom_tokens: int = 0
-    # Typical billed thinking per call, added to pre-call estimates so holds
-    # cover output the caller never asked for. The headroom above is a ceiling.
+    # Billed thinking allowance for a large call, added to pre-call estimates so
+    # holds cover output the caller never asked for. Smaller calls get a scaled
+    # share (``usage.thinking_allowance``). The headroom above is a hard ceiling.
     estimated_thinking_tokens: int = 0
     max_output_tokens: int | None = None
     # Narrative-review window bounds. Every window re-sends the whole story as

@@ -1097,6 +1097,10 @@ def _finalize_event(
     charge_user: bool = True,
 ) -> None:
     funding = usage.funding if usage is not None else (metadata or {}).get("funding", "api")
+    if (sponsor := current_ai_request_context().sponsor) is not None:
+        # Recorded at its provider cost, never debited: Canary pays.
+        charge_user = False
+        metadata = {**(metadata or {}), "sponsor": sponsor}
     if is_subscription(funding) and usage is None:
         usage = UsageRecord(
             provider="claude" if funding == "claude_subscription" else "codex",
@@ -1373,7 +1377,7 @@ async def _authorize_model_submission(
     funding: str, config: Config,
 ) -> None:
     ctx = current_ai_request_context()
-    if not ctx.user_id or funding != "api" or mock_mode_active(config):
+    if not ctx.user_id or ctx.sponsor is not None or funding != "api" or mock_mode_active(config):
         return
     from novel_to_comic.server.credits import authorize_model_call
     from novel_to_comic.server.db import get_db

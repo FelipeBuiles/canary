@@ -36,7 +36,7 @@ import {
   runFinishPreflight,
   triggerExport,
 } from "./pages";
-import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
+import { createStyleDirection, generateStyleValidation, getColdOpen, getStyles, setColdOpenFavorite, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import { invalidateProject, splitProjectKey } from "./projectScope";
 import {
@@ -751,6 +751,31 @@ export function useStyles(project: string | undefined) {
     queryFn: () => getStyles(project!),
     enabled: !!project,
     refetchInterval: (query) => query.state.data?.is_generating ? 1000 : 15_000,
+  });
+}
+
+/** The Cold Open; `watching` polls for it to appear while Extract reads the opening. */
+export function useColdOpen(project: string | undefined, watching = false) {
+  return useQuery({
+    queryKey: ["project", project, "cold-open"],
+    queryFn: () => getColdOpen(project!),
+    enabled: !!project,
+    refetchInterval: (query) => {
+      const status = query.state.data?.cold_open?.status;
+      if (status === "printing") return 1500;
+      return !status && watching ? 3000 : false;
+    },
+  });
+}
+
+export function useSetColdOpenFavorite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, lookId }: { project: string; lookId: string | null }) => setColdOpenFavorite(project, lookId),
+    onSuccess: (_data, { project }) => {
+      invalidateProject(qc, project, "cold-open");
+      invalidateProject(qc, project, "styles");
+    },
   });
 }
 

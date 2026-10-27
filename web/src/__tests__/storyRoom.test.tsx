@@ -68,6 +68,9 @@ vi.mock("../api/queries", () => ({
   useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
   useCreditBalance: () => ({ data: undefined }),
   useStageEstimate: () => ({ data: undefined }),
+  // The Cold Open has its own tests; these projects never had one.
+  useColdOpen: () => ({ data: { cold_open: null } }),
+  useSetColdOpenFavorite: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // The shared Story Bible editor has its own tests; here no Bible editor loads.

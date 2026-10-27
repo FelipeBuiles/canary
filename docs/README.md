@@ -81,6 +81,10 @@ retained as current reference.
 
 ## Active future work
 
+- [Cold Open](proposals/cold-open-2026-10-26.md): one Canary-paid page of the
+  opening in three looks during Extract, with fingerprint-gated adoption into
+  Style. Implemented October 27 and tested provider-free; house looks not yet
+  generated or reviewed.
 - [Textract second-pass OCR](proposals/textract-second-pass-ocr.md): October 7
   architecture and cost exploration, account-specific credit-access limits,
   and a bounded pilot proposal; no live OCR or production activation.

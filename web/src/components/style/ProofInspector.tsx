@@ -34,6 +34,7 @@ export function ProofInspector({
   onRefresh,
   fallbackPrompt,
   fallbackParameters,
+  coldOpenFavoriteId,
 }: {
   suggestion: StyleSuggestion;
   projectName: string;
@@ -53,6 +54,8 @@ export function ProofInspector({
   onRefresh: () => void;
   fallbackPrompt: string;
   fallbackParameters: Record<string, unknown>;
+  /** The look the author picked on their first pages; highlighted, never selected. */
+  coldOpenFavoriteId?: string | null;
 }) {
   const { t } = useI18n();
   const name = styleName(suggestion);
@@ -101,8 +104,8 @@ export function ProofInspector({
         <div className="flex items-center gap-1">
           <span className={cn(
             "mr-1 inline-flex h-[22px] shrink-0 items-center border border-ink-black px-1.5 font-meta text-[0.65625rem] font-bold uppercase tracking-[0.08em]",
-            suggestion.role === "story_fit_primary" || yours ? "bg-narrator-gold" : "bg-pulp-paper",
-          )}>{t(proofRole(suggestion))}</span>
+            suggestion.role === "story_fit_primary" || yours || suggestion.id === coldOpenFavoriteId ? "bg-narrator-gold" : "bg-pulp-paper",
+          )}>{t(proofRole(suggestion, coldOpenFavoriteId))}</span>
           <span className="min-w-0 flex-1 truncate font-meta text-xs text-ink-soft" title={suggestion.medium}>{suggestion.medium}</span>
           <button type="button" className={cn(ICON_BUTTON, isCompared && "bg-ink-black! text-narrator-gold!")}
             onClick={onToggleCompare} disabled={!isCompared && (compareDisabled || !suggestion.has_sample)} aria-pressed={isCompared}

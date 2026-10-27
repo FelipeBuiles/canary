@@ -19,6 +19,7 @@ import {
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field";
 import { BriefSection } from "../../components/composites/BriefSection";
+import { ColdOpen } from "../../components/story/ColdOpen";
 import { StoryBibleEditor, type EntityFocus } from "../../components/story/StoryBibleEditor";
 import { BookStrip, BookStripPanel } from "../../components/parts/BookStrip";
 import { partStartDescription } from "../../lib/partProgress";
@@ -69,6 +70,8 @@ export function StoryRoom() {
   const parts = status?.parts ?? [];
   const contents = parts.length > 1 && id ? <BookStripPanel project={id} parts={parts} /> : null;
   const startDescription = id ? partStartDescription(id, parts, t) : undefined;
+  // Extract announces the opening after its first section; until then, watch.
+  const readingOpening = extract?.status === "running" || extract?.status === "pending";
 
   if (isLoading) {
     // Keep the status observer in StagePlaceholder mounted when loading ends.
@@ -77,6 +80,7 @@ export function StoryRoom() {
       return (
         <RoomShell project={id ?? ""}>
           {contents}
+          {id && <ColdOpen project={id} variant="press" watching={readingOpening} />}
           <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} activeJobs={status?.active_jobs} firstPhase={extract} />
         </RoomShell>
       );
@@ -110,6 +114,8 @@ export function StoryRoom() {
     return (
       <RoomShell project={id ?? ""}>
         {contents}
+        {/* The first pages arrive while Extract is still reading the book. */}
+        {id && <ColdOpen project={id} variant="press" watching={readingOpening} />}
         <StagePlaceholder
           activeJobs={activeJobs}
           project={id ?? ""}
@@ -461,6 +467,8 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
                     {skippedCount > 0 && <ApproveCheck>{t("{count, plural, one {# event can be skipped.} other {# events can be skipped.}}", { count: skippedCount })}</ApproveCheck>}
                   </ul>
                 </section>
+                {/* The first pages wait beside the Brief; the Brief stays the task. */}
+                <ColdOpen project={id} variant="rail" lookReady={stageStatus === "complete"} />
                 <section className="border border-ink-black/14 bg-bristol px-4 pb-4 pt-3.5">
                   <h3 className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">{t("Target length")}</h3>
                   <p className="mt-2 font-display text-[1.75rem] font-black uppercase leading-none tracking-[-0.03em]">

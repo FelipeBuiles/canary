@@ -42,6 +42,15 @@ function inspector(input = props()) {
 beforeEach(() => { mutation.mutate.mockReset(); mutation.isPending = false; });
 
 describe("ProofInspector", () => {
+  it("names adopted Cold Open proofs and highlights the author's pick without selecting it", () => {
+    const adopted = { ...suggestion, origin: "cold_open", role: "house_noir" };
+    const { rerender } = render(inspector(props({ suggestion: adopted })));
+    expect(screen.getByText("First pages")).toBeTruthy();
+    rerender(inspector(props({ suggestion: adopted, coldOpenFavoriteId: "ink" })));
+    expect(screen.getByText("Your pick")).toBeTruthy();
+    expect(mutation.mutate).not.toHaveBeenCalled();
+  });
+
   it("selects only from the explicit action, never from reading or comparing", async () => {
     const user = userEvent.setup();
     const input = props();
