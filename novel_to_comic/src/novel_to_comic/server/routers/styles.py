@@ -14,7 +14,7 @@ from ..file_cache import file_etag, file_sha256, not_modified, versioned_cache_c
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from novel_to_comic import artifacts
+from novel_to_comic import artifacts, cold_open
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.uploaded_images import (
     IMAGE_SUFFIXES, MAX_IMAGE_BYTES, decode_uploaded_image, image_suffix,
@@ -416,8 +416,11 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
             "is_active": i == active_index,
         })
 
+    record = cold_open.read_record(project_dir)
     return {
         "suggestions": result, "active_index": active_index, "active_id": active_id,
+        # The look the author liked on their first pages: a highlight, never a selection.
+        "cold_open_favorite_id": record.favorite_look_id if record else None,
         # Any proof in flight (polling) versus a batch that owns the portfolio (gating).
         "is_generating": bool(active_style_jobs), "is_suggesting": bool(batch_jobs),
     }

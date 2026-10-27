@@ -10,6 +10,9 @@ const ROLE_LABELS: Record<string, string> = {
   faithful: "Your direction",
 };
 
-export function proofRole(suggestion: StyleSuggestion): string {
-  return isAuthorDirection(suggestion) ? "Yours" : ROLE_LABELS[suggestion.role ?? ""] ?? "Direction";
+/** `favoriteId` is the look the author picked on their Cold Open pages. */
+export function proofRole(suggestion: StyleSuggestion, favoriteId?: string | null): string {
+  if (isAuthorDirection(suggestion)) return "Yours";
+  if (suggestion.origin === "cold_open") return suggestion.id === favoriteId ? "Your pick" : "First pages";
+  return ROLE_LABELS[suggestion.role ?? ""] ?? "Direction";
 }

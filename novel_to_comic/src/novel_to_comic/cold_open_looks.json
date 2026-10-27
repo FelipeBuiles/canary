@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "_note": "Story-agnostic Cold Open looks. `signals` are curation metadata matched against the opening Story Bible; `suggestion` is a Style suggestion and the only image authority.",
+  "looks": [
+    {
+      "signals": ["adventure", "action", "fantasy", "quest", "battle", "chase", "hero", "monster", "dungeon", "war"],
+      "suggestion": {
+        "role": "house_comic_production",
+        "label": "Bold Ink & Flat Color",
+        "medium": "brush ink with flat digital color",
+        "medium_family": "comic_production",
+        "visual_logic": "stylized",
+        "proportion_family": "heroic",
+        "character_design": "Strong, readable silhouettes with squared shoulders and clear gesture lines; faces simplified to bold brows, defined jaws and large, expressive eyes.",
+        "color_strategy": "saturated",
+        "palette": "Confident primaries anchored by deep ink blacks: cadmium red, cobalt blue and warm yellow for focal subjects, with cooler desaturated teal and slate for backgrounds.",
+        "line_rendering": "Clean confident brush contours with thick-to-thin weight, spotted blacks, and minimal hatching.",
+        "lighting_value": "Graphic two-tone lighting with hard cast shadows rendered as solid black shapes.",
+        "lettering_preset": "classic",
+        "template": "Render in confident brush-ink comic production: clean thick-to-thin contours, spotted solid blacks and flat color fills with one cel-shade step. Keep figures heroic and readable at a glance, with dynamic gesture, strong silhouettes and clear foreground, middle and background planes."
+      }
+    },
+    {
+      "signals": ["mystery", "crime", "detective", "murder", "night", "city", "secret", "noir", "investigation", "rain"],
+      "suggestion": {
+        "role": "house_noir",
+        "label": "Rain-Slick Noir",
+        "medium": "ink wash with a single spot color",
+        "medium_family": "drawn",
+        "visual_logic": "stylized",
+        "proportion_family": "elongated",
+        "character_design": "Long, lean figures with angular features, deep-set eyes and hands drawn large for gesture; faces carved by shadow rather than line.",
+        "color_strategy": "spot_color",
+        "palette": "Grayscale ink wash from paper white to deep charcoal, with one signal-red spot color reserved for the focal object or light source.",
+        "line_rendering": "Sparse precise linework dissolving into wet ink wash and dry-brush texture in shadows.",
+        "lighting_value": "Low-key chiaroscuro with venetian-blind and streetlight patterns; large shadow masses frame bright faces.",
+        "lettering_preset": "noir",
+        "template": "Render as atmospheric noir ink wash: sparse precise linework, layered gray washes and dry-brush shadow texture, with one red spot color reserved for the scene's focal point. Use dramatic low-key light, tilted cameras and deep shadow shapes while keeping every face readable."
+      }
+    },
+    {
+      "signals": ["love", "family", "memory", "grief", "home", "childhood", "quiet", "village", "summer", "friendship", "letter"],
+      "suggestion": {
+        "role": "house_painted",
+        "label": "Soft Gouache Storybook",
+        "medium": "opaque gouache over pencil",
+        "medium_family": "painted",
+        "visual_logic": "stylized",
+        "proportion_family": "compact",
+        "character_design": "Rounded, slightly compact figures with large heads and gentle features; eyes as simple dark ovals with a single highlight, rosy cheeks and soft hands.",
+        "color_strategy": "muted",
+        "palette": "Warm muted gouache: sage, dusty rose, ochre and soft cream, deepened with indigo and plum for evening and interior shadows.",
+        "line_rendering": "Visible colored-pencil underdrawing beneath matte gouache shapes with soft brush edges.",
+        "lighting_value": "Gentle diffuse daylight and warm lamplight with soft shadow edges and luminous windows.",
+        "lettering_preset": "storybook",
+        "template": "Render in matte opaque gouache over visible colored-pencil underdrawing, with soft brush edges and gentle paper grain. Keep characters rounded and tender, environments cozy and specific, and compose each panel like a picture-book spread with clear focal light."
+      }
+    },
+    {
+      "signals": ["horror", "ghost", "dark", "blood", "curse", "haunted", "death", "fear", "creature", "nightmare", "cosmic"],
+      "suggestion": {
+        "role": "house_horror",
+        "label": "Scratchboard Dread",
+        "medium": "scratchboard and pen with muted color glaze",
+        "medium_family": "printmaking",
+        "visual_logic": "graphic",
+        "proportion_family": "elongated",
+        "character_design": "Gaunt, stretched figures with hollow cheeks, shadowed eye sockets and long bony hands; expressions readable through brow and mouth shape.",
+        "color_strategy": "muted",
+        "palette": "Near-black grounds with bone white highlights, glazed with sickly olive, bruised violet and a cold sodium yellow for unnatural light.",
+        "line_rendering": "White-on-black scratched hatching and engraved cross-contours that build form out of darkness.",
+        "lighting_value": "Under-lighting and single harsh sources carving faces from black; negative space used for dread.",
+        "lettering_preset": "horror",
+        "template": "Render as scratchboard engraving: forms carved from black with dense white hatching and cross-contour lines, then glazed with muted olive, violet and cold yellow. Use oppressive negative space and harsh single-source light while keeping figures and faces legible."
+      }
+    },
+    {
+      "signals": ["space", "future", "robot", "ship", "planet", "science", "machine", "computer", "station", "alien", "galaxy"],
+      "suggestion": {
+        "role": "house_scifi",
+        "label": "Clean-Line Retro Future",
+        "medium": "uniform-weight line with flat color and halftone",
+        "medium_family": "comic_production",
+        "visual_logic": "graphic",
+        "proportion_family": "naturalistic",
+        "character_design": "Naturally proportioned figures drawn with clean economical contours; faces with dot eyes, minimal noses and precise readable expressions.",
+        "color_strategy": "high_key",
+        "palette": "Bright high-key flats: coral, mint, sky blue and butter yellow on clean white, with crisp navy for line and deep shadows.",
+        "line_rendering": "Uniform-weight clean line with no feathering, flat fills and occasional coarse halftone dots for depth.",
+        "lighting_value": "Even, bright lighting with flat shadow shapes; depth from color and overlap rather than modeling.",
+        "lettering_preset": "scifi",
+        "template": "Render in clean uniform-weight line with flat high-key color and sparing coarse halftone dots, in the tradition of mid-century European clear-line comics. Emphasize precise architecture and machines, legible staging and bright even light."
+      }
+    },
+    {
+      "signals": ["history", "war", "kingdom", "court", "empire", "ancient", "myth", "legend", "god", "sea", "voyage"],
+      "suggestion": {
+        "role": "house_realistic",
+        "label": "Painted Graphic Novel",
+        "medium": "digital oil painting over drawing",
+        "medium_family": "painted",
+        "visual_logic": "realistic_illustration",
+        "proportion_family": "naturalistic",
+        "character_design": "Observed natural anatomy with specific, characterful faces; weathered skin, tangible fabric and expressive eyes drawn from life.",
+        "color_strategy": "naturalistic",
+        "palette": "Naturalistic earth and sky: umber, sienna, olive and slate blue with luminous skin tones and controlled warm-cool contrast.",
+        "line_rendering": "Painterly edges with selective drawn contours retained on faces and hands.",
+        "lighting_value": "Cinematic natural light with atmospheric perspective and a clear key light on the focal face.",
+        "lettering_preset": "literary",
+        "template": "Render as a painted graphic novel: observational drawing beneath visible oil-paint brushwork, naturalistic anatomy and materials, atmospheric depth and cinematic key light. Keep it visibly illustrated rather than photographic."
+      }
+    },
+    {
+      "signals": ["comedy", "funny", "absurd", "satire", "game", "cat", "dog", "school", "party", "chaos"],
+      "suggestion": {
+        "role": "house_cartoon",
+        "label": "Rubber-Hose Cartoon",
+        "medium": "bouncy cartoon line with cel color",
+        "medium_family": "comic_production",
+        "visual_logic": "stylized",
+        "proportion_family": "caricatured",
+        "character_design": "Exaggerated caricature shapes: oversized heads and hands, noodle limbs, huge expressive eyes and mouths that stretch with emotion.",
+        "color_strategy": "saturated",
+        "palette": "Punchy candy colors: tomato red, grass green, bubblegum pink and sunny yellow, grounded by a warm plum line color.",
+        "line_rendering": "Bouncy variable-weight cartoon line with rounded terminals and motion lines.",
+        "lighting_value": "Simple cel shading with one shadow tone and bright rim highlights.",
+        "lettering_preset": "pulp",
+        "template": "Render as an energetic cartoon: bouncy variable-weight line, rounded exaggerated shapes, cel color with one shadow tone and lively motion lines. Push acting and timing for comedy while keeping each subject's identifying traits."
+      }
+    },
+    {
+      "signals": ["dream", "magic", "forest", "spirit", "fairy", "strange", "surreal", "wonder", "moon", "witch"],
+      "suggestion": {
+        "role": "house_linocut",
+        "label": "Two-Color Linocut",
+        "medium": "relief print in two inks",
+        "medium_family": "printmaking",
+        "visual_logic": "graphic",
+        "proportion_family": "geometric",
+        "character_design": "Bold geometric simplification: faces as carved planes, almond eyes, block hands and patterned clothing.",
+        "color_strategy": "spot_color",
+        "palette": "Deep ink indigo and a vermilion second color on warm off-white paper, with overprinted violet where they meet.",
+        "line_rendering": "Carved gouge marks, chunky outlines and textured relief-print ink coverage.",
+        "lighting_value": "High-contrast relief values; light suggested by carved radiating marks.",
+        "lettering_preset": "literary",
+        "template": "Render as a two-color relief print: carved gouge marks, chunky outlines and visible ink texture in indigo and vermilion on warm paper, with overprinted violet. Simplify into bold geometric shapes and decorative patterns while staging readable action."
+      }
+    },
+    {
+      "signals": ["literary", "city", "work", "relationship", "modern", "office", "loneliness", "apartment", "everyday"],
+      "suggestion": {
+        "role": "house_monochrome",
+        "label": "Graphite Realism",
+        "medium": "graphite pencil on toothy paper",
+        "medium_family": "drawn",
+        "visual_logic": "realistic_illustration",
+        "proportion_family": "naturalistic",
+        "character_design": "Natural proportions and subtle, specific faces; small gestures and eye direction carry emotion.",
+        "color_strategy": "monochrome",
+        "palette": "Full graphite range from paper white to soft deep black.",
+        "line_rendering": "Sensitive graphite contour with tonal smudging and directional hatching.",
+        "lighting_value": "Quiet natural window light with soft gradations and one deep accent shadow per panel.",
+        "lettering_preset": "minimal",
+        "template": "Render in graphite on toothy paper: sensitive contours, smudged tonal planes and directional hatching across the full value range. Favor quiet observed moments, natural light and subtle acting."
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import { BookLetteringPanel } from "../../components/lettering/BookLetteringPane
 import { StyleGenerationProgress } from "../../components/style/StyleGenerationProgress";
 import { ProofStage } from "../../components/style/ProofStage";
 import { ProofInspector } from "../../components/style/ProofInspector";
+import { ColdOpen } from "../../components/story/ColdOpen";
 import { ProofFilmstrip, ProofSheet } from "../../components/style/ProofBrowse";
 import { ProofComparison } from "../../components/style/ProofComparison";
 import { Button } from "../../components/ui/Button";
@@ -460,6 +461,8 @@ export function StyleRoom() {
             <h2 id="find-the-look" className="font-display text-[2.5rem] font-black uppercase leading-[0.9] tracking-[-0.04em] sm:text-[3.25rem]">{t("Find the look")}</h2>
             <p className="mt-3 max-w-[40rem] font-body text-base leading-6 text-pulp-paper/80">{t("Every proof draws the same scene from your story, so you compare styles, not scenes.")}</p>
             {suggestionFailure && <div className="mt-6 bg-bristol px-4 py-1 text-ink-black">{notices}</div>}
+            {/* The author's first pages, where the look is actually chosen. */}
+            <ColdOpen project={projectName} variant="look" className="mt-8" />
             <div className="mt-7">{composer}</div>
           </div>
         </section>
@@ -577,6 +580,7 @@ export function StyleRoom() {
             <ProofInspector
               key={current.id}
               suggestion={current}
+              coldOpenFavoriteId={stylesData?.cold_open_favorite_id}
               projectName={id}
               imageSrc={proofImageUrl(id, current)}
               imageAvailable={current.has_sample}

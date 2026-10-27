@@ -41,6 +41,9 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "stage_failed": frozenset({"stage", "outcome", "error_type", "latency_ms", "run_id", "attempt_id", "cost_usd", "estimated_cost_usd", "cost_status", "cost_source", "unknown_usage_count"}),
     "stage_approved": frozenset({"stage"}),
     "style_selected": frozenset({"style_id"}),
+    # The North Star for the Cold Open: upload to first page of the author's story.
+    "cold_open_printed": frozenset({"pages", "ranking", "story_copy", "latency_ms"}),
+    "cold_open_favorite": frozenset({"look_id"}),
     "page_outcome": frozenset({"outcome", "page_number", "render_revision", "generation_id", "category", "mode"}),
     "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency", "stripe_mode"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency", "stripe_mode"}),

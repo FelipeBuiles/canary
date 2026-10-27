@@ -29,7 +29,8 @@ from novel_to_comic.extraction_schema import ExtractionParticipation as _Extract
 from novel_to_comic.generation_checkpoints import checkpointed_generator
 from novel_to_comic.extraction_review import ExtractionReview, SOURCE_REVIEW_INSTRUCTIONS, apply_source_review
 from novel_to_comic.extraction_sections import (
-    RegistryAnchorConflict, apply_exclusions, estimate_sections, extract_sections, hydrate_section, resolve_correction_references,
+    RegistryAnchorConflict, apply_exclusions, estimate_sections, extract_sections, hydrate_section, publish_opening,
+    resolve_correction_references,
     validate_references,
 )
 from novel_to_comic.input_limits import read_source
@@ -981,6 +982,9 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             write_extraction_delta(project_dir, compute_delta(
                 registry, story_bible, part_key, suppressed_names=suppressed,
             ))
+        if not sectioned and registry is None:
+            # A short book is read in one call: its opening is the whole part.
+            publish_opening(ctx, project_dir, story_bible, text=novel_text, whole_source=True)
 
         if extract_result is not None:
             for retry_usage in extract_result.additional_usage:

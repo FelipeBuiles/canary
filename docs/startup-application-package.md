@@ -142,21 +142,36 @@ I'm building Scenewright, which turns manuscripts into comics. I'd use Baseten's
 
 ### Follow-up reply to Mae — October 26, 2026
 
-**Draft notes:** The founder reports promising Mammoth-1 testing and likely use in the review pipeline. LoRA work below is a proposed experiment. Confirm daily spend, funding, and any deadline before sending. No model-training work or dedicated deployment is claimed to exist.
+**Draft notes:** The founder reports promising Mammoth-1 testing and likely use in the review pipeline. Scenewright is experimental, pre-funding, and pre-revenue; the founder is polishing it before marketing and acquiring users. LoRA work below is a proposed experiment. No model-training work or dedicated deployment is claimed to exist. Testing figures below were checked against application usage records on October 26; they are not reconciled invoices.
 
 Hi Mae,
 
 Thanks for following up! I'm building Scenewright, which turns manuscripts into comics. Here's a bit more context:
 
-1. **Models and serving:** Today, I use hosted OpenAI and Google models for adaptation, image generation, and review. We recently tested Mammoth-1 with very promising results, and I'll most likely integrate it into our review pipeline. That's the first concrete use I'd like to pursue with Baseten. I'd also like to explore hosting open image models and possibly LoRA tuning for consistent characters and visual style across a comic.
-2. **Timeline:** The immediate goal is to move from Mammoth-1 testing to integration. The image-model experiments would follow, with deployment depending on the results. [Add any specific target date or external deadline.]
-3. **Traffic:** Average provider spend is approximately [US$X/day over the last N days], covering [development/testing and/or customer usage]. [Add input/cached-input/output tokens per day if available.]
-4. **Funding:** [Total funding raised to date; if applicable, "Bootstrapped, with $0 in external funding."]
+1. **Models and serving:** Today, I use hosted model APIs, with recent usage mainly on Google Cloud and Runware. We recently tested Mammoth-1 with very promising results, and I'll most likely integrate it into our review pipeline. That's the first concrete use I'd like to pursue with Baseten. I'd also like to explore hosting open image models and possibly LoRA tuning for consistent characters and visual style across a comic.
+2. **Timeline:** The immediate goal is to move from Mammoth-1 testing to integration and polish the product before bringing in users. The image-model experiments would follow, with deployment depending on the results.
+3. **Traffic:** For October 1–26, the application records about US$115 in API usage costs, roughly US$6 per active testing day across 18 days. Including Codex and Claude subscription routes, it recorded about 3,900 successful calls and 1,250 generated images. Subscription fees are not included in the API-cost figure. This is development and evaluation usage.
+4. **Funding:** No external funding raised to date; Scenewright is pre-revenue.
 
 Would you recommend starting with Model APIs for Mammoth-1 and exploring dedicated deployments for the image-model experiments?
 
 Best,
 Juan
+
+### Testing-spend reply to Mae
+
+Hi Mae,
+
+I pulled the full testing history, including our earlier GLM, DeepSeek, and MiMo experiments. From July 6 through October 26, Scenewright logged roughly 8,800 successful model calls and 3,500 generated images. That includes about 600 successful calls using those three model families for adaptation, page planning, and review.
+
+Recorded API usage costs total about US$280 over that period, including US$115 in October. Some of the testing runs through Codex and Claude subscriptions; their fees aren't included in those figures.
+
+Our recent Mammoth-1 results were very promising, and integrating it into the review pipeline is the next concrete step I'd like to take with Baseten. The program would also help me explore hosting and adapting open models for these workloads as I prepare the product for users.
+
+Best,
+Juan
+
+**Internal evidence:** [Testing-spend audit](research/2026-10-26-testing-spend-baseten.md). Recorded costs include pricing estimates and may consume provider credits. The source does not establish cash paid or subscription fees; failed or unfinished calls with unknown cost remain excluded from the dollar total.
 
 ## Other common application questions
 

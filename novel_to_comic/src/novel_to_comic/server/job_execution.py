@@ -59,7 +59,8 @@ async def execute_command(app, job):
                                 project_name=directory.name, workspace_id=str(directory.parent),
                                 stage=spec.stage, job_id=ledger_id,
                                 page_number=job.payload.get("page_number"),
-                                is_correction=bool(job.payload.get("issue_ids") or job.payload.get("issue_id"))), \
+                                is_correction=bool(job.payload.get("issue_ids") or job.payload.get("issue_id")),
+                                sponsor=spec.sponsor), \
                 preview_events(app, job.project_name, directory, spec.stage):
             result, settled = await _operate(app, job, directory, config)
         if result is not None:
@@ -116,6 +117,10 @@ async def _operate(app, job, directory, config):
         from novel_to_comic.lettering.translation import PreparedTranslation, translate_project
         prepared = TypeAdapter(PreparedTranslation).validate_python(args["prepared"])
         await translate_project(target, config, prepared)
+        return None, None
+    if spec.operation == "cold_open":
+        from .cold_open_jobs import execute_cold_open
+        await execute_cold_open(app, job, directory, config)
         return None, None
     if spec.operation in {"style_sample", "style_validation", "style_suggest", "style_direction"}:
         from .style_jobs import execute_style

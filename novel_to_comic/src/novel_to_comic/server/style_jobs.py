@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from novel_to_comic import artifacts
+from novel_to_comic import artifacts, cold_open
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.state import StageStatus, load_state
@@ -189,8 +189,8 @@ async def execute_style(app, job, directory, config):
             try:
                 with style.style_text_usage(record_usage):
                     suggestions, _usages = await style.generate_suggestions(config, bible,
-                        existing_suggestions=existing, custom_direction=direction,
-                        on_shortlist=shortlisted)
+                        existing_suggestions=existing + cold_open.adoptable_looks(config, directory, bible, existing),
+                        custom_direction=direction, on_shortlist=shortlisted)
             except BaseException:
                 await style.settle_style_sample_brief(brief_task, cancel=True)
                 raise
@@ -200,6 +200,10 @@ async def execute_style(app, job, directory, config):
                 # changes config/lettering, not this candidate portfolio. Re-read
                 # so renames and hides made during generation are preserved.
                 existing = style.load_suggestions(directory)
+                # Cold Open proofs Style would draw identically join without spend.
+                adopted = cold_open.adoptable_looks(config, directory, bible, existing)
+                cold_open.adopt_into_style(directory, adopted, len(existing) + 1)
+                existing += adopted
                 style.save_suggestions(directory, existing + suggestions, bible.title)
             await batch(suggestions, len(existing) + 1)
         _checkpoint(directory, owned, job.payload["proofs"], channel=channel)

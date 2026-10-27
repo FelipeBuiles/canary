@@ -19,6 +19,7 @@ from uuid import uuid4
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from novel_to_comic.models.adaptation import AdaptationBrief, BookAdaptation
+from novel_to_comic.models.cold_open import OpeningSnapshot
 from novel_to_comic.models.crop_ocr import CropOCRReport
 from novel_to_comic.models.textract_ocr import TextractAttempt, TextractPlan
 from novel_to_comic.models.draw import (
@@ -63,6 +64,7 @@ _ARTIFACT_OWNER_STAGES = {
     "cast_design": "Cast",
     "cast_review": "Cast",
     "source": "Extract",
+    "opening_snapshot": "Extract",
     "part_manifest": "Extract",
     "adaptation_brief": "Brief",
     "book_adaptation": "Adapt",
@@ -542,6 +544,16 @@ class TargetArtifacts:
 
     def read_source(self) -> SourceDocument:
         return self._read_model("source", self.source_path, SourceDocument)
+
+    @property
+    def opening_snapshot_path(self) -> Path:
+        return self.project_dir / "source" / "opening.json"
+
+    def write_opening_snapshot(self, snapshot: OpeningSnapshot) -> None:
+        self._write_model(self.opening_snapshot_path, snapshot)
+
+    def read_opening_snapshot(self) -> OpeningSnapshot:
+        return self._read_model("opening_snapshot", self.opening_snapshot_path, OpeningSnapshot)
 
     def write_brief(self, brief: AdaptationBrief) -> None:
         self._write_model(self.brief_path, brief)

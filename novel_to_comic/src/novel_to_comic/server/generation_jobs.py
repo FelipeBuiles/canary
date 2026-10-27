@@ -88,6 +88,11 @@ def _page_pool(job: GenerationJob) -> str:
 # lettering stays interactive while an image job renders in another project.
 LIGHT_JOB_KINDS = frozenset({"lettering_translation"})
 
+# Canary's own work beside the pipeline (the Cold Open). It never holds the
+# author's work back: admission, busy checks and stage status ignore it. It
+# still runs in the account's image lane, so later Look work queues behind it.
+AMBIENT_JOB_KINDS = frozenset({"cold_open"})
+
 
 # Text-only pipeline stages, so the next part can extract and brief while
 # another part's pages render.

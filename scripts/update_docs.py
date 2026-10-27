@@ -174,6 +174,7 @@ def _extract_routes() -> list[dict]:
         "story_bible.py": "/api/projects/{project}",
         "cast_assets.py": "/api/projects/{project}",
         "styles.py": "/api/projects/{project}",
+        "cold_open.py": "/api/projects/{project}",
         "config.py": "/api/projects/{project}/config",
         "stages.py": "/api/projects/{project}",   # NO /data/ — mounted at project root
     }

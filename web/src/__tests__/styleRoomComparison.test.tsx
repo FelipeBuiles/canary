@@ -18,6 +18,9 @@ const state = vi.hoisted(() => {
     stylesMeta: {} as Record<string, boolean> };
 });
 vi.mock("../api/queries", () => ({
+  // The Cold Open has its own tests; these projects never had one.
+  useColdOpen: () => ({ data: { cold_open: null } }),
+  useSetColdOpenFavorite: () => ({ mutate: vi.fn(), isPending: false }),
   useStyles: () => ({ data: { ...state.stylesMeta, suggestions: state.suggestions ?? state.labels.map((label, index) => ({
     id: label, index, label, origin: "generated", template: `Full ${label} direction`, has_sample: true, is_active: false,
   })) }, refetch: vi.fn(), isLoading: false, isError: false }),
