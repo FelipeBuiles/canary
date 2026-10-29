@@ -1,7 +1,8 @@
 # Deployed environment updates
 
-**Status: Current local implementation, October 28, 2026. Not installed or
-activated on production. Isolated-host acceptance below remains required.**
+**Status: isolated-host acceptance and approved production host installation
+completed October 29, 2026. Activation awaits the drained release and verification;
+the first production apply still requires approval of its exact plan.**
 
 Backoffice → **Environment** and `scripts/canary_config.py` use one root-owned
 host controller. Public settings recreate the same immutable image. New secret
@@ -61,6 +62,21 @@ version 1 the single operator key is attributed as `operator_ssh`; the app is
 attributed as `ops_token`, not as an independently verified individual admin.
 The existing CI account must retain only its release controller authority.
 
+Set `/etc/ssh/authorized_keys` to root-owned `0755` and this account's public
+key file to root-owned `0644`; sshd reads it under the target account, so an
+owner-only root directory/file prevents authentication. Private operator keys
+remain local `0600`. Preserve `SSH_ORIGINAL_COMMAND` through the exact sudo rule
+so the controller can reject remote arguments:
+
+```text
+Defaults:canary-config env_keep += "SSH_ORIGINAL_COMMAND"
+canary-config ALL=(root) NOPASSWD: /usr/bin/python3 /usr/local/lib/canary/config_controller.py
+```
+
+Validate the sudoers file with `visudo -cf`, SSH configuration with `sshd -t`,
+and test a forbidden remote command with a valid JSON request on stdin before
+activation.
+
 Keep the operator signing key separate from its SSH access key. Install its
 PUBLIC key in root-owned `0600` `/etc/canary/config-allowed-signers`, using the
 OpenSSH allowed-signers format:
@@ -81,8 +97,8 @@ never consumes an ID. A consumed ID remains used after failure or reboot.
 Create root-owned `0600` `/etc/canary/config-enabled` only during reviewed
 activation after the isolated rehearsal. It gates plans/applies. Refresh the
 host agent only as part of that authorized installation, and deploy the app
-containing the router/view through normal CI. No such installation, service
-refresh, activation or application deployment was performed for this change.
+containing the router/view through normal CI. The dated installation evidence
+below distinguishes completed host setup from pending activation/apply.
 
 ## Public settings and previews
 
@@ -236,4 +252,47 @@ worker kill and reboot on each side of hold removal. Prove persisted drain and
 normal post-stop materialization/pruning. Then privately check the live environment
 character domain and run a production no-op preview. The first actual production
 apply still requires approval of its concrete plan. This document records no
-live installation or successful production update.
+successful production configuration update yet; installation evidence follows.
+
+## Isolated activation rehearsal (2026-10-29)
+
+Eighty-one focused configuration/release/maintenance tests passed. A disposable
+Ubuntu 24.04 Lightsail VM then passed 22 live acceptance checks with dummy
+processes, data and bundles: actual systemd environment parsing, no-op receipts,
+release-lock races, long-running work, SOPS encryption/recovery, OpenSSH signing,
+process/public-env matching, injected transaction-boundary failures, start-rate
+limits, slow uploads alongside status polling, killed workers, restricted SSH
+CLI access, and real reboots before and after hold removal. Interrupted operations
+were not replayed; after hold removal the restarted app remained drained.
+
+The dummy supervisor lacks the application's shutdown trap, so a fixture-only
+unit drop-in used a one-second stop timeout. Failure injection wrapped journal
+calls in a separate fixture worker without changing controller source. On this
+Ubuntu systemd build a denied rate-limited start retained `Result=exit-code`;
+the rehearsal verified denial and an unchanged process-start timestamp rather
+than assuming `Result=start-limit-hit`. No production credential usability or
+paid provider output was tested.
+
+The local Docker Desktop attempt correctly stopped at the loader's active-swap
+guard; no guard was relaxed and existing containers were untouched. The approved
+temporary Lightsail VM was deleted successfully at 13:20:59 UTC. Local dummy-only
+evidence is retained under `work/configuration-activation/2026-10-29/`. Production
+access/configuration was not changed by the isolated rehearsal itself.
+
+## Approved production installation (2026-10-29)
+
+After explicit approval of the account/sudo/signer access settings, the reviewed
+controller, release and host-agent files, schema, runtime verifier, public verifier
+and Compose template were installed under the shared release lock. Prior host
+files are retained in `/etc/canary/config-install-backups/1793280454508835575/`.
+The separate `canary-config` account and public signer trust were installed;
+private keys stayed on the operator machine. Sudoers and sshd validation passed,
+and refreshing the host agent left application readiness and all three
+dependencies healthy. Read-only restricted-account access was verified.
+
+The live environment contains no values outside the serializer's character
+domain. The only schema/container mismatch is the missing
+`CANARY_RUNWARE_TEXT_FALLBACK_ENABLED` projection; its configured/default behavior
+is `false`. The new Compose template differs by that projection alone. A normal
+drained release must recreate the container before drift can match. No secret
+rotation or production configuration apply is included in this installation.
