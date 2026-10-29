@@ -146,7 +146,9 @@ def test_bridge_transitions_fixture_without_touching_live_drafts(
         "---\nkind: post\nchannel: blog\ntitle: Fixture\nfacts: []\nsources: []\ncreated: 2026-10-27\nstatus: draft\n---\n\nFixture copy\n"
     )
     monkeypatch.setattr(marketing, "CANARY_ROOT", tmp_path)
-    view = client.get(f"{BASE}/snapshot", headers=HEADERS).json()["drafts"][0]
+    snapshot = client.get(f"{BASE}/snapshot", headers=HEADERS)
+    assert snapshot.status_code == 200, snapshot.text
+    view = snapshot.json()["drafts"][0]
     payload = {
         "path": path,
         "revision": view["revision"],
