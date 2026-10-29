@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "find-import-file-without-extension": {
+      "disable": [
+        "find-import-file-without-extension"
+      ]
+    }
+  }
+}

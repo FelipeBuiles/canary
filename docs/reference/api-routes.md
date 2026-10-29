@@ -55,6 +55,11 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/projects/{project}/cold-open/favorite` | `set_cold_open_favorite` | `cold_open.py` |
 | `GET` | `/api/projects/{project}/config` | `get_config` | `config.py` |
 | `PATCH` | `/api/projects/{project}/config` | `update_config` | `config.py` |
+| `GET` | `/api/configuration/status` | `status` | `configuration.py` |
+| `GET` | `/api/configuration/events` | `events` | `configuration.py` |
+| `POST` | `/api/configuration/plan` | `plan` | `configuration.py` |
+| `POST` | `/api/configuration/apply` | `apply` | `configuration.py` |
+| `POST` | `/api/configuration/bundles` | `upload` | `configuration.py` |
 | `GET` | `/api/credits/pricing-reference` | `pricing_reference` | `credits.py` |
 | `GET` | `/api/credits/balance` | `balance` | `credits.py` |
 | `GET` | `/api/credits/history` | `history` | `credits.py` |
@@ -100,6 +105,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/lettering/translation-estimate` | `get_translation_estimate` | `lettering.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/lettering/locale` | `post_stored_locale` | `lettering.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/lettering/translate` | `post_translation` | `lettering.py` |
+| `GET` | `/api/ops/backoffice/marketing/snapshot` | `snapshot` | `marketing.py` |
+| `POST` | `/api/ops/backoffice/marketing/transition` | `transition` | `marketing.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/notes` | `list_notes` | `notes.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/notes/preview` | `preview_note` | `notes.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/notes/{change_id}/checks/estimate` | `estimate_note_checks` | `notes.py` |

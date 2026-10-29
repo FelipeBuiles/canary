@@ -1,0 +1,25 @@
+id: unchecked-throwing-call-python
+valid:
+  - |
+    try:
+        result = json.loads(raw)
+    except ValueError:
+        report_invalid_request()
+  - |
+    result = parse_request(raw)
+invalid:
+  - |
+    result = json.loads(raw)
+  - |
+    with open(path) as stream:
+        result = stream.read()
+  - |
+    result = os.stat(path)
+  # Caller-level handling remains visible as an audit warning, not a blocker.
+  - |
+    def parse_request(raw):
+        return json.loads(raw)
+    try:
+        result = parse_request(raw)
+    except ValueError:
+        report_invalid_request()

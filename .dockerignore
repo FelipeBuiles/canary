@@ -24,3 +24,5 @@ novel_to_comic/tests
 *.sops.yaml
 **/age.txt
 **/keys/
+/marketing/
+/.pi/

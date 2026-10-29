@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import socket
+from uuid import UUID
 
 from fastapi import HTTPException
 
@@ -21,6 +22,11 @@ def host_request(payload: dict) -> dict:
                 raise ValueError('oversized_host_response')
             response = json.loads(raw)
         if response.get('ok') is not True:
+            if response.get('code') == 'configuration_operation_active':
+                operation = str(UUID(response['operation_id']))
+                raise HTTPException(409, 'configuration_operation_active: ' + operation)
+            if response.get('code') == 'rejected_busy':
+                raise HTTPException(409, 'rejected_busy: another host request is in progress')
             raise HTTPException(409, 'Host request failed. Refresh host status before retrying; inspect the host journal if needed.')
         return response['result']
     except (OSError, ValueError, KeyError) as exc:

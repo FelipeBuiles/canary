@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 BASE = Path("/usr/local/lib/canary")
@@ -28,6 +29,7 @@ CONFIG = Path("/etc/canary/deployment.env")
 MAINTENANCE = Path("/etc/canary/maintenance")
 ENABLED = Path("/etc/canary/ci-enabled")
 RUNTIME = Path("/run/canary-release")
+CONFIG_STATE = Path('/var/lib/canary-config')
 REPOSITORY = "registry.depot.dev/js338b6zll"
 HEX = re.compile(r"[0-9a-f]{64}")
 SYSTEM_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/root"}
@@ -68,6 +70,34 @@ def parse_environment(raw):
     return result
 
 
+def serialize_environment(config):
+    """Literal common subset of shlex and systemd EnvironmentFile syntax."""
+    lines = []
+    for key, value in config.items():
+        require(re.fullmatch(r'[A-Z][A-Z0-9_]*', key), 'invalid_environment')
+        require(isinstance(value, str) and all(32 <= ord(c) <= 126 and c not in '\\"$`' for c in value),
+                'unsupported_environment_value')
+        lines.append(f'{key}="{value}"')
+    encoded = ('\n'.join(lines) + '\n').encode()
+    require(len(encoded) <= 65536, 'invalid_environment')
+    return encoded
+
+
+def configuration_conflict():
+    """Only an inode-matched hold belongs to a configuration operation."""
+    try:
+        record = json.loads(private_read(CONFIG_STATE / 'hold.json'))
+        info = MAINTENANCE.stat(follow_symlinks=False)
+        if (record['device'], record['inode']) == (info.st_dev, info.st_ino):
+            identifier = record['operation_id']
+            require(re.fullmatch(r'[0-9a-f-]{36}', identifier), 'invalid_request')
+            error = RuntimeError('configuration_operation_active')
+            error.operation_id = identifier
+            raise error
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+
+
 def atomic_write(path, value):
     fd, temporary = tempfile.mkstemp(prefix=".release-", dir=path.parent)
     try:
@@ -76,8 +106,24 @@ def atomic_write(path, value):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+@contextmanager
+def configuration_publication():
+    """Coordinate short snapshot/publication windows without taking the release lock."""
+    if not CONFIG_STATE.exists():
+        yield
+        return
+    with (CONFIG_STATE / 'control.lock').open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
 
 
 def run(argv, *, data=None, env=None, timeout=600):
@@ -102,11 +148,13 @@ def api(path, config, token=None, method="GET"):
         return json.load(response)
 
 
-def drain(config, token):
+def drain(config, token, progress=None):
     api("/api/ops/drain", config, token, "POST")
     deadline = time.monotonic() + 1800
     while True:
         status = api("/api/ops/deployment-status", config, token)
+        if progress:
+            progress(status, deadline)
         if status.get("draining") is True and status.get("safe_to_deploy") is True:
             return
         require(time.monotonic() < deadline, "drain_timeout")
@@ -129,7 +177,54 @@ def wait_candidate(config, token, version):
         time.sleep(3)
 
 
+def candidate_identity(timeout=10):
+    deadline = time.monotonic() + timeout
+    ids = run(['docker', 'ps', '--no-trunc', '--filter', 'label=com.docker.compose.project=canary',
+               '--filter', 'label=com.docker.compose.service=canary', '--format', '{{.ID}}'], timeout=min(5, timeout)).decode().split()
+    require(len(ids) == 1, 'candidate_identity_unknown')
+    unit = dict(line.split('=', 1) for line in run([
+        'systemctl', 'show', 'canary.service', '--property=InvocationID,NRestarts,ActiveState,Result'],
+        timeout=max(0.01, min(5, deadline - time.monotonic()))).decode().splitlines() if '=' in line)
+    require(unit.get('ActiveState') == 'active' and unit.get('InvocationID') and unit.get('NRestarts', '').isdigit(),
+            'candidate_identity_unknown')
+    return {'container_id': ids[0], 'invocation': unit['InvocationID'], 'restarts': unit['NRestarts']}
+
+
+def pin_candidate():
+    # Type=simple systemd startup returns before Compose creates the container.
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            return candidate_identity()
+        except (RuntimeError, subprocess.SubprocessError):
+            require(time.monotonic() < deadline, 'candidate_identity_unknown')
+            time.sleep(1)
+
+
+def verify_public(config, token, version):
+    try:
+        raw = run(['python3', str(BASE / 'verify_deployment.py'), '--drained'], env={**SYSTEM_ENV,
+            'CANARY_OPS_TOKEN': token, 'EXPECTED_CANARY_VERSION': version,
+            'SCENEWRIGHT_APP_URL': config['SCENEWRIGHT_APP_URL']}, timeout=120)
+    except subprocess.SubprocessError:
+        raise RuntimeError('public_verification_failed') from None
+    # Publish only known check outcomes, never arbitrary verifier payloads/errors.
+    evidence = json.loads(raw)
+    require(evidence.get('status') == 'passed', 'public_verification_failed')
+    return {'version': True, 'readiness': True, 'security_headers': True, 'admission_drained': True}
+
+
+def start_candidate():
+    try:
+        run(['systemctl', 'start', 'canary.service'], timeout=90)
+    except subprocess.SubprocessError:
+        result = run(['systemctl', 'show', 'canary.service', '--property=Result', '--value'], timeout=5)
+        require(result.strip() != b'start-limit-hit', 'start_limit_hit')
+        raise
+
+
 def activate(request):
+    configuration_conflict()
     require(ENABLED.is_file() and not MAINTENANCE.exists(), "ci_not_activated")
     run(["systemctl", "is-active", "--quiet", "canary.service"])
     old = private_read(CONFIG)
@@ -146,6 +241,7 @@ def activate(request):
     bundle = loader.decrypt(Path(config["CANARY_BUNDLE_PATH"]), Path("/etc/canary/keys/age.txt"), config["CANARY_BUNDLE_SHA256"])
     token = bundle["env"]["CANARY_OPS_TOKEN"]
     candidate = {**config, "CANARY_IMAGE": request["image"]}
+    updated = serialize_environment(candidate)  # Reject before disrupting a healthy owner.
     with tempfile.TemporaryDirectory(prefix="registry-", dir=RUNTIME) as folder:
         env = {**SYSTEM_ENV, "DOCKER_CONFIG": folder}
         run(["docker", "login", "registry.depot.dev", "--username", "x-token", "--password-stdin"],
@@ -170,23 +266,25 @@ def activate(request):
     with backup.open("xb") as stream:
         stream.write(old)
     replacement_started = False
+    resume_attempted = False
     try:
         require(not MAINTENANCE.exists(), "maintenance_hold")
         replacement_started = True  # Ambiguous stop failure must also fail closed.
         run(["systemctl", "stop", "canary.service"], timeout=90)
-        updated = "\n".join(f"{key}={json.dumps(value)}" for key, value in candidate.items()) + "\n"
-        atomic_write(CONFIG, updated.encode())
-        run(["systemctl", "reset-failed", "canary.service"])
-        run(["systemctl", "start", "canary.service"])
+        with configuration_publication():
+            atomic_write(CONFIG, updated)
+        start_candidate()
+        pinned = pin_candidate()
         wait_candidate(candidate, token, request["version"])
-        # The reviewed host verifier checks SHA, dependencies, headers, then resumes.
-        run(["python3", str(BASE / "verify_deployment.py"), "--resume"], env={**SYSTEM_ENV,
-             "CANARY_OPS_TOKEN": token, "EXPECTED_CANARY_VERSION": request["version"],
-             "SCENEWRIGHT_APP_URL": candidate["SCENEWRIGHT_APP_URL"]}, timeout=120)
+        require(candidate_identity() == pinned, 'candidate_restarted')
+        verify_public(candidate, token, request['version'])
+        require(candidate_identity() == pinned, 'candidate_restarted')
+        resume_attempted = True
+        api('/api/ops/resume', candidate, token, 'POST')
         require(api("/api/ops/deployment-status", candidate, token).get("draining") is False, "resume_failed")
         print("release_verified_and_resumed", flush=True)
     except BaseException:
-        if replacement_started:
+        if replacement_started and not resume_attempted:
             MAINTENANCE.touch(mode=0o600)
             run(["systemctl", "stop", "canary.service"], timeout=90)
         raise
@@ -197,12 +295,18 @@ def worker(path):
     request = validate_request(json.loads(private_read(path)))
     path.unlink()  # The pull token remains only in worker memory.
     with (RUNTIME / "worker.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        configuration_conflict()
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            configuration_conflict()
+            raise
         activate(request)
 
 
 def dispatch():
     require(not os.environ.get("SSH_ORIGINAL_COMMAND"), "remote_commands_forbidden")
+    configuration_conflict()
     require(ENABLED.is_file() and not MAINTENANCE.exists(), "ci_not_activated")
     request = validate_request(json.loads(sys.stdin.buffer.read(16385)))
     RUNTIME.mkdir(mode=0o700, exist_ok=True)
@@ -212,10 +316,14 @@ def dispatch():
         with os.fdopen(fd, "w") as stream:
             json.dump(request, stream)
         # No --pipe: the worker logs to journald and survives SSH/runner loss.
-        run(["systemd-run", "--unit=canary-release", "--collect", "--wait",
-             "--property=RuntimeMaxSec=2400", "--property=TimeoutStopSec=120",
-             "--property=UMask=0077", "--property=LimitCORE=0",
-             "/usr/bin/python3", str(BASE / "release.py"), "--worker", str(path)], timeout=2600)
+        try:
+            run(["systemd-run", "--unit=canary-release", "--collect", "--wait",
+                 "--property=RuntimeMaxSec=2400", "--property=TimeoutStopSec=120",
+                 "--property=UMask=0077", "--property=LimitCORE=0",
+                 "/usr/bin/python3", str(BASE / "release.py"), "--worker", str(path)], timeout=2600)
+        except subprocess.SubprocessError:
+            configuration_conflict()
+            raise
         print("release_verified_and_resumed", flush=True)
     finally:
         path.unlink(missing_ok=True)
@@ -235,6 +343,9 @@ if __name__ == "__main__":
         else:
             require(len(sys.argv) == 1, "invalid_arguments")
             dispatch()
-    except BaseException:  # noqa: BLE001 — redact credential-bearing boundary errors.
-        print("release_failed_admission_not_automatically_resumed", file=sys.stderr)
+    except BaseException as error:  # noqa: BLE001 — redact credential-bearing boundary errors.
+        if isinstance(error, RuntimeError) and str(error) == 'configuration_operation_active':
+            print('configuration_operation_active ' + error.operation_id, file=sys.stderr)
+        else:
+            print("release_failed_admission_not_automatically_resumed", file=sys.stderr)
         raise SystemExit(1) from None

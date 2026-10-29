@@ -135,3 +135,7 @@ checkout. Report the result, checks performed, and remaining uncertainty.
 Explicit user instructions take precedence over skill guidelines, subject to
 higher-priority instructions and permission boundaries. If a skill causes a
 pause or deviation, identify the file and exact rule and continue unaffected work.
+
+## Marketing workspace
+
+For marketing work, load the matching workflow from `.agents/skills/` (start with `marketing-plan` for a plan). Run its commands from `marketing/` and follow `marketing/AGENTS.md`. Treat Canary product code as read-only; marketing changes stay under `marketing/` unless the owner explicitly requests a separate Canary change.

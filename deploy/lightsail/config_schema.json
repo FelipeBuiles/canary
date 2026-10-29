@@ -1,0 +1,16 @@
+{
+  "CANARY_RUNWARE_FIRST_ENABLED": {"type":"boolean","default":"false","backoffice":"editable","description":"Use Runware first for new Sunburst work. Changes which provider is paid; requires RUNWARE_API_KEY."},
+  "CANARY_RUNWARE_TEXT_FALLBACK_ENABLED": {"type":"boolean","default":"false","backoffice":"editable","description":"Allow Runware after a definite Vertex 429. Changes which provider is paid; requires RUNWARE_API_KEY."},
+  "CANARY_TEXTRACT_ENABLED": {"type":"boolean","default":"false","backoffice":"ssh_only","description":"Enable paid Textract OCR; requires scoped credentials."},
+  "CANARY_ALLOWED_HOSTS": {"type":"string","backoffice":"ssh_only","description":"Accepted request hosts."},
+  "CANARY_BACKOFFICE_ORIGINS": {"type":"string","default":"","backoffice":"ssh_only","description":"Backoffice CORS origins."},
+  "CANARY_INTERNAL_ACCOUNT_IDS": {"type":"string","default":"","backoffice":"ssh_only","description":"Accounts excluded from customer analytics."},
+  "SUPABASE_URL": {"type":"url","backoffice":"ssh_only","description":"Supabase project URL."},
+  "VERTEXAI_PROJECT": {"type":"string","default":"","backoffice":"ssh_only","description":"Vertex project."},
+  "GOOGLE_CLOUD_QUOTA_PROJECT": {"type":"string","default":"","backoffice":"ssh_only","description":"Google quota project."},
+  "VERTEXAI_LOCATION": {"type":"string","min_length":1,"default":"global","backoffice":"ssh_only","description":"Vertex location."},
+  "AWS_REGION_NAME": {"type":"string","min_length":1,"default":"us-east-1","backoffice":"ssh_only","description":"AWS provider region."},
+  "POSTHOG_PROJECT_TOKEN": {"type":"string","default":"","backoffice":"ssh_only","description":"Public PostHog project token."},
+  "POSTHOG_HOST": {"type":"string","default":"","backoffice":"ssh_only","description":"PostHog ingestion origin."},
+  "POSTHOG_TRACE_SAMPLE_RATE": {"type":"fraction","default":"1","backoffice":"ssh_only","description":"Fraction of traces recorded, from zero to one."}
+}

@@ -45,12 +45,14 @@ def _ops_json(origin: str, path: str, token: str, method: str = "GET") -> dict[s
         return json.load(response)
 
 
-def main(*, resume: bool = False) -> int:
+def main(*, resume: bool = False, drained: bool = False) -> int:
     origin = os.environ.get(
         "SCENEWRIGHT_APP_URL", "https://canary-web.fly.dev"
     ).rstrip("/")
     expected_sha = os.environ.get("EXPECTED_CANARY_VERSION", "").strip()
     failures: list[str] = []
+    if drained and resume:
+        failures.append('drained verification cannot resume generation')
     evidence: dict[str, Any] = {"origin": origin}
     if resume and not expected_sha:
         failures.append("EXPECTED_CANARY_VERSION is required before resuming generation")
@@ -118,7 +120,9 @@ def main(*, resume: bool = False) -> int:
                         failures.append("deployment resume did not reopen generation admission")
                 admission = _ops_json(origin, "/api/ops/deployment-status", token)
                 evidence["admission"] = admission
-                if admission.get("draining") is not False:
+                if drained and admission.get('draining') is not True:
+                    failures.append('candidate admission must remain drained')
+                elif not drained and admission.get("draining") is not False:
                     failures.append("generation admission is still paused for deployment")
     except (OSError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         failures.append(f"public verification request failed: {exc}")
@@ -135,4 +139,6 @@ if __name__ == "__main__":
         "--resume", action="store_true",
         help="Explicitly reopen generation after release verification succeeds.",
     )
-    raise SystemExit(main(resume=parser.parse_args().resume))
+    parser.add_argument('--drained', action='store_true', help='Verify the candidate while admission remains drained')
+    args = parser.parse_args()
+    raise SystemExit(main(resume=args.resume, drained=args.drained))

@@ -1,6 +1,6 @@
 import { TesterTracker } from "../components/TesterTracker";
 import { FeedbackInbox } from "../components/FeedbackInbox";
-import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type SubmitEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -18,6 +18,7 @@ import {
   LifeBuoy,
   LockKeyhole,
   Menu,
+  Megaphone,
   Plus,
   RefreshCw,
   Search,
@@ -62,12 +63,16 @@ import {
   type UserStatus,
 } from "./backofficeData";
 import "./BackofficePage.css";
+import { localMarketingAvailable } from "../api/marketing";
 
 type RangeKey = "7d" | "30d" | "90d";
 type NoticeTone = "ink" | "red" | "gold" | "sage" | "blue";
 const OperatorModelPanel = lazy(() => import("../components/OperatorModelPanel").then(({ OperatorModelPanel }) => ({ default: OperatorModelPanel })));
 
 const HostMaintenancePanel = lazy(() => import("../components/HostMaintenancePanel").then(({ HostMaintenancePanel }) => ({ default: HostMaintenancePanel })));
+const EnvironmentPanel = lazy(() => import('../components/EnvironmentPanel').then(({ EnvironmentPanel }) => ({ default: EnvironmentPanel })));
+
+const MarketingDesk = import.meta.env.DEV ? lazy(() => import("../components/marketing/MarketingDesk").then(({ MarketingDesk }) => ({ default: MarketingDesk }))) : null;
 
 const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; shortcut: string }> = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, shortcut: "⌘ 1" },
@@ -77,6 +82,8 @@ const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; s
   { key: "testers", label: "Tester sessions", icon: UserCheck, shortcut: "⌘ 6" },
   { key: "models", label: "Stage models", icon: Settings2, shortcut: "⌘ 5" },
   { key: "host", label: "Host maintenance", icon: Activity, shortcut: "⌘ 7" },
+  { key: "environment", label: "Environment", icon: Settings2, shortcut: "" },
+  { key: "marketing", label: "Marketing", icon: Megaphone, shortcut: "⌘ 8" },
 ];
 
 const VIEW_META: Record<BackofficeView, { kicker: string; title: string; description: string }> = {
@@ -102,6 +109,8 @@ const VIEW_META: Record<BackofficeView, { kicker: string; title: string; descrip
   },
   testers: { kicker: "Launch learning", title: "Tester sessions", description: "Recruit writers, capture sessions, and act on evidence." },
   host: { kicker: "Infrastructure", title: "Host maintenance", description: "Lightsail health, package updates, and restarts." },
+  environment: { kicker: "Infrastructure", title: "Environment", description: "Review configuration, follow changes, and inspect receipts." },
+  marketing: { kicker: "Local workspace", title: "Marketing", description: "Review drafts, supporting facts, and research before posting by hand." },
   models: {
     kicker: "Generation settings",
     title: "Stage models",
@@ -246,6 +255,8 @@ function StateTag({ label, tone = "ink", className }: { label: string; tone?: No
   );
 }
 
+type ConnectionView = Extract<BackofficeView, "overview" | "marketing">;
+
 function ConnectionScreen({
   connection,
   error,
@@ -255,14 +266,18 @@ function ConnectionScreen({
   connection: OperatorConnection;
   error: string | null;
   loading: boolean;
-  onConnect: (connection: OperatorConnection) => void;
+  onConnect: (connection: OperatorConnection, view: ConnectionView) => void;
 }) {
   const [baseUrl, setBaseUrl] = useState(connection.baseUrl);
   const [token, setToken] = useState(connection.token);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  function connect(view: ConnectionView) {
+    onConnect({ baseUrl: baseUrl.trim().replace(/\/+$/, ""), token: token.trim() }, view);
+  }
+
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    onConnect({ baseUrl: baseUrl.trim().replace(/\/+$/, ""), token: token.trim() });
+    connect("overview");
   }
 
   return (
@@ -282,6 +297,7 @@ function ConnectionScreen({
             <input id="backoffice-ops-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="CANARY_OPS_TOKEN" autoComplete="current-password" className="mt-2 h-12 w-full border-[2px] border-ink-black/18 bg-bristol px-3 font-body text-[0.78rem] text-ink-black outline-none placeholder:text-ink-soft hover:border-ink-black/40 focus:border-hero-red" />
           </div>
           {error && <div role="alert" className="border-[2px] border-hero-red bg-chip-red px-3 py-3 font-body text-[0.74rem] font-semibold leading-5 text-hero-red">{error}</div>}
+          {localMarketingAvailable(baseUrl) && <div className="space-y-2 border-t-[2px] border-ink-black/10 pt-5"><p className="font-body text-sm text-ink-soft">Review local marketing files without connecting to Supabase. Your operations token is still required.</p><Button type="button" variant="secondary" disabled={!token.trim()} onClick={() => connect("marketing")}>Open local Marketing</Button></div>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t-[2px] border-ink-black/10 pt-5"><p className="font-body text-[0.68rem] leading-5 text-ink-soft">For a local panel pointed at production, allow its origin with <code className="font-meta text-[0.6rem] text-ink-black">CANARY_BACKOFFICE_ORIGINS</code>.</p><Button type="submit" size="sm" disabled={!token.trim() || loading}>{loading ? <><RefreshCw size={14} className="animate-spin" /> Connecting</> : <><LockKeyhole size={14} /> Connect</>}</Button></div>
         </form>
       </Surface>
@@ -742,14 +758,14 @@ function UserDrawer({
     };
   }, []);
 
-  function saveNote(event: FormEvent<HTMLFormElement>) {
+  function saveNote(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!note.trim()) return;
     onAction(`Internal note saved for ${user.name}.`);
     setNote("");
   }
 
-  function submitGrant(event: FormEvent<HTMLFormElement>) {
+  function submitGrant(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const amount = Number.parseInt(grantAmount, 10);
     if (!Number.isFinite(amount) || amount <= 0 || !grantReason.trim()) return;
@@ -824,12 +840,14 @@ function BackofficeSidebar({
   onNavigate,
   onClose,
   environment,
+  marketingAvailable,
 }: {
   activeView: BackofficeView;
   open: boolean;
   onNavigate: (view: BackofficeView) => void;
   onClose: () => void;
   environment: OperatorEnvironment;
+  marketingAvailable: boolean;
 }) {
   return (
     <>
@@ -837,7 +855,7 @@ function BackofficeSidebar({
       <aside className={cn("backoffice-sidebar z-[70] flex h-dvh w-[252px] shrink-0 flex-col bg-ink-black text-bristol", open ? "fixed inset-y-0 left-0" : "hidden lg:sticky lg:top-0 lg:flex")}>
         <div className="border-b-[2px] border-bristol/12 px-5 py-5"><div className="flex items-center gap-3"><BrandMark className="h-9 w-9 shrink-0" variant="reversed" /><div><div className="font-display text-[1.15rem] font-black uppercase leading-none tracking-[-0.035em]">Scenewright</div><div className="mt-1 font-meta text-[0.5rem] font-bold uppercase tracking-[0.17em] text-bristol/58">Operator desk</div></div></div></div>
         <div className="mx-4 mt-5 border-[2px] border-bristol/16 bg-bristol/6 px-3 py-3"><div className="flex items-center gap-2 font-meta text-[0.52rem] font-bold uppercase tracking-[0.12em] text-narrator-gold"><span className={cn("h-2 w-2", environment.stripe_mode === "live" ? "bg-hero-red" : "bg-narrator-gold")} /> {environment.app_environment} · Stripe {environment.stripe_mode}</div><p className="mt-2 font-body text-[0.67rem] leading-5 text-bristol/62">Real customer records · manual ledger grants enabled.</p></div>
-        <nav aria-label="Backoffice sections" className="min-h-0 flex-1 px-3 py-6"><div className="mb-2 px-3 font-meta text-[0.5rem] font-bold uppercase tracking-[0.16em] text-bristol/38">Control room</div>{NAV_ITEMS.map(({ key, label, icon: Icon, shortcut }) => { const selected = key === activeView; return <button key={key} type="button" onClick={() => { onNavigate(key); onClose(); }} aria-current={selected ? "page" : undefined} className={cn("group flex min-h-12 w-full items-center gap-3 px-3 text-left transition-colors", selected ? "bg-bristol text-ink-black shadow-[4px_4px_0_0_var(--color-hero-red)]" : "text-bristol/72 hover:bg-bristol/8 hover:text-bristol")}><Icon size={16} strokeWidth={selected ? 2 : 1.6} /><span className="font-body text-[0.78rem] font-bold">{label}</span><span className={cn("ml-auto font-meta text-[0.5rem] tracking-[0.08em]", selected ? "text-ink-soft" : "text-bristol/32")}>{shortcut}</span></button>; })}</nav>
+        <nav aria-label="Backoffice sections" className="min-h-0 flex-1 px-3 py-6"><div className="mb-2 px-3 font-meta text-[0.5rem] font-bold uppercase tracking-[0.16em] text-bristol/38">Control room</div>{NAV_ITEMS.filter(item => item.key !== "marketing" || marketingAvailable).map(({ key, label, icon: Icon, shortcut }) => { const selected = key === activeView; return <button key={key} type="button" onClick={() => { onNavigate(key); onClose(); }} aria-current={selected ? "page" : undefined} className={cn("group flex min-h-12 w-full items-center gap-3 px-3 text-left transition-colors", selected ? "bg-bristol text-ink-black shadow-[4px_4px_0_0_var(--color-hero-red)]" : "text-bristol/72 hover:bg-bristol/8 hover:text-bristol")}><Icon size={16} strokeWidth={selected ? 2 : 1.6} /><span className="font-body text-[0.78rem] font-bold">{label}</span><span className={cn("ml-auto font-meta text-[0.5rem] tracking-[0.08em]", selected ? "text-ink-soft" : "text-bristol/32")}>{shortcut}</span></button>; })}</nav>
         <div className="border-t-[2px] border-bristol/12 px-4 py-4"><div className="flex items-center gap-2 font-meta text-[0.52rem] font-bold uppercase tracking-[0.11em] text-bristol/72"><span className={cn("h-2 w-2", environment.mode_matches_app === false ? "bg-hero-red" : "bg-archive-sage")} /> {environment.mode_matches_app === false ? "Mode mismatch" : "Connected"}</div><div className="mt-4 flex items-center justify-between gap-3"><Link to="/" className="font-meta text-[0.55rem] font-bold uppercase tracking-[0.1em] text-bristol/55 hover:text-narrator-gold">← Scenewright</Link><span className="font-meta text-[0.48rem] uppercase tracking-[0.1em] text-bristol/32">{environment.git_sha && environment.git_sha !== "unknown" ? environment.git_sha.slice(0, 7) : "operator"}</span></div></div>
       </aside>
     </>
@@ -882,6 +900,7 @@ export function BackofficePage() {
   const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
 
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+  const marketingSelected = activeView === "marketing";
 
   useEffect(() => {
     if (!notice) return;
@@ -890,7 +909,7 @@ export function BackofficePage() {
   }, [notice]);
 
   useEffect(() => {
-    if (!connection.token) return;
+    if (!connection.token || marketingSelected) return;
     let cancelled = false;
     fetchOperatorSnapshot(connection)
       .then((nextSnapshot) => {
@@ -908,7 +927,7 @@ export function BackofficePage() {
     return () => {
       cancelled = true;
     };
-  }, [connection]);
+  }, [connection, marketingSelected]);
 
   function showNotice(message: string, tone: NoticeTone = "ink") {
     setNotice({ message, tone });
@@ -971,8 +990,9 @@ export function BackofficePage() {
     if (view !== "users") setSelectedUserId(null);
   }
 
-  function connect(nextConnection: OperatorConnection) {
+  function connect(nextConnection: OperatorConnection, view: ConnectionView) {
     saveOperatorConnection(nextConnection);
+    setActiveView(view);
     setConnection(nextConnection);
     setLoading(Boolean(nextConnection.token));
     setSnapshot(null);
@@ -989,6 +1009,16 @@ export function BackofficePage() {
     setConnectionError(null);
   }
 
+  if (!snapshot && activeView === "marketing" && MarketingDesk && connection.token && localMarketingAvailable(connection.baseUrl)) {
+    return <div className="backoffice-root min-h-dvh bg-surface-container text-ink-black">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b-[2px] border-ink-black/10 bg-pulp-paper px-4 py-4 md:px-8">
+        <p className="font-meta text-xs">Local marketing workspace. Customer data is not connected.</p>
+        <div className="flex gap-3"><Button variant="outline" onClick={() => setActiveView("overview")}>Back to connection</Button><Button variant="secondary" onClick={disconnect}>Disconnect</Button></div>
+      </header>
+      <main className="mx-auto max-w-[1480px] px-4 py-6 md:px-8"><Suspense fallback={<p role="status">Loading marketing…</p>}><MarketingDesk connection={connection} /></Suspense></main>
+    </div>;
+  }
+
   if (!snapshot) {
     return <ConnectionScreen connection={connection} error={connectionError} loading={loading} onConnect={connect} />;
   }
@@ -996,7 +1026,7 @@ export function BackofficePage() {
   return (
     <div className="backoffice-root flex min-h-dvh bg-surface-container text-ink-black">
       <a href="#backoffice-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:bg-hero-red focus:px-4 focus:py-2 focus:font-meta focus:text-[0.6rem] focus:font-bold focus:uppercase focus:tracking-[0.12em] focus:text-bristol">Skip to content</a>
-      <BackofficeSidebar activeView={activeView} open={mobileNavOpen} onNavigate={navigate} onClose={() => setMobileNavOpen(false)} environment={snapshot.environment} />
+      <BackofficeSidebar activeView={activeView} open={mobileNavOpen} onNavigate={navigate} onClose={() => setMobileNavOpen(false)} environment={snapshot.environment} marketingAvailable={localMarketingAvailable(connection.baseUrl)} />
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col lg:ml-0">
         <BackofficeHeader activeView={activeView} range={range} onOpenMenu={() => setMobileNavOpen(true)} onRefresh={refresh} onRangeChange={setRange} environment={snapshot.environment} onDisconnect={disconnect} />
         <main id="backoffice-content" className={cn("backoffice-main flex-1", activeView === "testers" ? "flex min-w-0" : "px-4 py-6 md:px-6 md:py-8 xl:px-9 xl:py-10")}>
@@ -1004,9 +1034,11 @@ export function BackofficePage() {
             {activeView === "overview" && <OverviewView range={range} onRangeChange={setRange} onViewChange={navigate} onRefresh={refresh} users={users} tickets={tickets} snapshot={snapshot} />}
             {activeView === "users" && <UsersView users={users} onOpenUser={setSelectedUserId} onInvite={() => showNotice("Invite flow is read-only; no email was sent.", "blue")} />}
             {activeView === "testers" && <TesterTracker connection={connection} />}
+            {activeView === "marketing" && MarketingDesk && localMarketingAvailable(connection.baseUrl) && <Suspense fallback={<p role="status">Loading marketing…</p>}><MarketingDesk connection={connection} /></Suspense>}
             {activeView === "support" && <FeedbackInbox connection={connection} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
             {activeView === "host" && <Suspense fallback={<p role="status">Loading host maintenance…</p>}><HostMaintenancePanel connection={connection} /></Suspense>}
+            {activeView === 'environment' && <Suspense fallback={<p role="status">Loading environment…</p>}><EnvironmentPanel connection={connection} /></Suspense>}
             {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}
           </div>
         </main>
