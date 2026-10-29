@@ -1,14 +1,104 @@
 # Deployed environment updates
 
-**Status: isolated-host acceptance and approved production host installation
-completed October 29, 2026. Activation awaits the drained release and verification;
-the first production apply still requires approval of its exact plan.**
+**Status: activated on production October 29, 2026. Isolated-host acceptance,
+drained deployment, protected API/SSH checks and the explicitly approved
+production no-op apply all passed. No production secret values changed.**
 
 Backoffice → **Environment** and `scripts/canary_config.py` use one root-owned
 host controller. Public settings recreate the same immutable image. New secret
 bundles require an independent operator signature. CI, configuration applies
 and package maintenance share the release lock. Previews use short snapshots
 and a background worker, never that release lock.
+
+## Compare a local production file and reconcile selected differences
+
+`./scripts/prod-env` is the local companion for Backoffice → Environment. It
+runs with the project's locked Python dependencies and reads a dedicated file:
+`<repository>/.env.prod`, explicitly gitignored and owned by you with mode `0600`. It never
+reads a development `.env` or the ambient shell environment as desired values.
+
+Initial setup writes current **public** settings and commented secret names.
+It does not copy production plaintext secrets into the env file. Existing files
+are never overwritten:
+
+```sh
+./scripts/prod-env init
+# Edit .env.prod locally; enter only intended overrides.
+# With Homebrew SOPS/age, explicitly opt in once per terminal as in secret delivery:
+export CANARY_ALLOW_HOMEBREW_TOOLS=1
+./scripts/prod-env diff
+./scripts/prod-env reconcile
+```
+
+The diff shows `same`, `changed`, `local_only`, `production_only`, empty-secret
+errors and unsupported names. Public setting differences show old/new values;
+secret and unsupported-name values are always hidden, with no value hashes.
+Dotenv parsing performs no interpolation or shell execution. A missing local
+name preserves production; an empty secret is rejected, not treated as removal.
+
+`reconcile` proposes all supported changed/local-only values by default. Use
+repeated `--select NAME` options for a subset. Unknown names block automatic
+selection and require a reviewed secret/schema/Compose release before they can
+be reconciled; explicit selection can proceed with other supported names. Never
+silently project arbitrary new variables into the production container.
+
+```sh
+./scripts/prod-env reconcile --select RUNWARE_API_KEY --select CANARY_RUNWARE_FIRST_ENABLED
+./scripts/prod-env reconcile --remove FAL_KEY
+```
+
+Only explicit `--remove` removes optional secrets. Public removals reset a
+setting to its declared default; required settings/secrets cannot be removed.
+Gateway key aliases remain paired. Unselected secrets and credential files are
+preserved exactly.
+
+The restricted operator SSH account has one additional read-only action:
+`config_export`. It returns only the accepted **encrypted** bundle, its digest,
+public settings/schema, revision and public recipient metadata. It never returns
+plaintext or arbitrary host files and is rejected through the backoffice socket.
+The ciphertext read is owner-only, no-symlink, digest-checked and capped at 2 MiB.
+The browser cannot read your local file; comparison runs on the operator machine.
+
+The helper decrypts in memory using `~/.config/canary/recovery/age.txt`, checks
+that it is an approved recipient distinct from the host, merges selected local
+values, encrypts to the existing recipient set, verifies recovery for that exact
+ciphertext, and signs with `~/.config/canary/prod/config_signing_ed25519`. Plaintext
+never becomes an artifact, upload or diff field. Local secret values intentionally
+entered in the private env file remain there as the desired overrides.
+
+Prepared ciphertext, manifest/signature, redacted diff and public patch live in a
+new owner-only folder under `~/.config/canary/prod/reconciliations/`. `reconcile`
+then submits the existing asynchronous preview and prints the exact plan plus an
+apply command. It **never applies automatically**. Review its changed names,
+digest, restart requirement and deadline before running the printed command or
+asking an agent to apply that exact plan. In Backoffice → Environment, choose
+**Load latest proposal** to review a proposal submitted locally, including after
+reopening the page or viewing an older operation. **Prepared — awaiting apply**
+means production has not changed. Review the exact digest and changed names,
+then choose **Review apply → Apply this plan**. Completion shows **Applied and
+verified** only when the receipt revision matches a fresh running observation.
+Progress and receipts remain visible in the same page. SSH-only settings and
+ops-token rotation show an explanation and keep browser apply disabled; use the
+helper's exact SSH apply command for those proposals.
+
+`--prepare-only` creates artifacts without submitting a preview. Resume with
+`./scripts/prod-env plan --prepared /PRIVATE/OUTPUT`. The helper checks production's
+revision before upload and binds the plan request to that same revision. A
+concurrent bundle, image or tooling change rejects the stale reconciliation;
+compare and review again rather than rebuilding or retrying silently. Local
+preparation requires the same reviewed secret-loader version as production.
+
+The encrypted-export extension and exact-revision guard were installed on
+production October 29, 2026 after explicit approval; only the host agent was
+refreshed. Readiness remained `ok`. The first real local comparison matched all
+14 public settings and preserved all 18 production-only secret names.
+`reconcile` returned `already_matches`, without creating an apply. The repository
+`.env.prod` was initialized with public settings and commented secret names,
+verified gitignored and mode `0600`. No production settings or secrets changed.
+
+Other hosts require the updated `config_controller.py` and a host-agent refresh
+before first use. Installation, `init` and `diff` change no production values;
+`reconcile` only prepares and previews a proposal.
 
 ## Before installation
 
@@ -252,7 +342,7 @@ worker kill and reboot on each side of hold removal. Prove persisted drain and
 normal post-stop materialization/pruning. Then privately check the live environment
 character domain and run a production no-op preview. The first actual production
 apply still requires approval of its concrete plan. This document records no
-successful production configuration update yet; installation evidence follows.
+production secret rotation; installation and no-op activation evidence follow.
 
 ## Isolated activation rehearsal (2026-10-29)
 
@@ -296,3 +386,29 @@ domain. The only schema/container mismatch is the missing
 is `false`. The new Compose template differs by that projection alone. A normal
 drained release must recreate the container before drift can match. No secret
 rotation or production configuration apply is included in this installation.
+
+## Production activation and no-op receipt (2026-10-29)
+
+[Depot workflow n1mfxwn325](https://depot.dev/orgs/6ntrqswcbt/workflows/n1mfxwn325)
+passed every CI gate and deployed source `2953fa0c40926186316b8a615e3e8031d2287ccc`.
+The container now projects the declared default-false text-fallback setting. A
+fresh observation matched, local/public readiness passed, generation admission
+was open, and the approved root-only `config-enabled` flag was created. The
+protected configuration API returned 200 with the token and 401 without it.
+Only the existing operator `/32` and Lightsail browser SSH rule remain; the
+temporary test VM was confirmed absent.
+
+The owner explicitly approved no-op plan
+`7185d84c-c006-4089-87cd-5c04ade3f819`, digest
+`e57cac8317f0039601267d9175bac75ccdff14025f771b0239362bbe7811f3c5`.
+Apply `a0241ad5-08f9-4b77-af60-9087cf96c260` completed with identical before/after
+revisions, no changed public settings or secret names, and open admission.
+The same running container was observed afterward. Its receipt is visible in
+Backoffice → Environment and retained in the root-only host journal; local
+evidence is in `work/configuration-activation/2026-10-29/`.
+
+The owner-only operator profile is `~/.config/canary/production-operator.json`.
+Separate access/signing private keys remain local, outside the repository. No
+production candidate bundle was signed or rotated; future secret changes still
+require exact-ciphertext recovery verification, a separate signature, preview,
+and approval of that concrete plan.

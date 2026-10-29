@@ -782,3 +782,46 @@ def test_cli_watch_catches_up_all_batches_before_returning_completed(monkeypatch
     assert cli.watch("id", {}, emit=output.append) == 0
     assert len(output) == 102  # Every event, then the final operation receipt.
     assert json.loads(output[-2])["seq"] == 101
+
+
+def test_encrypted_export_is_operator_ssh_only(host, monkeypatch):
+    c, *_ = host
+    monkeypatch.setattr(c, 'export_encrypted_configuration', lambda: pytest.fail('exported through app'))
+    with pytest.raises(RuntimeError, match='ssh_only'):
+        c.handle({'action': 'config_export'}, 'backoffice', 'ops_token')
+
+
+def test_export_only_current_ciphertext_and_public_metadata(host, monkeypatch):
+    c, r, config, actions, _ = host
+    path = Path(config['CANARY_BUNDLE_PATH'])
+    raw = b'{"env":{"CANARY_OPS_TOKEN":"ENC[encrypted-only]"},"sops":{"age":[]}}'
+    path.write_bytes(raw)
+    path.chmod(0o600)
+    config['CANARY_BUNDLE_SHA256'] = c.digest(raw)
+    r.CONFIG.write_bytes(r.serialize_environment(config))
+    loader = SimpleNamespace(ALLOWED={'CANARY_OPS_TOKEN'}, REQUIRED={'CANARY_OPS_TOKEN'}, MIRRORED={},
+                             ciphertext_recipients=lambda stored: {'host', 'recovery'},
+                             trusted_tool=lambda _: 'age-keygen')
+    monkeypatch.setattr(r, 'load_module', lambda *_: loader)
+    monkeypatch.setattr(r, 'run', lambda *args, **kwargs: b'host\n')
+    monkeypatch.setattr(c, 'loader_context', lambda *_: pytest.fail('export must not decrypt'))
+    result = c.handle({'action': 'config_export'}, 'ssh', 'operator_ssh')
+    assert base64.b64decode(result['ciphertext']) == raw
+    assert result['bundle_sha256'] == c.digest(raw)
+    assert result['host_recipient'] == 'host'
+    assert result['secret_schema']['allowed'] == ['CANARY_OPS_TOKEN']
+    assert 'private-token' not in json.dumps(result)
+    assert not actions
+    with pytest.raises(RuntimeError, match='invalid_request'):
+        c.handle({'action': 'config_export', 'path': '/arbitrary'}, 'ssh', 'operator_ssh')
+    path.chmod(0o644)
+    with pytest.raises(RuntimeError, match='unsafe_permissions'):
+        c.handle({'action': 'config_export'}, 'ssh', 'operator_ssh')
+
+
+def test_local_reconciliation_baseline_is_checked_during_worker_preflight(host):
+    c, _, _, _, _ = host
+    op = str(uuid.uuid4())
+    c.handle({'action': 'config_plan', 'request_id': op, 'patch': {}, 'expected_revision': 'd' * 64}, 'ssh', 'operator_ssh')
+    c.worker(op)
+    assert c.operation(op)['error'] == 'baseline_changed'

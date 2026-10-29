@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -175,13 +176,15 @@ def active(name):
 
 def submit(request, transport, actor):
     action = request.get('action')
-    allowed = {'action', 'request_id', 'patch', 'bundle_id'} if action == 'config_plan' else {'action', 'request_id', 'plan_id', 'plan_digest'}
+    allowed = {'action', 'request_id', 'patch', 'bundle_id', 'expected_revision'} if action == 'config_plan' else {'action', 'request_id', 'plan_id', 'plan_digest'}
     check(action in {'config_plan', 'config_apply'} and not set(request) - allowed, 'invalid_request')
     op = identifier(request.get('request_id'))
     if action == 'config_plan':
         check(isinstance(request.get('patch', {}), dict) and len(request.get('patch', {})) <= 32, 'invalid_request')
         if request.get('bundle_id'):
             identifier(request['bundle_id'])
+        if 'expected_revision' in request:
+            check(isinstance(request['expected_revision'], str) and re.fullmatch('[0-9a-f]{64}', request['expected_revision']), 'invalid_request')
     else:
         identifier(request.get('plan_id'))
         check(re.fullmatch('[0-9a-f]{64}', request.get('plan_digest', '')), 'invalid_request')
@@ -291,6 +294,8 @@ def preflight(request):
     check(not r.MAINTENANCE.exists(), 'maintenance_active')
     with control():
         config, baseline = config_snapshot()
+    if 'expected_revision' in request:
+        check(request['expected_revision'] == baseline, 'baseline_changed')
     candidate = validate_patch(config, request.get('patch', {}), request['transport'])
     check(config.get('SCENEWRIGHT_APP_URL') == 'https://scenewright.ink', 'invalid_public_origin')
     upload = manifest = None
@@ -651,10 +656,38 @@ def stage_bundle(request):
     return {'bundle_id': upload_id}
 
 
+def export_encrypted_configuration():
+    """Operator SSH only. Never export decrypted values or arbitrary host files."""
+    with control():
+        config, revision = config_snapshot()
+        with os.fdopen(os.open(config['CANARY_BUNDLE_PATH'], os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            check(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o077, 'unsafe_permissions')
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        check(len(raw) <= 2 * 1024 * 1024, 'upload_too_large')
+        check(digest(raw) == config['CANARY_BUNDLE_SHA256'], 'invalid_bundle_digest')
+        stored = json.loads(raw)
+        check(digest((BASE / 'canary_secrets.py').read_bytes()) == config['CANARY_LOADER_SHA256'], 'host_loader_update_required')
+        loader = release().load_module('export_schema_loader', BASE / 'canary_secrets.py')
+        loader.ciphertext_recipients(stored)
+        definitions = schema()
+        return {'revision': revision, 'bundle_sha256': config['CANARY_BUNDLE_SHA256'],
+                'loader_sha256': config['CANARY_LOADER_SHA256'],
+                'ciphertext': base64.b64encode(raw).decode(), 'schema': definitions,
+                'host_recipient': release().run([loader.trusted_tool('age-keygen'), '-y', str(IDENTITY)], timeout=5).decode().strip(),
+                'values': {key: config.get(key, rule.get('default', '')) for key, rule in definitions.items()},
+                'secret_schema': {'allowed': sorted(loader.ALLOWED), 'required': sorted(loader.REQUIRED),
+                                  'mirrored': dict(loader.MIRRORED)}}
+
+
 def handle(request, transport='backoffice', actor='ops_token', *, background=True):
     initialize()
     check(isinstance(request, dict), 'invalid_request')
     action = request.get('action')
+    if action == 'config_export':
+        check(transport == 'ssh', 'ssh_only')
+        check(set(request) == {'action'}, 'invalid_request')
+        return export_encrypted_configuration()
     if action in {'config_plan', 'config_apply'}:
         return submit(request, transport, actor)
     if action == 'config_status':
