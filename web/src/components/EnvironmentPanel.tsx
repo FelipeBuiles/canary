@@ -34,6 +34,7 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
   const [draftRevision, setDraftRevision] = useState(0);
   const [awaiting, setAwaiting] = useState(false);
   const pendingPreview = useRef("");
+  const reviewedDigest = useRef("");
   const failures = useRef(0);
   const activePoll = useRef(false);
 
@@ -58,7 +59,20 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
         setOperation(current.operation);
         activePoll.current = !DONE.has(current.operation.phase);
         if (!id) select(current.operation.request_id);
-        if (current.operation.request_id === pendingPreview.current && current.operation.phase === "plan_ready") setPlan(current.operation.plan);
+        if (current.operation.phase === "plan_ready" && current.operation.plan
+          && (current.operation.request_id === pendingPreview.current || !edited.current)) {
+          const incoming = current.operation.plan;
+          if (reviewedDigest.current !== incoming.digest) {
+            reviewedDigest.current = incoming.digest;
+            setConfirm(false);
+            setPlan(incoming);
+            if (!edited.current) setPreviewRevision(version.current);
+          }
+        } else if (current.operation.phase !== "plan_ready") {
+          reviewedDigest.current = "";
+          setPlan(null);
+          setConfirm(false);
+        }
         if (DONE.has(current.operation.phase)) setAwaiting(false);
       }
       const currentId = id || current.operation?.request_id;
@@ -100,6 +114,7 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
     edited.current = true;
     version.current += 1;
     setDraftRevision(version.current);
+    reviewedDigest.current = "";
     setPlan(null);
     setConfirm(false);
   }
@@ -149,13 +164,36 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
   const blocked = busy || Boolean(error) || stale || status?.observation.match !== "match" || status?.maintenance_hold;
   const expired = plan && hostNow >= plan.effective_expires_at;
   const expiryReason = plan && plan.authorization_expires_at !== null && plan.authorization_expires_at < plan.plan_expires_at ? "authorization_expired" : "plan_expired";
-  const canApply = Boolean(plan && !blocked && !expired && previewRevision === draftRevision && plan.baseline === status?.revision);
+  const sshRequired = Boolean(plan && (Object.keys(plan.changes).some(key => status?.schema[key]?.backoffice !== "editable")
+    || Object.hasOwn(plan.secret_changes, "CANARY_OPS_TOKEN")));
+  const verified = operation?.phase === "complete" && Boolean(operation.receipt)
+    && operation.receipt?.after_revision === status?.revision && !stale && status?.observation.match === "match";
+  const failed = Boolean(operation && ["failed", "needs_inspection", "rejected", "rejected_busy"].includes(operation.phase));
+  const canApply = Boolean(plan && operation?.phase === "plan_ready" && !sshRequired && !blocked && !expired && previewRevision === draftRevision && plan.baseline === status?.revision);
 
   return <div className="space-y-5">
     <header><h1 className="font-display text-3xl font-black">Environment</h1><p>Preview and approve configuration changes. Generation drains before Canary restarts.</p></header>
     <p role="status">Last heard from host: {date(lastContact)}{operation ? ` · ${operation.phase}` : ""}</p>
     {error && <div role="alert"><p>{error}</p>{error === 'host_agent_unavailable' ? <p>The proxy could not connect to the host agent; this attempt sent no request. Refresh to check access before submitting again.</p> : <p>Contact may be lost while Canary restarts. Current host state is unknown until refreshed. An uncertain apply is observed by its original ID; it is never automatically submitted again.</p>}{selectedId && <code>{recovery(selectedId)}</code>}</div>}
-    <Button variant="secondary" onClick={() => void refresh()}>Refresh environment</Button>
+    <div className="flex flex-wrap gap-3">
+      <Button variant="secondary" onClick={() => void refresh()}>Refresh environment</Button>
+      <Button variant="secondary" disabled={busy} onClick={() => {
+        edited.current = false;
+        reviewedDigest.current = "";
+        pendingPreview.current = "";
+        setPlan(null);
+        setConfirm(false);
+        setFiles({});
+        select("");
+        void refresh();
+      }}>Load latest proposal</Button>
+    </div>
+    <Surface className="space-y-3 p-5">
+      <h2>{verified ? "Applied and verified" : operation?.phase === "complete" ? "Applied — checking running configuration" : failed ? "Change needs attention" : busy ? "Change in progress" : plan ? "Prepared — awaiting apply" : "Local production changes"}</h2>
+      <p>{verified ? "Production is running the applied configuration." : operation?.phase === "complete" ? "The apply receipt is available. Refresh to verify the current running configuration." : failed ? "The change did not finish successfully. Review the operation timeline and current host state before preparing another proposal." : busy ? "Follow the operation timeline below. Keep this page open while Canary restarts." : plan ? "These values are staged. Production has not changed. Review the proposal below before applying." : "Edit .env.prod locally, then run the command below and load the latest proposal here."}</p>
+      {!busy && !verified && <code>./scripts/prod-env reconcile</code>}
+      <p>Secret values stay on your operator machine. Review shows only secret names and change categories.</p>
+    </Surface>
     {status && <>
       <Surface className="p-5"><h2>Current deployment</h2>
         <dl>{Object.entries({ Revision: status.revision, Image: status.image, Source: status.observation.source_sha ?? "unknown", Bundle: status.bundle_sha256, Loader: status.loader_sha256, "Running state": `${status.observation.match}${stale ? " (stale)" : ""}`, "Observed at": date(status.observation.observed_at) }).map(([key, value]) => <div key={key}><dt>{key}</dt><dd className="break-all">{value}</dd></div>)}</dl>
@@ -169,7 +207,7 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
       </Surface>
       <Button disabled={Boolean(blocked)} onClick={() => void preview()}>Preview changes</Button>
     </>}
-    {plan && <Surface className="space-y-3 p-5"><h2>Review plan</h2><p className="break-all">Digest: {plan.digest}</p>
+    {plan && <Surface className="space-y-3 p-5"><h2>Review plan</h2><p className="break-all">Proposal: {plan.plan_id}</p><p className="break-all">Digest: {plan.digest}</p>
       {Object.entries(plan.changes).map(([key, value]) => <p key={key}>{key}: {value.before} → {value.after}</p>)}
       {Object.entries(plan.secret_changes).map(([key, value]) => <p key={key}>{key}: {value}</p>)}
       <p>{plan.restart_required ? "Restart required" : "No-op: no restart"}</p>
@@ -178,6 +216,7 @@ export function EnvironmentPanel({ connection }: { connection: OperatorConnectio
       <pre>{JSON.stringify({ prerequisites: plan.checks, activity: plan.activity }, null, 2)}</pre>
       {plan.recovery_verification && <p>{plan.recovery_verification}</p>}
       <p>If Canary does not return, use operator SSH and the status command shown here. Keep your operator access available.</p>
+      {sshRequired && <p role="status">This proposal includes changes restricted to operator SSH. Apply it using the exact command printed by the local helper.</p>}
       <Button disabled={!canApply} onClick={() => setConfirm(true)}>Review apply</Button>
       {confirm && <div><p>{plan.restart_required ? "Generation stops accepting new work and Canary restarts. Drain deadline: 30 minutes." : "Record this no-op; no restart is required."} Approve only this digest and the changed names shown above.</p><Button disabled={!canApply} onClick={() => void apply()}>Apply this plan</Button><Button variant="secondary" onClick={() => setConfirm(false)}>Cancel</Button></div>}
     </Surface>}

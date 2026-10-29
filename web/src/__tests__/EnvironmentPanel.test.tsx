@@ -118,3 +118,50 @@ it("observes the original apply UUID after a lost reply without resubmission", a
   expect(vi.mocked(configRequest).mock.calls.filter(([, path]) => path === "apply")).toHaveLength(1);
   expect(configRequest).toHaveBeenCalledWith(connection, `status?operation=${id}`);
 });
+
+it("loads a locally prepared proposal and applies its exact digest after review", async () => {
+  preview.plan_id = "local-proposal";
+  state.operation = { request_id: preview.plan_id, phase: "plan_ready", plan: preview, receipt: null };
+  const user = userEvent.setup();
+  render(<EnvironmentPanel connection={connection} />);
+  await screen.findByText("Prepared — awaiting apply");
+  expect(screen.getByText(/These values are staged/)).toBeTruthy();
+  expect(configRequest).not.toHaveBeenCalledWith(connection, "apply", expect.anything());
+  await user.click(screen.getByRole("button", { name: "Review apply" }));
+  await user.click(screen.getByRole("button", { name: "Apply this plan" }));
+  expect(configRequest).toHaveBeenCalledWith(connection, "apply", expect.objectContaining({ plan_id: "local-proposal", plan_digest: preview.digest }));
+});
+
+it.each(["setting", "ops-token"])("keeps imported %s changes restricted to SSH", async kind => {
+  if (kind === "setting") state.schema.CANARY_RUNWARE_FIRST_ENABLED.backoffice = "ssh_only";
+  else preview.secret_changes.CANARY_OPS_TOKEN = "changed";
+  state.operation = { request_id: "local-proposal", phase: "plan_ready", plan: preview, receipt: null };
+  render(<EnvironmentPanel connection={connection} />);
+  await screen.findByText(/This proposal includes changes restricted to operator SSH/);
+  expect(screen.getByRole("button", { name: "Review apply" }).matches(":disabled")).toBe(true);
+});
+
+it("loads the latest local proposal when an older operation is pinned", async () => {
+  sessionStorage.setItem("canary-config-operation:", "old-operation");
+  const old = { request_id: "old-operation", phase: "complete", plan: null, receipt: { after_revision: "revision" } };
+  state.operation = { request_id: "new-proposal", phase: "plan_ready", plan: preview, receipt: null };
+  const handler = vi.mocked(configRequest).getMockImplementation()!;
+  vi.mocked(configRequest).mockImplementation(async (connection, path, body) => path === "status?operation=old-operation" ? { ...state, operation: old } : handler(connection, path, body));
+  const user = userEvent.setup();
+  render(<EnvironmentPanel connection={connection} />);
+  await screen.findByText("Applied and verified");
+  await user.click(screen.getByRole("button", { name: "Load latest proposal" }));
+  await screen.findByText("Prepared — awaiting apply");
+  expect(sessionStorage.getItem("canary-config-operation:")).toBe("new-proposal");
+});
+
+it("does not call a completed receipt verified until the running revision matches", async () => {
+  state.operation = { request_id: "apply", phase: "complete", plan: null, receipt: { after_revision: "new-revision" } };
+  const user = userEvent.setup();
+  render(<EnvironmentPanel connection={connection} />);
+  await screen.findByText("Applied — checking running configuration");
+  state.revision = "new-revision";
+  await user.click(screen.getByRole("button", { name: "Refresh environment" }));
+  await screen.findByText("Applied and verified");
+  expect(screen.queryByRole("button", { name: "Review apply" })).toBeNull();
+});
