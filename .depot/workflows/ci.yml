@@ -45,6 +45,16 @@ jobs:
         working-directory: novel_to_comic
         # The web extra includes production telemetry integrations.
         run: uv sync --locked --extra web --extra dev
+      - name: Set up Node for marketing bridge contracts
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: marketing/package-lock.json
+      - name: Install marketing bridge dependencies
+        working-directory: marketing
+        # Any shard can receive the real Node bridge tests.
+        run: npm ci
       - name: Check locked production dependencies
         working-directory: novel_to_comic
         if: matrix.shard == 0
