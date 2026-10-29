@@ -53,8 +53,13 @@ def host(tmp_path, monkeypatch):
             return json.dumps([{'Config': {'Env': ['CANARY_VERSION=' + version]}}]).encode()
         if argv[:2] == ['docker', 'run']:
             return (digest + '  /app/canary_secrets.py\n').encode()
-        if '--resume' in argv:
+        if argv[:2] == ['docker', 'ps']:
+            return b'container-one\n'
+        if argv[:2] == ['systemctl', 'show']:
+            return b'ActiveState=active\nInvocationID=invocation-one\nNRestarts=0\n'
+        if '--drained' in argv:
             state['verified'] = True
+            return b'{"status":"passed"}'
         return b''
 
     def api(path, config, token=None, method='GET'):
@@ -107,8 +112,10 @@ def test_successful_release_orders_drain_replace_verify_resume(host):
     drain = events.index(('POST', '/api/ops/drain'))
     stop = events.index(('systemctl', 'stop', 'canary.service'))
     start = events.index(('systemctl', 'start', 'canary.service'))
-    verify = next(i for i, e in enumerate(events) if '--resume' in e)
+    verify = next(i for i, e in enumerate(events) if '--drained' in e)
     assert pull < drain < stop < start < verify
+    assert events.index(('POST', '/api/ops/resume')) > verify
+    assert not any('reset-failed' in e for e in events)
     assert m.parse_environment(m.CONFIG.read_bytes())['CANARY_IMAGE'] == request['image']
     assert next((m.CONFIG.parent / 'releases').glob('*.env')).read_bytes() == old
     assert not m.MAINTENANCE.exists()
@@ -138,7 +145,7 @@ def test_low_disk_fails_before_pull_or_drain(host, monkeypatch):
 @pytest.mark.parametrize('failure', ['start', 'verify'])
 def test_failed_replacement_is_stopped_and_held_for_operator(host, failure):
     m, request, events, state = host
-    state['fail'] = lambda argv: ('--resume' in argv if failure == 'verify' else
+    state['fail'] = lambda argv: ('--drained' in argv if failure == 'verify' else
                                  argv == ['systemctl', 'start', 'canary.service'])
     with pytest.raises(RuntimeError):
         m.activate(request)

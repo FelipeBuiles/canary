@@ -586,8 +586,8 @@ def test_litellm_images_install_the_locked_gateway_environment():
     gateway = tomllib.loads((root / "litellm/pyproject.toml").read_text())
     lock = tomllib.loads((root / "litellm/uv.lock").read_text())
     versions = {package["name"]: package["version"] for package in lock["package"]}
-    assert "litellm[proxy]==1.101.0" in gateway["project"]["dependencies"]
-    assert versions["litellm"] == "1.101.0"
+    assert "litellm[proxy]==1.101.3" in gateway["project"]["dependencies"]
+    assert versions["litellm"] == "1.101.3"
     # Vertex text uses the REST adapter; native images require the Gen AI SDK.
     assert "google-genai>=1.65,<2" in gateway["project"]["dependencies"]
     assert "google-genai" in versions

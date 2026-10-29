@@ -8,7 +8,7 @@ dependencies = [
   "boto3[crt]>=1.41,<2",
   "google-auth>=2.48,<3",
   "google-genai>=1.65,<2",
-  "litellm[proxy]==1.101.0",
+  "litellm[proxy]==1.101.3",
   # The PyPI proxy extra omits the database runtime bundled upstream.
   "posthog>=7.60.1",
   "prisma>=0.11.0,<1.0",

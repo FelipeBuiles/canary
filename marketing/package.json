@@ -1,0 +1,27 @@
+{
+  "name": "scenewright-marketing",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "verify": "tsc --noEmit && vitest run && npm run test:community-score",
+    "check": "npm run verify && tsx scripts/check.ts",
+    "test:community-score": "node ../.agents/skills/community-scan/verify-score.mjs .",
+    "test": "vitest run",
+    "sync:canary": "tsx scripts/sync-canary.ts",
+    "reddit": "tsx scripts/reddit.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

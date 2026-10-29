@@ -197,3 +197,6 @@ graphify-out/manifest.json
 graphify-out/cost.json
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+
+.pi/*
+!.pi/mcp.json

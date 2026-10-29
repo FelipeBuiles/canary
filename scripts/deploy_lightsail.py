@@ -6,6 +6,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -66,6 +67,9 @@ def deploy(env, run=command, discover_ip=None, *, check_access=False):
                               "-o", "ServerAliveCountMax=4", f"canary-deploy@{host}"],
                              input=json.dumps(request).encode())
             except subprocess.CalledProcessError as error:
+                conflict = re.fullmatch(rb'configuration_operation_active ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*', error.stderr or b'')
+                if not check_access and conflict:
+                    print('configuration_operation_active: ' + conflict[1].decode() + '; inspect that operation before another deployment.', flush=True)
                 if (not check_access or error.returncode != 1 or error.stdout
                         or error.stderr.strip() != b"release_failed_admission_not_automatically_resumed"):
                     raise

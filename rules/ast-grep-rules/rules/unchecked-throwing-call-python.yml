@@ -1,0 +1,33 @@
+id: unchecked-throwing-call-python
+language: Python
+severity: warning
+message: >-
+  Potentially throwing call; check local or caller-level exception handling
+note: |
+  This syntax-only check cannot determine whether a caller handles exceptions.
+  Canary handles controller failures at worker, socket, and SSH boundaries.
+  Review unguarded calls, but do not add a local catch that hides a failure.
+  This project override preserves the bundled match patterns and changes only
+  their severity and guidance. Compiler and security diagnostics are unchanged.
+rule:
+  any:
+    - pattern: open($$$)
+    - pattern: json.loads($$$)
+    - pattern: json.load($$$)
+    - pattern: os.stat($$$)
+    - pattern: os.lstat($$$)
+    - pattern: os.remove($$$)
+    - pattern: os.unlink($$$)
+    - pattern: os.rename($$$)
+    - pattern: os.mkdir($$$)
+    - pattern: os.makedirs($$$)
+    - pattern: os.rmdir($$$)
+    - pattern: os.listdir($$$)
+    - pattern: os.access($$$)
+    - pattern: shutil.copy($$$)
+    - pattern: shutil.move($$$)
+    - pattern: shutil.rmtree($$$)
+  not:
+    inside:
+      stopBy: end
+      kind: try_statement

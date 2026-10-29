@@ -43,6 +43,8 @@ retained as current reference.
   deployment, CI access setup, activation gates and failure recovery.
 - [Host maintenance](ops/host-maintenance.md): backoffice host status, APT previews,
   drained package updates, explicit reboot and recovery setup.
+- [Environment updates](ops/configuration-updates.md): local backoffice/SSH
+  configuration implementation, signed bundles, observation and host activation gates.
 - [PostHog and launch learning](reference/observability.md): implemented telemetry,
   private feedback, deployment configuration, and weekly evidence review.
 - [Localization](reference/localization.md): ICU catalogs, UI preferences, and independent book translation provenance.
@@ -82,8 +84,8 @@ retained as current reference.
 ## Active future work
 
 - [Observable deployed environment updates](proposals/deployed-environment-updates.md):
-  proposed operator plan/apply/watch workflow for public settings and encrypted
-  bundles, sharing release safety gates with durable host-side progress.
+  proposed backoffice preview/apply/observation workflow, with SSH recovery,
+  signed encrypted bundles and durable host-side progress; revised October 28.
 - [Cold Open](proposals/cold-open-2026-10-26.md): one Canary-paid page of the
   opening in three looks during Extract, with fingerprint-gated adoption into
   Style. Implemented October 27 and tested provider-free; house looks not yet

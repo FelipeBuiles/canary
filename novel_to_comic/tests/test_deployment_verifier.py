@@ -260,3 +260,16 @@ def test_verifier_uses_cloudflare_compatible_user_agent(monkeypatch) -> None:
     assert captured["request"].get_header("User-agent") == (
         "Canary-deployment-verifier/1.0"
     )
+
+
+def test_drained_verification_never_resumes(monkeypatch, healthy_verifier):
+    calls = []
+    def ops(origin, path, token, method='GET'):
+        calls.append((path, method))
+        return {'draining': True}
+    monkeypatch.setattr(healthy_verifier, '_ops_json', ops)
+    assert healthy_verifier.main(drained=True) == 0
+    assert calls == [('/api/ops/deployment-status', 'GET')]
+    calls.clear()
+    assert healthy_verifier.main(drained=True, resume=True) == 1
+    assert not calls

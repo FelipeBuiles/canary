@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "posthog": {
+      "url": "https://mcp.posthog.com/mcp",
+      "description": "Scenewright product analytics (project 630262): funnels, events, insights, replays"
+    },
+    "agentgrown": {
+      "url": "https://agentgrown.com/mcp",
+      "description": "Agentgrown growth/marketing data"
+    }
+  }
+}

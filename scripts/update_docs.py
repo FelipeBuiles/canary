@@ -161,6 +161,7 @@ def _extract_routes() -> list[dict]:
         "account_models.py": "/api/account",
         "auth.py": "/api/auth",
         "backoffice.py": "/api/ops/backoffice",
+        "marketing.py": "/api/ops/backoffice/marketing",
         "operator_billing.py": "/api/ops/billing",
         "projects.py": "/api/projects",
         "publications.py": part,

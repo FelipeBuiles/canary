@@ -72,31 +72,79 @@ class SPAStaticFiles(StaticFiles):
     # Extensions that should always be served as real files (or 404). Anything
     # without one of these is checked against recognized client routes.
     _ASSET_SUFFIXES = frozenset(
-        {".js", ".mjs", ".css", ".map", ".html", ".htm", ".json", ".txt",
-         ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".avif",
-         ".woff", ".woff2", ".ttf", ".eot", ".otf", ".wasm",
-         ".mp4", ".webm", ".mp3", ".ogg", ".wav"}
+        {
+            ".js",
+            ".mjs",
+            ".css",
+            ".map",
+            ".html",
+            ".htm",
+            ".json",
+            ".txt",
+            ".svg",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+            ".ico",
+            ".avif",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".eot",
+            ".otf",
+            ".wasm",
+            ".mp4",
+            ".webm",
+            ".mp3",
+            ".ogg",
+            ".wav",
+        }
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        manifest = Path(self.directory) / "public-pages.json"
-        self.public_pages = json.loads(manifest.read_text()) if manifest.is_file() else {}
+        if self.directory is None:
+            raise ValueError("SPAStaticFiles requires a directory")
+        self.document_root = Path(self.directory)
+        manifest = self.document_root / "public-pages.json"
+        self.public_pages = (
+            json.loads(manifest.read_text()) if manifest.is_file() else {}
+        )
 
     @staticmethod
     def _client_route(path: str) -> bool:
-        return path in {"login", "signup", "reset-password", "auth/callback", "account", "credits", "backoffice", "labs", "dev/primitives"} or bool(re.fullmatch(r"project/[^/]+(?:/.*)?", path))
+        return path in {
+            "login",
+            "signup",
+            "reset-password",
+            "auth/callback",
+            "account",
+            "credits",
+            "backoffice",
+            "labs",
+            "dev/primitives",
+        } or bool(re.fullmatch(r"project/[^/]+(?:/.*)?", path))
 
     async def get_response(self, path: str, scope):
         public_path = "/" + ("" if path == "." else path.strip("/"))
         if path in self.public_pages.values():
-            return RedirectResponse(next(route for route, file in self.public_pages.items() if file == path), status_code=308)
+            return RedirectResponse(
+                next(
+                    route for route, file in self.public_pages.items() if file == path
+                ),
+                status_code=308,
+            )
         if public_path in self.public_pages:
             if path.endswith("/") and public_path != "/":
                 return RedirectResponse(public_path, status_code=308)
             # A signed-in browser's `/` is its Library: send the app shell so
             # the public homepage never flashes before the account loads.
-            signed_in = public_path == "/" and HTTPConnection(scope).cookies.get(SESSION_HINT_COOKIE) == "1"
+            signed_in = (
+                public_path == "/"
+                and HTTPConnection(scope).cookies.get(SESSION_HINT_COOKIE) == "1"
+            )
             response = await super().get_response(
                 "index.html" if signed_in else self.public_pages[public_path], scope
             )
@@ -113,25 +161,33 @@ class SPAStaticFiles(StaticFiles):
             # Real assets (.js/.css/…) must 404 so broken links surface, and
             # API paths must never get the HTML shell — clients expect JSON.
             path_lc = path.lower()
-            if (
-                any(path_lc.endswith(suf) for suf in self._ASSET_SUFFIXES)
-                or path_lc.startswith("api/")
-            ):
+            if any(
+                path_lc.endswith(suf) for suf in self._ASSET_SUFFIXES
+            ) or path_lc.startswith("api/"):
                 raise
             if not self._client_route(path):
-                response = publications.public_document(Path(self.directory) / "index.html",
-                    title="Page not found — Scenewright", description="This page does not exist.",
-                    path="/" + path, intro='<h1>Page not found</h1><p><a href="/">Return to Scenewright</a></p>', noindex=True)
+                response = publications.public_document(
+                    self.document_root / "index.html",
+                    title="Page not found — Scenewright",
+                    description="This page does not exist.",
+                    path="/" + path,
+                    intro='<h1>Page not found</h1><p><a href="/">Return to Scenewright</a></p>',
+                    noindex=True,
+                )
                 response.status_code = 404
                 return response
             response = await super().get_response("index.html", scope)
             document = True
         if response.status_code in {200, 206, 304}:
-            if document or response.headers.get("content-type", "").startswith("text/html"):
+            if document or response.headers.get("content-type", "").startswith(
+                "text/html"
+            ):
                 # Revalidate the shell so releases never strand readers on old chunks.
                 response.headers["Cache-Control"] = "no-cache"
             elif path.startswith("assets/") and re.search(r"-[\w-]{8,}\.[\w]+$", path):
-                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                )
             else:
                 # Unfingerprinted marketing files can change at the same URL.
                 response.headers["Cache-Control"] = "public, max-age=3600"
@@ -156,6 +212,8 @@ class MetricsAwareTrustedHostMiddleware(TrustedHostMiddleware):
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
+
+
 log = logging.getLogger(__name__)
 
 
@@ -291,7 +349,12 @@ def _readiness_result() -> tuple[bool, dict[str, str]]:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     from .analytics_delivery import deliver_product_events
-    app.state.analytics_task = asyncio.create_task(deliver_product_events(app)) if configure_telemetry() else None
+
+    app.state.analytics_task = (
+        asyncio.create_task(deliver_product_events(app))
+        if configure_telemetry()
+        else None
+    )
     _audit_pricing_at_startup()
     app.state.pricing_refresh_task = asyncio.create_task(
         asyncio.to_thread(_refresh_pricing_if_stale)
@@ -361,7 +424,12 @@ async def _lifespan(app: FastAPI):
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     from novel_to_comic.codex_dev import (
-        CodexRoutingError, any_enabled, claude_enabled, enabled, is_loopback, validate_startup,
+        CodexRoutingError,
+        any_enabled,
+        claude_enabled,
+        enabled,
+        is_loopback,
+        validate_startup,
     )
 
     validate_startup()
@@ -372,17 +440,29 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     if any_enabled():
+
         @app.middleware("http")
         async def codex_loopback_only(request, call_next):
             if (
                 request.client is None
                 or not is_loopback(request.client.host)
                 or not is_loopback(request.url.hostname or "")
-                or any(name in request.headers for name in (
-                    "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"
-                ))
+                or any(
+                    name in request.headers
+                    for name in (
+                        "forwarded",
+                        "x-forwarded-for",
+                        "x-forwarded-host",
+                        "x-forwarded-proto",
+                    )
+                )
             ):
-                return JSONResponse(status_code=403, content={"detail": "Codex development requires a direct loopback request"})
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": "Codex development requires a direct loopback request"
+                    },
+                )
             return await call_next(request)
 
     @app.exception_handler(ArtifactMissing)
@@ -393,7 +473,12 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     @app.exception_handler(ArtifactInvalid)
     async def artifact_invalid_exception_handler(request, exc: ArtifactInvalid):
         request.state.artifact_unavailable = request.method in {"GET", "HEAD"}
-        level = logging.DEBUG if request.state.artifact_unavailable and os.environ.get("CANARY_ENV") != "production" else logging.WARNING
+        level = (
+            logging.DEBUG
+            if request.state.artifact_unavailable
+            and os.environ.get("CANARY_ENV") != "production"
+            else logging.WARNING
+        )
         log.log(
             level,
             "Stored artifact rejected name=%s action=rerun_%s reason=%s",
@@ -439,20 +524,22 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     )
 
     app.state.projects_dir = projects_dir
-    app.state.event_queues: dict[str, asyncio.Queue] = {}
+    app.state.event_queues = {}
     # Per-project in-flight panel map for the draw stage. Maintained from
     # panel_start / panel_done events (see _wrap_on_event in pipeline.py).
     # Not persisted — if the server restarts, nothing is in flight.
-    app.state.draw_in_flight: dict[str, list[dict]] = {}
+    app.state.draw_in_flight = {}
     app.state.generation_semaphore = get_global_semaphore()
     app.state.light_generation_semaphore = asyncio.Semaphore(DEFAULT_IMAGE_CONCURRENCY)
     app.state.light_generation_semaphores = _global_light_semaphores
-    app.state.light_generation_semaphores[DEFAULT_IMAGE_CONCURRENCY] = app.state.light_generation_semaphore
+    app.state.light_generation_semaphores[DEFAULT_IMAGE_CONCURRENCY] = (
+        app.state.light_generation_semaphore
+    )
     app.state.generation_queue = asyncio.Queue()
     app.state.durable_queue_required = True
     app.state.durable_queue = None
     app.state.generation_jobs = {}
-    app.state.user_generation_semaphores: dict[str, asyncio.Semaphore] = {}
+    app.state.user_generation_semaphores = {}
     app.state.generation_job_timeout_seconds = max(
         1,
         int(os.environ.get("CANARY_GENERATION_JOB_TIMEOUT_SECONDS", "900")),
@@ -474,8 +561,15 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Canary-Ops-Token",
-                           "X-Request-ID", "X-Canary-Session-ID", "traceparent"],
+            allow_headers=[
+                "Content-Type",
+                "Authorization",
+                "Idempotency-Key",
+                "X-Canary-Ops-Token",
+                "X-Request-ID",
+                "X-Canary-Session-ID",
+                "traceparent",
+            ],
             expose_headers=["X-Request-ID", "X-Trace-ID"],
         )
 
@@ -508,6 +602,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         # change the HTTP status rather than only the JSON payload.
         ok, checks = _readiness_result()
         from .credits import reservation_leases_healthy
+
         if hasattr(app.state, "credit_leases_ready") and (
             not app.state.credit_leases_ready or not reservation_leases_healthy()
         ):
@@ -525,7 +620,11 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
                 "status": "ok" if ok else "error",
                 "pipeline_contract": "eight-stage-v2",
                 "model_mode": (
-                    "codex" if enabled() else "mock" if "mock_models" in checks else "api"
+                    "codex"
+                    if enabled()
+                    else "mock"
+                    if "mock_models" in checks
+                    else "api"
                 ),
                 # Additive to model_mode: Claude Code choices mix with API or Codex.
                 "claude_code": claude_enabled(),
@@ -548,37 +647,62 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         """Report whether in-process generation activity makes a deploy unsafe."""
         return deployment_activity(app)
 
-    @app.post("/api/ops/drain", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    @app.post(
+        "/api/ops/drain", tags=["operations"], dependencies=[Depends(require_ops_token)]
+    )
     async def drain():
         async with app.state.admission.gate:
             app.state.admission.set_draining(True)
         return deployment_activity(app)
 
-    @app.post("/api/ops/resume", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    @app.post(
+        "/api/ops/resume",
+        tags=["operations"],
+        dependencies=[Depends(require_ops_token)],
+    )
     async def resume():
         async with app.state.admission.gate:
             ok, _ = await asyncio.to_thread(_readiness_result)
             from .credits import reservation_leases_healthy
+
             leases_ready = not hasattr(app.state, "credit_leases_ready") or (
                 app.state.credit_leases_ready and reservation_leases_healthy()
             )
-            queue_ready = app.state.durable_queue is not None and app.state.durable_queue.healthy
+            queue_ready = (
+                app.state.durable_queue is not None and app.state.durable_queue.healthy
+            )
             if not ok or not leases_ready or not queue_ready:
-                raise HTTPException(503, "Dependencies must be ready before reopening admission")
+                raise HTTPException(
+                    503, "Dependencies must be ready before reopening admission"
+                )
             app.state.admission.set_draining(False)
         return deployment_activity(app)
 
-    @app.get("/api/ops/exceptions", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    @app.get(
+        "/api/ops/exceptions",
+        tags=["operations"],
+        dependencies=[Depends(require_ops_token)],
+    )
     def operational_exceptions():
         from .operations import exception_snapshot
+
         return exception_snapshot(app)
 
     # Routers
     from .auth import router as auth_router
+
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-    app.include_router(publications.router, prefix="/api/projects/{project_id}/parts/{part_id}", tags=["publications"])
-    app.include_router(publications.public_router, prefix="/api/public/books", tags=["publications"])
-    app.include_router(publications.ops_router, prefix="/api/ops/publications", tags=["publications"])
+    app.include_router(
+        publications.router,
+        prefix="/api/projects/{project_id}/parts/{part_id}",
+        tags=["publications"],
+    )
+    app.include_router(
+        publications.public_router, prefix="/api/public/books", tags=["publications"]
+    )
+    app.include_router(
+        publications.ops_router, prefix="/api/ops/publications", tags=["publications"]
+    )
     app.include_router(account_models.router, prefix="/api/account", tags=["account"])
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
     app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
@@ -592,12 +716,26 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/ops/backoffice",
         tags=["operations"],
     )
+    from .routers import configuration
+
+    app.include_router(configuration.router, prefix='/api/ops/backoffice/config', tags=['operations'])
+    if dev and env != "production":
+        from .routers import marketing
+
+        app.include_router(
+            marketing.router,
+            prefix="/api/ops/backoffice/marketing",
+            tags=["local-marketing"],
+        )
     from .routers import feedback
+
     app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
     app.include_router(events.router, prefix="/api/events", tags=["analytics"])
+
     @app.post("/api/ops/housekeeping", dependencies=[Depends(require_ops_token)])
     def cleanup_storage():
         from .storage_budget import housekeeping
+
         try:
             return housekeeping(app)
         except RuntimeError as exc:
@@ -606,9 +744,20 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     from .routers import parts as parts_router
     from .routers import story_bible as story_bible_router
-    app.include_router(parts_router.router, prefix="/api/projects/{project_id}", tags=["parts"])
-    app.include_router(story_bible_router.router, prefix="/api/projects/{project_id}", tags=["story-bible"])
-    app.include_router(publications.owner_router, prefix="/api/projects/{project_id}", tags=["publication"])
+
+    app.include_router(
+        parts_router.router, prefix="/api/projects/{project_id}", tags=["parts"]
+    )
+    app.include_router(
+        story_bible_router.router,
+        prefix="/api/projects/{project_id}",
+        tags=["story-bible"],
+    )
+    app.include_router(
+        publications.owner_router,
+        prefix="/api/projects/{project_id}",
+        tags=["publication"],
+    )
     # Page work belongs to a part workspace; Look work to the series root.
     # Pipeline, stage artifacts and files serve both: series routes act on the
     # root (Style, Cast, Story Bible), part routes on one part's workspace.
@@ -620,6 +769,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(export.router, prefix=f"{part_prefix}/export", tags=["export"])
     app.include_router(editorial.router, prefix=part_prefix, tags=["stages"])
     from .routers import notes as notes_router
+
     app.include_router(notes_router.router, prefix=part_prefix, tags=["pages"])
     app.include_router(
         config.router,
@@ -637,7 +787,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         tags=["cast"],
     )
     from .routers import cold_open as cold_open_router
-    app.include_router(cold_open_router.router, prefix="/api/projects/{project_id}", tags=["cold-open"])
+
+    app.include_router(
+        cold_open_router.router, prefix="/api/projects/{project_id}", tags=["cold-open"]
+    )
     # Registered last: the asset reader owns a greedy `{file_path:path}` route,
     # so every named project route must be matched before it is considered.
     app.include_router(files.router, prefix=part_prefix, tags=["files"])
@@ -672,14 +825,19 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     if not dev:
         dist = Path(__file__).parent.parent.parent.parent.parent / "web" / "dist"
         if dist.is_dir():
+
             @app.get("/read/{book_id}", include_in_schema=False)
             def public_reader_document(book_id: str):
-                return publications.reader_html(book_id, projects_dir, dist / "index.html")
+                return publications.reader_html(
+                    book_id, projects_dir, dist / "index.html"
+                )
 
             @app.get("/samples", include_in_schema=False)
             def public_samples_document(story: str | None = None):
                 return publications.samples_html(dist / "index.html", story)
 
-            app.mount("/", SPAStaticFiles(directory=str(dist), html=True), name="frontend")
+            app.mount(
+                "/", SPAStaticFiles(directory=str(dist), html=True), name="frontend"
+            )
 
     return app

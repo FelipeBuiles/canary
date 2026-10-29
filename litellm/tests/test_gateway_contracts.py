@@ -153,7 +153,7 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     from litellm_handlers.runware_text import RunwareTextLLM
     from litellm_handlers.vertex_multimodal import VertexMultimodalLLM
 
-    assert version("litellm") == "1.101.0"
+    assert version("litellm") == "1.101.3"
     assert issubclass(FalQueueLLM, CustomLLM)
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
     assert issubclass(RunwareImageLLM, CustomLLM)

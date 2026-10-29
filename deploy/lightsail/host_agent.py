@@ -11,6 +11,7 @@ import os
 import shutil
 import socketserver
 import subprocess
+import threading
 import time
 import urllib.request
 import uuid
@@ -26,6 +27,23 @@ HOLD = Path('/etc/canary/maintenance')
 ACTIVE = {'queued', 'checking', 'draining', 'updating', 'rebooting', 'verifying'}
 ENV = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
        'HOME': '/root', 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive', 'NEEDRESTART_MODE': 'l'}
+_configuration = None
+
+
+def configuration():
+    global _configuration
+    if _configuration is None:
+        spec = importlib.util.spec_from_file_location('canary_config_controller', BASE / 'config_controller.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _configuration = module
+    return _configuration
+
+
+def configuration_conflict():
+    # Optional until the reviewed configuration controller is installed.
+    if (BASE / 'config_controller.py').is_file():
+        release_module().configuration_conflict()
 
 
 def run(args, timeout=120):
@@ -84,10 +102,16 @@ def simulation():
 
 
 def status():
+    deadline = time.monotonic() + 20
+    def bounded(args, timeout=5):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(args, 20)
+        return run(args, timeout=min(timeout, remaining))
     services = {}
     for unit in ('canary', 'docker', 'nginx', 'apt-daily.timer', 'apt-daily-upgrade.timer'):
         try:
-            services[unit] = run(['systemctl', 'is-active', unit], timeout=5).strip()
+            services[unit] = bounded(['systemctl', 'is-active', unit], timeout=5).strip()
         except subprocess.SubprocessError as exc:
             services[unit] = (getattr(exc, 'stdout', None) or b'').decode().strip() or 'unknown'
     readiness = None
@@ -96,14 +120,14 @@ def status():
         config = release.parse_environment(release.private_read(release.CONFIG))
         request = urllib.request.Request('http://127.0.0.1:8000/api/health/ready',
                                          headers={'Host': config['CANARY_HEALTH_HOST']})
-        with urllib.request.urlopen(request, timeout=3) as response:
+        with urllib.request.urlopen(request, timeout=max(0.01, min(3, deadline - time.monotonic()))) as response:
             health = json.load(response)
         readiness = {key: health.get(key) for key in ('status', 'checks')}
     except (OSError, ValueError, KeyError, RuntimeError):
         pass
     disk = shutil.disk_usage('/var/lib/docker')
     try:
-        containers = [json.loads(line) for line in run([
+        containers = [json.loads(line) for line in bounded([
             'docker', 'ps', '-a', '--filter', 'label=com.docker.compose.project=canary',
             '--format', '{{json .}}'], timeout=5).splitlines()]
         containers = [{key: row.get(key) for key in ('Names', 'Image', 'State', 'Status')} for row in containers]
@@ -136,6 +160,7 @@ def submit(request):
         if previous.get('phase') in ACTIVE:
             raise RuntimeError('maintenance_already_running')
         if HOLD.exists():
+            configuration_conflict()
             raise RuntimeError('existing_maintenance_hold_requires_operator')
         if action == 'update':
             plan = read('plan.json', {})
@@ -205,6 +230,7 @@ def worker(*, recover=False):
                 restore(release, config, token, current['version'])
                 return
             if HOLD.exists():
+                configuration_conflict()
                 raise RuntimeError('existing_maintenance_hold')
             if action in {'check', 'update'}:
                 operation('checking')
@@ -271,20 +297,69 @@ class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         self.connection.settimeout(20)
         try:
-            line = self.rfile.readline(4097)
-            if len(line) > 4096:
+            limit = 3 * 1024 * 1024 if self.server.upload else 4096
+            line = self.rfile.readline(limit + 1)
+            if len(line) > limit:
                 raise ValueError('request_too_large')
             request = json.loads(line)
             if not isinstance(request, dict):
                 raise TypeError('invalid_request')
-            if request == {'action': 'status'}:
+            if self.server.upload:
+                if request.get('action') != 'config_stage_bundle':
+                    raise ValueError('invalid_action')
+                result = configuration().handle(request)
+            elif str(request.get('action', '')).startswith('config_'):
+                if request.get('action') == 'config_stage_bundle':
+                    raise ValueError('invalid_action')
+                result = configuration().handle(request)
+            elif request == {'action': 'status'}:
                 result = status()
             else:
                 result = submit(request)
             response = {'ok': True, 'result': result}
-        except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError):
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError) as error:
             response = {'ok': False, 'error': 'Host request failed; refresh status and inspect the host journal.'}
-        self.wfile.write(json.dumps(response).encode() + b'\n')
+            if isinstance(error, RuntimeError) and str(error) in configuration().CODES:
+                response['code'] = str(error)
+                op = getattr(error, 'operation_id', None)
+                if isinstance(op, str) and str(uuid.UUID(op)) == op:
+                    response['operation_id'] = op
+            elif isinstance(error, BlockingIOError):
+                response['code'] = 'rejected_busy'
+        encoded = json.dumps(response).encode() + b'\n'
+        if len(encoded) > 262144:
+            encoded = b'{"ok":false,"code":"invalid_request"}\n'
+        self.wfile.write(encoded)
+
+
+class BoundedServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path, *, upload=False):
+        self.upload = upload
+        self.slots = threading.BoundedSemaphore(2 if upload else 8)
+        super().__init__(str(path), Handler)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            try:
+                request.settimeout(0.01)
+                request.sendall(b'{"ok":false,"code":"rejected_busy"}\n')
+            except OSError:
+                pass  # Do not block the accept loop on an unresponsive peer.
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
 
 
 def main():
@@ -306,8 +381,14 @@ def main():
             raise SystemExit('host_maintenance_failed_inspect_operation_state') from None
     else:
         SOCKET.unlink(missing_ok=True)
-        with socketserver.UnixStreamServer(str(SOCKET), Handler) as server:
+        upload = SOCKET.parent / 'config-upload.sock'
+        upload.unlink(missing_ok=True)
+        # Load once before starting threads; all handlers share probe/worker limits.
+        configuration()
+        with BoundedServer(upload, upload=True) as upload_server, BoundedServer(SOCKET) as server:
+            upload.chmod(0o600)
             SOCKET.chmod(0o600)
+            threading.Thread(target=upload_server.serve_forever, daemon=True).start()
             server.serve_forever()
 
 

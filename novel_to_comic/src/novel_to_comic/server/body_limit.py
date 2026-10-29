@@ -65,6 +65,8 @@ class SourceUploadRoute(APIRoute):
 
 def _body_cap_bytes(path: str, method: str) -> int:
     """Return the pre-parser body cap for this endpoint."""
+    if method == 'POST' and path.rstrip('/') == '/api/ops/backoffice/config/bundles':
+        return 3 * 1024 * 1024
     if _is_source_upload(path, method):
         return InputLimits.from_env().upload_bytes + _MULTIPART_ENVELOPE_BYTES
     parts = path.rstrip("/").split("/")

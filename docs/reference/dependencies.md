@@ -4,6 +4,10 @@
 Versions below describe the checked-in dependency refresh, not a production
 rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 
+Security refresh on October 28, 2026: the gateway pins LiteLLM 1.101.3
+and locks dnspython 2.9.0 to address CVE-2026-114612 and CVE-2026-114605,
+respectively. Other resolved gateway dependencies remain unchanged.
+
 Security refresh on October 23, 2026: the application now requires Pillow
 13.0.0, pypdf 6.21.2, and OpenTelemetry API/SDK/HTTP exporter 1.45.1 or newer
 within their declared major versions. Both Python environments lock certifi

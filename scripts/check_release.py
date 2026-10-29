@@ -41,6 +41,7 @@ SECTIONS = {
     "audit-gateway": "Gateway dependencies",
     "backend": "Backend",
     "web": "Web",
+    "marketing": "Marketing tooling",
     "web-contracts": "Web",
     "root": "Root package",
     "gateway-tests": "Gateway",
@@ -372,6 +373,8 @@ def run(args, cwd=ROOT, stdout=None, *, env=None):
     if PLANNING:
         PLAN.append((section, name))
         return
+    if LOG_DIR is None or UI is None:
+        raise RuntimeError("Check runner has not been initialized")
     CHECK_COUNT += 1
     keys = step_keys([*PLAN[: CHECK_COUNT - 1], (section, name)])
     step = Step(CHECK_COUNT, section, name, keys[-1], LOG_DIR / f"{CHECK_COUNT:02d}.log")
@@ -503,6 +506,9 @@ def component(name):
         run([executable("uv"), "run", "--locked", "--extra", "dev", "ruff", "check", "."], APP)
         workers = os.environ.get("CANARY_BACKEND_WORKERS", str(min(4, os.cpu_count() or 1)))
         backend(["-x", "-q", "-n", workers, "--dist", "worksteal"])
+    elif name == "marketing":
+        for args in [["ls", "--all"], ["audit", "--audit-level=high"], ["run", "verify"]]:
+            run([executable("npm"), *args], ROOT / "marketing")
     elif name == "web":
         npm = executable("npm")
         for args in [
@@ -609,7 +615,7 @@ def component(name):
             ]
         )
     elif name in {"fast", "local", "full"}:
-        for item in ["audit-app", "audit-gateway"]:
+        for item in ["audit-app", "audit-gateway", "marketing"]:
             component(item)
         SECTION = "Docs"
         run([sys.executable, "scripts/check_docs_reliability.py"])
@@ -689,6 +695,7 @@ if __name__ == "__main__":
             "audit-gateway",
             "backend",
             "web",
+            "marketing",
             "web-contracts",
             "root",
             "gateway",
@@ -700,6 +707,7 @@ if __name__ == "__main__":
     options = parser.parse_args()
     VERBOSE = options.verbose
     started = time.monotonic()
+    history = {}
     try:
         PLANNING = True
         component(options.component)

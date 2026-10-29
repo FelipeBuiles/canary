@@ -1,0 +1,560 @@
+# Claims ledger. Every quote is verbatim from the cited canary lines (paths relative to ../canary).
+# Semantically reviewed against canary lock 83b9d06a on 2026-10-27.
+# verifiedSources records SHA-256 of each whole raw source file after review, never during sync.
+# marketable permits a supported claim, subject to knowledge/claims-policy.md and human approval.
+
+# What it is and who it's for
+
+- id: what-it-is
+  statement: Scenewright turns a novel into a comic.
+  quote: "Turn your novel into a comic"
+  sources: [ web/src/locales/en.json:3173 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: hero-label
+  statement: The landing page describes Scenewright as an AI comic studio for authors.
+  quote: "AI comic studio for authors"
+  sources: [ web/src/locales/en.json:3172 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: audience
+  statement: Scenewright is for writers, indie authors and small studios who want a finished comic book without hiring an art team.
+  quote: "Writers, indie authors, and small studios who want their prose fiction turned into a finished comic book without hiring an art team."
+  sources: [ PRODUCT.md:11-12 ]
+  marketable: true
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: guided-pipeline
+  statement: Scenewright is a guided production pipeline, not an image-generation canvas.
+  quote: "Scenewright is a guided production pipeline rather than an image-generation canvas"
+  sources: [ PRODUCT.md:35-36 ]
+  marketable: true
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: chapter-or-whole-book
+  statement: Authors can bring a single chapter or a whole book.
+  quote: "Bring a chapter or the whole book."
+  sources: [ web/src/locales/en.json:3174 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: start-small
+  statement: Whole books work, but the product recommends starting with a chapter or short story to judge the result first.
+  quote: "Whole books work too, but starting small lets you judge the result before you commit."
+  sources: [ web/src/locales/en.json:3264 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: ai-disclosure
+  statement: Scenewright uses third-party generative models to help adapt the text and draw the pages.
+  quote: "Scenewright uses third-party generative models to assist with adaptation and illustration."
+  sources: [ web/src/locales/en.json:3252 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: author-owns-manuscript
+  statement: The manuscript stays the author's, and Scenewright claims no ownership of what they make.
+  quote: "Your manuscript stays yours, and Scenewright claims no ownership of what you make."
+  sources: [ web/src/locales/en.json:3270 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: generated-copyright-limits
+  statement: Purely generated images may not qualify for copyright protection everywhere.
+  quote: "Purely generated images may not qualify for copyright protection everywhere."
+  sources: [ web/src/locales/en.json:3270 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: website-and-contact
+  statement: The website is scenewright.ink and the product contact address is hello@scenewright.ink.
+  quote: 'email: "hello@scenewright.ink"'
+  sources: [ web/src/lib/publicPages.ts:5, web/src/lib/publicPages.ts:42 ]
+  marketable: true
+  verifiedSources:
+    web/src/lib/publicPages.ts: 36ac12dd9c6d379c7beef9fa4de123006cecb599fe00381a5f3e6a9f59ab37ce
+
+# Pipeline and stations
+
+- id: five-stations-public
+  statement: The landing describes five stations, Story, Look, Cast, Pages and Book. This conflicts with the four-station app model and is not safe wording for new public claims.
+  quote: "Five stations. Scenewright does the drafting between them"
+  sources: [ web/src/locales/en.json:3213-3229, web/src/lib/stations.ts:38-82 ]
+  marketable: false
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+    web/src/lib/stations.ts: 2ef843ce3f351db020c7c47000cca533798593523899669b3032176ae6ff7776
+
+- id: four-stations-internal
+  statement: The product model and app UI have four stations, Story, Look, Pages and Book. Cast lives inside Look. Avoid station counts in new copy while the landing conflicts.
+  quote: "presented as four user-facing stations"
+  sources: [ PRODUCT.md:22-24, web/src/lib/stations.ts:38-82 ]
+  marketable: false
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+    web/src/lib/stations.ts: 2ef843ce3f351db020c7c47000cca533798593523899669b3032176ae6ff7776
+
+- id: eight-stage-engine
+  statement: Under the stations runs an 8-stage engine (extract, brief, style, cast, adapt, plan, draw, finish), each stage resumable.
+  quote: "through an 8-stage pipeline"
+  sources: [ PRODUCT.md:20-21 ]
+  marketable: false
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: adapt-plan-auto
+  statement: The adaptation and page plan run automatically, stay inspectable and never block, so not every step waits for approval.
+  quote: "Machine artifacts (adaptation and page plan) auto-run and stay inspectable but never block."
+  sources: [ PRODUCT.md:25-26 ]
+  marketable: false
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: step-story
+  statement: In the Story step, Scenewright maps characters, places and scenes and lists what must happen; the author approves the brief.
+  quote: "Scenewright maps the characters, places and scenes, and lists what must happen."
+  sources: [ web/src/locales/en.json:3216-3217 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: step-look
+  statement: In the Look step, the author describes a look, shows a reference or asks for six directions, then compares proofs and keeps one.
+  quote: "Describe it, show a reference, or ask for six directions. Compare the proofs side by side and keep one."
+  sources: [ web/src/locales/en.json:3220 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: step-cast
+  statement: Character sheets and location plates help keep faces, costumes and rooms steady from page to page.
+  quote: "Character sheets and location plates help keep faces, costumes and rooms steady from page to page."
+  sources: [ web/src/locales/en.json:3223 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: step-pages
+  statement: Pages arrive drawn and lettered; the author asks for changes in plain words and redraws only what misses.
+  quote: "Pages arrive drawn and lettered. Ask for changes in plain words and redraw only what misses."
+  sources: [ web/src/locales/en.json:3226 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: step-book
+  statement: Authors can download a finished edition as PDF or CBZ, or opt into publishing it with a public reader link.
+  quote: "Download your edition as PDF or CBZ, or publish it with a link readers can open anywhere."
+  sources: [ web/src/locales/en.json:3229, docs/reference/public-books.md:5-10 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+    docs/reference/public-books.md: d6dd06892fbc01a05cfa7135bad2aa27ccc01e67b4705cc49109793cd8aa7ba5
+
+- id: review-by-exception
+  statement: Pages are accepted by default unless the author flags an issue, and corrections redraw the complete page.
+  quote: "Corrections are complete-page revisions, with pages accepted by default unless an author flags an issue."
+  sources: [ PRODUCT.md:57-58 ]
+  marketable: true
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: continuity-not-guaranteed
+  statement: No generative system can promise identical characters on every page; references reduce drift and the author can fix any page that drifts.
+  quote: "No generative system can promise that. Scenewright holds faces and places steady with approved character sheets, location plates and book-level story notes, and you can fix any page that drifts."
+  sources: [ web/src/locales/en.json:3268 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: story-bible-series
+  statement: For a series, the style, cast and story bible carry across its parts.
+  quote: "For a series, the style, cast, and story bible carry across its parts."
+  sources: [ web/src/pages/ProductPage.tsx:19, docs/reference/stage-contracts.md:28-33 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+    docs/reference/stage-contracts.md: 33fad59c032449a66788f76c6002a5c1771e93bc5e78a73446fa91e82038e915
+
+- id: lettering-choice
+  statement: Each project chooses integrated lettering (in the art) or editable lettering (adjustable in the page editor) at creation.
+  quote: "Projects choose integrated or editable lettering at creation. Integrated lettering arrives in the generated art; editable lettering can be adjusted independently in the page editor."
+  sources: [ web/src/pages/ProductPage.tsx:21 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+
+- id: any-style
+  statement: Authors can describe a look, upload an image they love, or ask for six directions written for their story.
+  quote: "Describe a look, upload an image you love, or ask for six directions written for your story."
+  sources: [ web/src/locales/en.json:3192 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: sample-stories
+  statement: Authors without a manuscript can start from a curated shelf of 21 licensed sample short stories.
+  quote: "The curated shelf currently has **21** stories"
+  sources: [ docs/reference/sample-library.md:14-20 ]
+  marketable: true
+  verifiedSources:
+    docs/reference/sample-library.md: a2064167c1765697f1679498245aeb62d0505a23a1f33dd75406cfa399aa0446
+
+# Inputs and limits
+
+- id: input-formats-public
+  statement: Public copy lists EPUB, PDF or TXT in and PDF or CBZ out, with no subscription.
+  quote: "EPUB, PDF or TXT in · PDF or CBZ out · No subscription"
+  sources: [ web/src/locales/en.json:3177 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: input-formats-code
+  statement: The source reader also accepts Markdown and Word .docx, which the landing does not list. Keep these internal until the public upload path and messaging are confirmed.
+  quote: "Use TXT, Markdown, Word (.docx), PDF, or EPUB."
+  sources: [ novel_to_comic/src/novel_to_comic/input_limits.py:309-323 ]
+  marketable: false
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/input_limits.py: ec51ee96a1f892340ed0403374a3fa6d9a31b76ba0a141afa402516e3ec4e1e4
+
+- id: upload-size-limit
+  statement: The default upload limit is 50 MiB, calculated as 50 times 1024 squared bytes and overridable by environment.
+  quote: 'upload_bytes=_positive_env("CANARY_MAX_UPLOAD_MB", 50) * 1024 * 1024'
+  sources: [ novel_to_comic/src/novel_to_comic/input_limits.py:44 ]
+  marketable: false
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/input_limits.py: ec51ee96a1f892340ed0403374a3fa6d9a31b76ba0a141afa402516e3ec4e1e4
+
+- id: source-length-limits
+  statement: Default source limits are 2,000 PDF pages, 500 EPUB documents and 5,000,000 extracted characters, all overridable by environment.
+  quote: 'pdf_pages=_positive_env("CANARY_MAX_PDF_PAGES", 2000), epub_documents=_positive_env("CANARY_MAX_EPUB_DOCUMENTS", 500), extracted_characters=_positive_env( "CANARY_MAX_EXTRACTED_CHARACTERS", 5_000_000 ),'
+  sources: [ novel_to_comic/src/novel_to_comic/input_limits.py:45-49 ]
+  marketable: false
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/input_limits.py: ec51ee96a1f892340ed0403374a3fa6d9a31b76ba0a141afa402516e3ec4e1e4
+
+# Exports and languages
+
+- id: export-pdf-cbz
+  statement: Finished comics export as PDF or CBZ.
+  quote: "export a finished comic as PDF or CBZ"
+  sources: [ web/src/locales/en.json:3174 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: public-reader-opt-in
+  statement: Publishing a finished edition to the public reader is opt-in, and manuscripts, prompts and working files are not published.
+  quote: "Publishing is opt-in. The author supplies a public title, author credit, description, and optional permission for homepage featuring. The preview opens the existing full-book reader. Publishing exposes reading and downloading; manuscripts, prompts, working files, and account identifiers are not included in the public manifest."
+  sources: [ docs/reference/public-books.md:5-10 ]
+  marketable: true
+  verifiedSources:
+    docs/reference/public-books.md: d6dd06892fbc01a05cfa7135bad2aa27ccc01e67b4705cc49109793cd8aa7ba5
+
+- id: ui-languages
+  statement: The app is available in English, Spanish and French, and the comic's language is set per project independently of the UI language.
+  quote: "The UI is available in English, Spanish, and French. Comic-output language is configured per project independently of the UI language."
+  sources: [ PRODUCT.md:61-62 ]
+  marketable: true
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: landing-languages
+  statement: The landing page exists in English, Spanish and French (/, /es, /fr); product, guide, example and legal pages are English only.
+  quote: "Product, guide, example, and legal pages currently publish in English"
+  sources: [ docs/reference/localization.md:51-57 ]
+  marketable: true
+  verifiedSources:
+    docs/reference/localization.md: a5849f86f66b10a0fff9a093f95d80bba5a78ea0e63f7c5a895827c3f4f8308c
+
+- id: lettering-languages
+  statement: Editable lettering can select source wording, English, Spanish or French. Generating missing translations costs credits; switching stored languages is free. Integrated or baked lettering is not translated by these APIs.
+  quote: "Integrated/baked art is not translated"
+  sources: [ docs/reference/localization.md:61-77 ]
+  marketable: true
+  verifiedSources:
+    docs/reference/localization.md: a5849f86f66b10a0fff9a093f95d80bba5a78ea0e63f7c5a895827c3f4f8308c
+
+# Pricing and credits
+
+- id: pack-starter
+  statement: The Starter pack is US$12 for 1,200 credits.
+  quote: '"starter": {"label": "1,200 credits", "price_cents": 1200, "credits": 1200}'
+  sources: [ novel_to_comic/src/novel_to_comic/server/routers/billing.py:26 ]
+  marketable: true
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/server/routers/billing.py: 8bfbc385cd8aff0c4f9c2990d10a07fe92db458f7cfcaa8664b32f2d41bf09c2
+
+- id: pack-standard
+  statement: The Standard pack is US$30 for 3,000 credits.
+  quote: '"standard": {"label": "3,000 credits", "price_cents": 3000, "credits": 3000}'
+  sources: [ novel_to_comic/src/novel_to_comic/server/routers/billing.py:27 ]
+  marketable: true
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/server/routers/billing.py: 8bfbc385cd8aff0c4f9c2990d10a07fe92db458f7cfcaa8664b32f2d41bf09c2
+
+- id: pack-creator
+  statement: The Creator pack is US$70 for 7,500 credits.
+  quote: '"creator": {"label": "7,500 credits", "price_cents": 7000, "credits": 7500}'
+  sources: [ novel_to_comic/src/novel_to_comic/server/routers/billing.py:28 ]
+  marketable: true
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/server/routers/billing.py: 8bfbc385cd8aff0c4f9c2990d10a07fe92db458f7cfcaa8664b32f2d41bf09c2
+
+- id: pack-studio
+  statement: The Studio pack is US$150 for 18,000 credits.
+  quote: '"studio": {"label": "18,000 credits", "price_cents": 15000, "credits": 18000}'
+  sources: [ novel_to_comic/src/novel_to_comic/server/routers/billing.py:29 ]
+  marketable: true
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/server/routers/billing.py: 8bfbc385cd8aff0c4f9c2990d10a07fe92db458f7cfcaa8664b32f2d41bf09c2
+
+- id: approved-pricing-line
+  statement: The pricing proposal suggests a customer copy line about packs starting at $12, no subscription, estimates and variable total use. The document labels commercial policy as proposed, not human approval for a marketing draft.
+  quote: "Credit packs start at $12. No subscription. See the estimated credits before each paid step. Total use depends on your story, quality choices and revisions."
+  sources: [ docs/proposals/pricing-and-margin.md:3-7, docs/proposals/pricing-and-margin.md:47-49 ]
+  marketable: false
+  verifiedSources:
+    docs/proposals/pricing-and-margin.md: bd03560db000663d20fc3de011fb87e147813f7b894cc3a54cbf1d8f2e2e74cf
+
+- id: no-subscription-credits-never-expire
+  statement: There is no subscription, and purchased credits do not expire.
+  quote: "There is no subscription, and purchased credits do not expire."
+  sources: [ web/src/pages/ProductPage.tsx:26, web/src/pages/legal/TermsPage.tsx:81 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+    web/src/pages/legal/TermsPage.tsx: f41ca55089c5212042ff2d8eedcd726ea1d438f9c49bf0117172fa9aee33a825
+
+- id: estimate-before-each-step
+  statement: Authors see an approximate credit estimate before supported generation actions. Estimates are not guaranteed final charges.
+  quote: "You see an approximate credit estimate before supported generation actions."
+  sources: [ web/src/pages/ProductPage.tsx:26, PRODUCT.md:59-60 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: no-page-count-promise
+  statement: A credit pack buys generation capacity, not a fixed number of finished pages.
+  quote: "It does not promise a fixed number of finished pages."
+  sources: [ web/src/pages/ProductPage.tsx:28 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+
+- id: credits-non-refundable
+  statement: Purchases go through Stripe, and credits are non-refundable except where the law requires.
+  quote: "Except where required by law, credits are non-refundable."
+  sources: [ web/src/pages/legal/TermsPage.tsx:80-83 ]
+  marketable: true
+  verifiedSources:
+    web/src/pages/legal/TermsPage.tsx: f41ca55089c5212042ff2d8eedcd726ea1d438f9c49bf0117172fa9aee33a825
+
+- id: credit-debit-formula
+  statement: Usage debits credits as ceil(provider USD x credits per USD x markup); the live markup is not established, so never infer a margin.
+  quote: "runtime fallback is **1.0**"
+  sources: [ docs/proposals/pricing-and-margin.md:25-28 ]
+  marketable: false
+  verifiedSources:
+    docs/proposals/pricing-and-margin.md: bd03560db000663d20fc3de011fb87e147813f7b894cc3a54cbf1d8f2e2e74cf
+
+# Showcase books
+
+- id: showcase-licensed-sources
+  statement: The showcase books are adapted from public-domain and openly licensed fiction, made by the Scenewright team, and are not customer work.
+  quote: "Not customer work; results vary."
+  sources: [ web/src/locales/en.json:3185-3189 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+- id: book-call-of-cthulhu
+  statement: The Call of Cthulhu by H. P. Lovecraft is a 44-page showcase book, recorded as a public-domain source.
+  quote: "The Call of Cthulhu (Lovecraft) | Public domain"
+  sources: [ docs/proposals/showcase-and-growth-2026-09.md:55, web/src/lib/showcaseShelf.ts:15 ]
+  marketable: true
+  verifiedSources:
+    docs/proposals/showcase-and-growth-2026-09.md: e75ffea72d53af01a7fddd692e60b727167bfcc22f6c93c54e1c80913ad4fa8f
+    web/src/lib/showcaseShelf.ts: 63d80b615a311ca81b443c46ed425b37750e9c6270c7f999ef5cc7ec094d83d6
+
+- id: book-masque
+  statement: The Masque of the Red Death by Edgar Allan Poe is a 24-page woodblock-style showcase book, recorded as a public-domain source.
+  quote: "The Masque of the Red Death (Poe) | Public domain | On the shelf, 24 pages, woodblock print"
+  sources: [ docs/proposals/showcase-and-growth-2026-09.md:51, web/src/lib/showcaseShelf.ts:16 ]
+  marketable: true
+  verifiedSources:
+    docs/proposals/showcase-and-growth-2026-09.md: e75ffea72d53af01a7fddd692e60b727167bfcc22f6c93c54e1c80913ad4fa8f
+    web/src/lib/showcaseShelf.ts: 63d80b615a311ca81b443c46ed425b37750e9c6270c7f999ef5cc7ec094d83d6
+
+- id: book-kaitlin
+  statement: Kaitlin Out of Space by Krishan Coupland is a 52-page showcase book adapted from a CC0 source.
+  quote: "Kaitlin Out of Space (Coupland) | CC0"
+  sources: [ docs/proposals/showcase-and-growth-2026-09.md:52, web/src/lib/showcaseShelf.ts:17, web/src/pages/ProductPage.tsx:54 ]
+  marketable: true
+  verifiedSources:
+    docs/proposals/showcase-and-growth-2026-09.md: e75ffea72d53af01a7fddd692e60b727167bfcc22f6c93c54e1c80913ad4fa8f
+    web/src/lib/showcaseShelf.ts: 63d80b615a311ca81b443c46ed425b37750e9c6270c7f999ef5cc7ec094d83d6
+    web/src/pages/ProductPage.tsx: 372f6b00f61f9388fd01a8a9956a943bf94c7f2b9b273b4d4388a19b50f00b4a
+
+- id: book-elm-and-keep
+  statement: Elm and Keep by @strnglft is a 21-page showcase book adapted from a CC0 source.
+  quote: "Elm and Keep (@strnglft) | CC0"
+  sources: [ docs/proposals/showcase-and-growth-2026-09.md:53, web/src/lib/showcaseShelf.ts:18 ]
+  marketable: true
+  verifiedSources:
+    docs/proposals/showcase-and-growth-2026-09.md: e75ffea72d53af01a7fddd692e60b727167bfcc22f6c93c54e1c80913ad4fa8f
+    web/src/lib/showcaseShelf.ts: 63d80b615a311ca81b443c46ed425b37750e9c6270c7f999ef5cc7ec094d83d6
+
+- id: book-site-30s-janitor
+  statement: Site-30's Janitor (JanitorCakeworth, SCP Wiki) is CC BY-SA 3.0, so every use needs attribution and adaptations share the license.
+  quote: '"license": "CC BY-SA 3.0"'
+  sources: [ showcase/books/04-site-30s-janitor-risograph/book.json:65-71, docs/reference/sample-library.md:43-49 ]
+  marketable: true
+  verifiedSources:
+    showcase/books/04-site-30s-janitor-risograph/book.json: ba617ecec3cb56abff0864e077a0a09fe068143f0b4e12bdbf533847086d98e6
+    docs/reference/sample-library.md: a2064167c1765697f1679498245aeb62d0505a23a1f33dd75406cfa399aa0446
+
+- id: book-astronomical
+  statement: Astronomical (Sophia Light, SCP Wiki) is CC BY-SA 3.0, with 20 story pages and a source-credit page.
+  quote: '"license": "CC BY-SA 3.0"'
+  sources: [ showcase/books/05-astronomical/book.json:138-144, showcase/books/README.md:9-13 ]
+  marketable: true
+  verifiedSources:
+    showcase/books/05-astronomical/book.json: 638324f0dd008bc1a379f2bd1b9265d7528bca8852f2a1097c5b0c7becb89396
+    showcase/books/README.md: 61e34079962db6bb32f6cc0701f6cb5bec6e88bbc25eac7f38bed16ca5c445c2
+
+- id: book-monkeys-paw
+  statement: The Monkey's Paw (W. W. Jacobs, public domain, 1902) is a 20-page showcase book, added October 15, 2026.
+  quote: "(public domain, 1902), added October 15, 2026"
+  sources: [ showcase/books/README.md:22-24 ]
+  marketable: true
+  verifiedSources:
+    showcase/books/README.md: 61e34079962db6bb32f6cc0701f6cb5bec6e88bbc25eac7f38bed16ca5c445c2
+
+# Public pages
+
+- id: public-pages
+  statement: Public pages include the landing at /, /es and /fr, /how-it-works, /pricing, /guides/turn-a-novel-into-a-comic, /examples/kaitlin-out-of-space, /about and the three legal pages.
+  quote: '"/guides/turn-a-novel-into-a-comic": { title: "How to Turn a Novel into a Comic: A Practical Guide | Scenewright"'
+  sources: [ web/src/lib/publicPages.ts:14-26 ]
+  marketable: true
+  verifiedSources:
+    web/src/lib/publicPages.ts: 36ac12dd9c6d379c7beef9fa4de123006cecb599fe00381a5f3e6a9f59ab37ce
+
+- id: scenewright-film
+  statement: The landing page has a 66-second Scenewright film.
+  quote: "Play the Scenewright film (66 seconds, with sound)"
+  sources: [ web/src/locales/en.json:3193 ]
+  marketable: true
+  verifiedSources:
+    web/src/locales/en.json: 9189983c4cd313b594e95edf757b6cfaeeaecdad58726533a1fdcf80b46c5146
+
+# PostHog funnels (project 630262)
+
+- id: events-signup-funnel
+  statement: The visit-to-signup funnel is $pageview, then anonymous signup_submitted (with first-touch attribution), then server account_created.
+  quote: "anonymous `signup_submitted`"
+  sources: [ docs/reference/observability.md:307-324 ]
+  marketable: false
+  verifiedSources:
+    docs/reference/observability.md: f98f9b55dd5ea677b49986b68db2af0e1445ed7cfaecef385627506ea1407a1b
+
+- id: events-activation-funnel
+  statement: The documented activation funnel is account, project, style, first page and export, with a 14-day window. The server event contract includes account_created, project_created, style_selected, page_ready and export_download_requested.
+  quote: "activation funnel (account → project → style → first page →"
+  sources: [ docs/reference/observability.md:286-287, novel_to_comic/src/novel_to_comic/server/product_events.py:28-53 ]
+  marketable: false
+  verifiedSources:
+    docs/reference/observability.md: f98f9b55dd5ea677b49986b68db2af0e1445ed7cfaecef385627506ea1407a1b
+    novel_to_comic/src/novel_to_comic/server/product_events.py: e204f63308de4e80df19403fcd701ab483b19e05c73c7db6fae54a88e0c692a4
+
+- id: events-revenue-funnel
+  statement: The revenue funnel is credit_blocked, checkout_started, credits_purchased (gross_amount_cents is gross; refunds are not netted).
+  quote: '"credits_purchased": frozenset'
+  sources: [ novel_to_comic/src/novel_to_comic/server/product_events.py:28-49, docs/reference/observability.md:288-289, docs/reference/observability.md:333-336 ]
+  marketable: false
+  verifiedSources:
+    novel_to_comic/src/novel_to_comic/server/product_events.py: e204f63308de4e80df19403fcd701ab483b19e05c73c7db6fae54a88e0c692a4
+    docs/reference/observability.md: f98f9b55dd5ea677b49986b68db2af0e1445ed7cfaecef385627506ea1407a1b
+
+- id: events-author-active
+  statement: The Author active action counts project_created, stage_started, stage_approved, style_selected, station_viewed, page_outcome, export_download_requested, checkout_started and feedback_submitted.
+  quote: '"Active author" is the **Author active** action'
+  sources: [ docs/reference/observability.md:296-300 ]
+  marketable: false
+  verifiedSources:
+    docs/reference/observability.md: f98f9b55dd5ea677b49986b68db2af0e1445ed7cfaecef385627506ea1407a1b
+
+# Brand voice
+
+- id: brand-voice
+  statement: The voice is crafted, mechanical and theatrical, warm at real checkpoints and calm for errors and billing.
+  quote: "Its voice is crafted, mechanical, and theatrical"
+  sources: [ PRODUCT.md:68-71 ]
+  marketable: false
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: brand-anti-references
+  statement: Avoid comic parody (BAM!/POW!, Comic Sans) and the glassy gradient AI-tool look.
+  quote: "BAM!/POW! on every surface"
+  sources: [ PRODUCT.md:74-79 ]
+  marketable: false
+  verifiedSources:
+    PRODUCT.md: dc149ea64d88d7d2ecda6d502665be62e62a1b7c3fa5a6968680c1e70306c483
+
+- id: copy-say-ai-assisted
+  statement: Social copy shows real output only and says "AI-assisted" plainly.
+  quote: 'Say "AI-assisted" plainly; the author directs, the studio produces.'
+  sources: [ showcase/marketing/copy-kit.md:7 ]
+  marketable: false
+  verifiedSources:
+    showcase/marketing/copy-kit.md: 32dfd3ab299278768c0e6beabce6d5645d4bea29aeb5c9f281fbaf072d64d4bf
+
+- id: copy-no-artist-styles
+  statement: Never name an artist as a style; describe medium, era and mood.
+  quote: 'Never name an artist as a style ("in the style of…").'
+  sources: [ showcase/marketing/copy-kit.md:9 ]
+  marketable: false
+  verifiedSources:
+    showcase/marketing/copy-kit.md: 32dfd3ab299278768c0e6beabce6d5645d4bea29aeb5c9f281fbaf072d64d4bf
+
+- id: model-names-internal
+  statement: Generative model and provider names and development routing are internal. Do not put them in marketing copy or assets.
+  quote: "No prices, credits, free generations or model names in any public copy or media."
+  sources: [ showcase/marketing/copy-kit.md:8, docs/ops/landing-showcase-assets.json:5 ]
+  marketable: false
+  verifiedSources:
+    showcase/marketing/copy-kit.md: 32dfd3ab299278768c0e6beabce6d5645d4bea29aeb5c9f281fbaf072d64d4bf
+    docs/ops/landing-showcase-assets.json: 33203bfb89e321490541e8f357c790cf5fc230ab7414c31d620406887349ca49
+
+# Implemented but unverified
+
+- id: cold-open-unverified
+  statement: Cold Open (one page of the author's opening in three looks during Extract, aiming at under two minutes from upload) is implemented but has not run against paid providers.
+  quote: "Implemented, October 27, 2026; not yet run against paid providers."
+  sources: [ docs/proposals/cold-open-2026-10-26.md:3-18 ]
+  marketable: false
+  verifiedSources:
+    docs/proposals/cold-open-2026-10-26.md: 9f770ffa06e2d83c67627c17b4bcf6a8ba6e3fbfc1643a129f4d4bd02e9a26c3
+
+- id: director-unverified
+  statement: The Director (page notes that carry through to every page they touch) is implemented but has not run against paid providers.
+  quote: "Implemented, October 27, 2026; not yet run against paid providers."
+  sources: [ docs/proposals/director-2026-10-27.md:3-21 ]
+  marketable: false
+  verifiedSources:
+    docs/proposals/director-2026-10-27.md: b189f7f42f28d5cc130a69f13a93a59041d0d6f4b2ac56c44492d8f89c5c4455
