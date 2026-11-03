@@ -297,7 +297,7 @@ def apply_source_review(bible: StoryBible, review: ExtractionReview, text: str, 
     section parse has no review and its part has not ended.
     """
     from novel_to_comic.extraction_sections import validate_references
-    from novel_to_comic.stages.s1_extract import _check_character_looks
+    from novel_to_comic.stages.s1_extract import _check_character_looks, _unresolved_openings
 
     result = bible.model_copy(deep=True)
     review = review.model_copy(deep=True)
@@ -308,7 +308,8 @@ def apply_source_review(bible: StoryBible, review: ExtractionReview, text: str, 
         return result
     local = [scene for scene in result.scenes if scene.part_id == part_id]
     if unresolved := align_scene_openings(local, text):
-        raise ValueError("Source review needs resolved scene openings: " + ", ".join(unresolved))
+        raise _unresolved_openings(
+            {scene.id: scene.source_start_quote for scene in local if scene.id in unresolved}, text)
     scenes = {scene.id: scene for scene in local}
     source = build_source_document(text, [SourceSceneAnchor(id=scene.id, title=scene.title,
         opening_quote=scene.source_start_quote, start_offset=scene.source_start_offset) for scene in local])
