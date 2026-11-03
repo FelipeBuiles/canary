@@ -221,6 +221,27 @@ def test_whole_source_applies_review_on_first_response_instead_of_a_paid_repair(
     assert result.value.scenes[-1].scene_type == 'non_narrative'
 
 
+def test_misquoted_opening_with_a_review_gets_opening_repair_feedback_and_recovers():
+    original = bible()
+    raw = original.model_dump(mode='json')
+    raw['source_review'] = review().model_dump(mode='json')
+    raw['character_participation'] = [dict(character_id=cid, scene_id=scene.id,
+        classification='direct_action', source_quote=scene.source_start_quote)
+        for scene in original.scenes for cid in scene.character_ids]
+    misquoted = json.loads(json.dumps(raw))
+    misquoted['scenes'][2]['source_start_quote'] = "A tattoo, red, appeared on Mira's face."
+    calls = []
+
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return ApiResult(value=misquoted if len(calls) == 1 else raw)
+
+    result = asyncio.run(s1_extract._extract_with_retry(Config(), 'source analyst', TEXT, generate=generate))
+    assert len(calls) == 2
+    assert "UNRESOLVED SCENE OPENINGS:\n- scene_id='scene_3', source_start_quote=\"A tattoo, red, appeared on Mira's face.\"" in calls[1]['user_content']
+    assert result.value.scenes[0].character_ids == ['char_mira', 'audit_king', 'audit_grubs']
+
+
 def test_brief_sees_source_grounded_identity_equipment_and_short_lived_principal_actors():
     result = apply_source_review(bible(), review(), TEXT, part_id='part_0001')
     source = build_source_document(TEXT, [SourceSceneAnchor(id=s.id, title=s.title,
