@@ -111,6 +111,18 @@ def test_source_review_promotes_actors_groups_copies_and_excludes_back_matter_wi
     assert source.scenes[-1].last_unit_id == source.units[-1].id
 
 
+def test_unresolved_scene_opening_reaches_the_repair_prompt_with_its_exact_sentence():
+    original = bible()
+    # A near-miss the model typed from memory; the source sentence is unique enough to name.
+    original.scenes[4].source_start_quote = 'Mira took the crown off.'
+    with pytest.raises(s1_extract._UnresolvedSceneOpenings, match='scene_5') as error:
+        apply_source_review(original, review(), TEXT, part_id='part_0001')
+    assert [scene_id for scene_id, _, _ in error.value.openings] == ['scene_5']
+    correction = s1_extract._participation_quote_correction(error.value)
+    assert "scene_id='scene_5'" in correction
+    assert 'entire corrected Story Bible JSON object' in correction
+
+
 def test_equipment_carries_through_minor_looks_and_base_return_until_explicit_removal():
     original = bible()
     result = apply_source_review(original, review(), TEXT, part_id='part_0001')
