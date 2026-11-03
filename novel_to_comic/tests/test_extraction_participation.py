@@ -1,14 +1,19 @@
 """Extraction-only participation evidence protects the canonical visual roster."""
 
+import asyncio
+
 import pytest
 
+from novel_to_comic.config import Config
 from novel_to_comic.stages.s1_extract import (
     _ParticipationQuoteMismatch,
     _UnresolvedSceneOpenings,
     _UnclassifiedCharacters,
+    _extract_with_retry,
     _parse_extraction,
     _participation_quote_correction,
 )
+from novel_to_comic.usage import ApiResult
 
 
 SOURCE = (
@@ -203,6 +208,34 @@ def test_extraction_reports_all_unresolved_openings_for_one_repair():
     correction = _participation_quote_correction(error.value)
     assert "source_start_quote='Not a source sentence.'" in correction
     assert "source_start_quote='Another missing source sentence.'" in correction
+
+
+def test_ungrounded_evidence_in_a_repeated_opening_reports_the_order_fault():
+    payload = _payload()
+    payload["scenes"][1]["source_start_quote"] = "Ari opened the gate."
+    payload["character_participation"][3]["source_quote"] = "Ren rescued the sailor."
+    with pytest.raises(_UnresolvedSceneOpenings) as error:
+        _parse_extraction(payload, SOURCE)
+    assert error.value.openings == (("memory", "Ari opened the gate.", None),)
+    assert error.value.out_of_order == {"memory": "now"}
+    assert "opens_before_previous_scene='now'" in _participation_quote_correction(error.value)
+
+
+def test_repeated_opening_retry_names_the_order_fault_and_recovers():
+    initial, corrected = _payload(), _payload()
+    for payload in (initial, corrected):
+        payload["locations"] = [{"id": "gate", "name": "Gate", "visual_anchor": "iron gate", "mood": "quiet"}]
+    initial["scenes"][1]["source_start_quote"] = "Ari opened the gate."
+    calls = []
+
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return ApiResult(value=[initial, corrected][len(calls) - 1])
+
+    result = asyncio.run(_extract_with_retry(Config(), "instructions", SOURCE, generate=generate))
+    assert [scene.id for scene in result.value.scenes] == ["now", "memory", "crossing"]
+    assert len(calls) == 2
+    assert "opens_before_previous_scene='now'" in calls[1]["user_content"]
 
 
 def test_background_evidence_for_an_undefined_character_is_dropped_locally():

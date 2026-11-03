@@ -89,8 +89,11 @@ class _ParticipationQuoteMismatch(ValueError):
 class _UnresolvedSceneOpenings(ValueError):
     """Scene openings that do not resolve, in order, within the extracted source."""
 
-    def __init__(self, openings: list[tuple[str, str, str | None]]) -> None:
+    def __init__(self, openings: list[tuple[str, str, str | None]],
+                 out_of_order: dict[str, str] | None = None) -> None:
         self.openings = tuple(openings)
+        # Verbatim source openings that do not follow the scene named here.
+        self.out_of_order = dict(out_of_order or {})
         super().__init__(
             "Scene source_start_quote values must be copied verbatim, in order, from the "
             "source text being extracted. Unresolved scene IDs: "
@@ -137,16 +140,26 @@ def _participation_quote_correction(error: Exception) -> str:
         invalid_openings = "\n".join(
             f"- scene_id={scene_id!r}, source_start_quote={quote!r}"
             + (f", exact_source_replacement={candidate!r}" if candidate else "")
+            + (f", opens_before_previous_scene={error.out_of_order[scene_id]!r}"
+               if scene_id in error.out_of_order else "")
             for scene_id, quote, candidate in error.openings
         )
+        order_repair = (
+            "An opening marked opens_before_previous_scene is verbatim source text, but it does not come "
+            "after the opening of that previous scene. Scenes must follow source order, and each scene must "
+            "open at a later sentence than the scene before it. Put the scenes in source order, merge a scene "
+            "that repeats an earlier opening into the scene before it, or use the scene's own later first "
+            "sentence. Copying the same quote again fails again. "
+        ) if error.out_of_order else ""
         return (
-            "\nThe scene source_start_quote values below do not occur in the source text you were asked "
+            "\nThe scene source_start_quote values below do not resolve, in order, in the source text you were asked "
             "to extract (the SOURCE SECTION when one is supplied; never the registry or earlier text). "
             "Every scene must describe events from that source text, in order, and its source_start_quote "
             "must copy the complete first sentence of the scene character-for-character. Use "
             "exact_source_replacement verbatim when it is supplied. If a scene describes events that are "
             "not in the source text, remove it and extract the source text's actual events instead, "
-            "updating character_participation to match. Return the entire corrected Story Bible JSON object.\n"
+            f"updating character_participation to match. {order_repair}"
+            "Return the entire corrected Story Bible JSON object.\n"
             f"UNRESOLVED SCENE OPENINGS:\n{invalid_openings}\n"
         )
     if not isinstance(error, _ParticipationQuoteMismatch):
@@ -202,12 +215,23 @@ class _SceneOpening(BaseModel):
 
 
 def _unresolved_openings(
-    openings: dict[str, str], novel_text: str,
+    openings: dict[str, str], novel_text: str, scene_order: list[str],
 ) -> _UnresolvedSceneOpenings:
-    return _UnresolvedSceneOpenings([
-        (scene_id, quote, _nearest_source_quote(novel_text, quote))
+    """Name the nearest source sentence, or the earlier scene a verbatim opening collides with.
+
+    A verbatim opening fails only by order: it repeats or precedes the opening
+    before it. Offering the same sentence as its replacement cannot fix that.
+    """
+    source = clean(novel_text)
+    out_of_order = {
+        scene_id: scene_order[scene_order.index(scene_id) - 1]
         for scene_id, quote in openings.items()
-    ])
+        if clean(quote) and clean(quote) in source and scene_order.index(scene_id) > 0
+    }
+    return _UnresolvedSceneOpenings([
+        (scene_id, quote, None if scene_id in out_of_order else _nearest_source_quote(novel_text, quote))
+        for scene_id, quote in openings.items()
+    ], out_of_order)
 
 
 def _resolved_scene_anchor_quotes(
@@ -558,7 +582,7 @@ def _parse_extraction(raw: object, novel_text: str, *, registry: StoryBible | No
         raise _unresolved_openings(
             {scene_id: quote for scene_id, quote in unresolved_openings.items()
              if scene_id in failed_openings},
-            novel_text,
+            novel_text, list(scenes),
         )
     if mismatches:
         raise _ParticipationQuoteMismatch(mismatches)
@@ -772,7 +796,7 @@ async def _extract_with_retry(
         if unresolved:
             raise _unresolved_openings(
                 {scene.id: scene.source_start_quote for scene in bible.scenes if scene.id in unresolved},
-                novel_text,
+                novel_text, [scene.id for scene in bible.scenes],
             )
         if validate is not None:
             validate(aligned)

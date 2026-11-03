@@ -311,7 +311,7 @@ def apply_source_review(bible: StoryBible, review: ExtractionReview, text: str, 
         # The typed error carries the exact source sentence to the repair prompt;
         # a bare ValueError gives the model nothing to correct.
         by_id = {scene.id: scene.source_start_quote for scene in local}
-        raise _unresolved_openings({scene_id: by_id[scene_id] for scene_id in unresolved}, text)
+        raise _unresolved_openings({scene_id: by_id[scene_id] for scene_id in unresolved}, text, list(by_id))
     scenes = {scene.id: scene for scene in local}
     source = build_source_document(text, [SourceSceneAnchor(id=scene.id, title=scene.title,
         opening_quote=scene.source_start_quote, start_offset=scene.source_start_offset) for scene in local])

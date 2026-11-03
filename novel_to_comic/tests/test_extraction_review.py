@@ -123,6 +123,24 @@ def test_unresolved_scene_opening_reaches_the_repair_prompt_with_its_exact_sente
     assert 'entire corrected Story Bible JSON object' in correction
 
 
+@pytest.mark.parametrize('quote', [
+    PASSAGES[1].split('. ')[0] + '.',  # repeats the previous scene's opening
+    PASSAGES[0].split('. ')[0] + '.',  # an earlier scene's opening, out of order
+])
+def test_verbatim_opening_out_of_order_is_reported_as_an_order_fault(quote):
+    original = bible()
+    original.scenes[2].source_start_quote = quote
+    with pytest.raises(s1_extract._UnresolvedSceneOpenings, match='scene_3') as error:
+        apply_source_review(original, review(), TEXT, part_id='part_0001')
+    # The same sentence as its own replacement gave every paid retry nothing to change.
+    assert error.value.openings == (('scene_3', quote, None),)
+    assert error.value.out_of_order == {'scene_3': 'scene_2'}
+    correction = s1_extract._participation_quote_correction(error.value)
+    assert "opens_before_previous_scene='scene_2'" in correction
+    assert 'exact_source_replacement' not in correction.split('UNRESOLVED SCENE OPENINGS:')[1]
+    assert 'Scenes must follow source order' in correction
+
+
 def test_equipment_carries_through_minor_looks_and_base_return_until_explicit_removal():
     original = bible()
     result = apply_source_review(original, review(), TEXT, part_id='part_0001')
