@@ -91,7 +91,8 @@ so the others are explicit choices.
 **Cited entry** — A Story Bible entry or appearance state that an adapted
 part's script or pages name. It can be edited but not removed or merged away.
 
-**Source unit** — A stable, sentence-aligned passage of the source novel used
+**Source unit** — A stable passage of the source novel, ending at a sentence or
+at a blank line, used
 to account for adaptation coverage. It retains exact offsets into the immutable
 source and is never recreated by slicing scene text.
 
