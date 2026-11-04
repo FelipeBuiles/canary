@@ -431,3 +431,29 @@ def test_extraction_rejects_a_formation_sheet_for_one_entity():
         _check_character_looks([eye])
     _check_character_looks([{**eye, "identity_kind": "group"}])
     _check_character_looks([{**eye, "reference_form": "form"}])
+
+
+UNPUNCTUATED_LOG = (
+    "Afterword: The vocabulary grew.\n\n"
+    "29/08/2018\n\nROUND 6 TESTS (VOCABULARY) - RESULTS\n\n"
+    "Foods\n\nCHICKEN TURKEY PORK\n\n"
+    "30/06/2019\n\nUPDATE\n\nSCP-5031 has said its first word: \"Salt\".\n\n"
+    "29/11/2019\n\nFINAL TEST - SUMMARY\n\nA three-course meal was served.\n"
+)
+
+
+def test_headings_and_dates_without_punctuation_are_separate_units_so_adjacent_scenes_resolve():
+    from novel_to_comic.models.source import sentence_end_offsets
+    from novel_to_comic.source_extraction import align_scene_openings
+
+    assert all(UNPUNCTUATED_LOG[end - 1].isspace() or end == len(UNPUNCTUATED_LOG)
+               for end in sentence_end_offsets(UNPUNCTUATED_LOG))
+    scenes = [Scene(id=f'scene_{index}', chapter=1, title=title, location_id='loc_vault', character_ids=[],
+                    summary=title, scene_type='action', narrative_beat='rising_action', source_start_quote=quote)
+              for index, (title, quote) in enumerate([
+                  ('Round 6', 'ROUND 6 TESTS (VOCABULARY) - RESULTS'),
+                  ('Update', 'UPDATE'),
+                  ('Final test', 'FINAL TEST - SUMMARY')], 1)]
+    assert align_scene_openings(scenes, UNPUNCTUATED_LOG) == ()
+    assert [scene.source_start_quote for scene in scenes] == [
+        'ROUND 6 TESTS (VOCABULARY) - RESULTS', 'UPDATE', 'FINAL TEST - SUMMARY']

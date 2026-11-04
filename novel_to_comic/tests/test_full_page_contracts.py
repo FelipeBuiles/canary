@@ -327,7 +327,7 @@ def test_truncated_scene_anchors_align_to_complete_source_units() -> None:
     )
 
     assert [scene.source_start_quote for scene in story_bible.scenes] == [
-        "The Horror in Clay\n\nThe most merciful thing in the world is inability.",
+        "The most merciful thing in the world is inability.",
         'The cry rose: "Cthulhu fhtagn.',
         "Prof. Angell studied the tablet.",
     ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import string
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -22,6 +23,7 @@ _TITLE_ABBREVIATIONS = {
 _SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
 _ASCII_LETTERS = frozenset(string.ascii_letters)
 _MAX_TITLE_ABBREVIATION = max(len(word) for word in _TITLE_ABBREVIATIONS)
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t\r]*\n\s*")
 
 
 def _follows_title_abbreviation(text: str, index: int) -> bool:
@@ -45,7 +47,12 @@ def _follows_title_abbreviation(text: str, index: int) -> bool:
 
 
 def sentence_end_offsets(text: str) -> tuple[int, ...]:
-    """Return exact unit ends after sentence punctuation and trailing space."""
+    """Return exact unit ends after sentence punctuation and trailing space.
+
+    A blank line also ends a unit. Headings, dates, list items and table rows
+    carry no sentence punctuation; without this they fuse with the next
+    sentence, and scenes that begin in the same fused unit cannot be told apart.
+    """
 
     offsets: list[int] = []
     index = 0
@@ -81,9 +88,9 @@ def sentence_end_offsets(text: str) -> tuple[int, ...]:
         offsets.append(end)
         index = end
 
-    if not offsets or offsets[-1] != len(text):
-        offsets.append(len(text))
-    return tuple(offsets)
+    offsets.extend(match.end() for match in _PARAGRAPH_BREAK.finditer(text))
+    offsets.append(len(text))
+    return tuple(sorted(set(offsets)))
 
 
 class SourceUnit(BaseModel):
