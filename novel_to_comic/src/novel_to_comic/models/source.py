@@ -52,6 +52,8 @@ def sentence_end_offsets(text: str) -> tuple[int, ...]:
     A blank line also ends a unit. Headings, dates, list items and table rows
     carry no sentence punctuation; without this they fuse with the next
     sentence, and scenes that begin in the same fused unit cannot be told apart.
+    A blank line before a lowercase letter is a sentence continuing across a
+    break (PDF pages are joined with one), so it does not end a unit.
     """
 
     offsets: list[int] = []
@@ -88,7 +90,10 @@ def sentence_end_offsets(text: str) -> tuple[int, ...]:
         offsets.append(end)
         index = end
 
-    offsets.extend(match.end() for match in _PARAGRAPH_BREAK.finditer(text))
+    offsets.extend(
+        match.end() for match in _PARAGRAPH_BREAK.finditer(text)
+        if not text[match.end():match.end() + 1].islower()
+    )
     offsets.append(len(text))
     return tuple(sorted(set(offsets)))
 

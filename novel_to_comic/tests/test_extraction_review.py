@@ -448,6 +448,12 @@ def test_headings_and_dates_without_punctuation_are_separate_units_so_adjacent_s
 
     assert all(UNPUNCTUATED_LOG[end - 1].isspace() or end == len(UNPUNCTUATED_LOG)
                for end in sentence_end_offsets(UNPUNCTUATED_LOG))
+    # A PDF page break inside a sentence is joined as a blank line; it is not a boundary.
+    page_break = "He watched the ice slur clumsily\n\nabout. Then he spoke.\n\nChapter 2\n\nMorning came."
+    assert [page_break[:end] for end in sentence_end_offsets(page_break)][:2] == [
+        "He watched the ice slur clumsily\n\nabout. ", "He watched the ice slur clumsily\n\nabout. Then he spoke.\n\n"]
+    assert "Chapter 2\n\n" in [page_break[start:end] for start, end in zip(
+        (0, *sentence_end_offsets(page_break)), sentence_end_offsets(page_break))]
     scenes = [Scene(id=f'scene_{index}', chapter=1, title=title, location_id='loc_vault', character_ids=[],
                     summary=title, scene_type='action', narrative_beat='rising_action', source_start_quote=quote)
               for index, (title, quote) in enumerate([
