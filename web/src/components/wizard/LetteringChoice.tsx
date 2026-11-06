@@ -9,12 +9,11 @@ const ASSETS = "/lettering-comparison";
 const MODES = ["integrated", "editable"] as const;
 const LABELS = { integrated: "Integrated lettering", editable: "Editable lettering" };
 const SAMPLES = {
-  3: { asset: "dcc-3", title: "DCC1.2", credit: "Dungeon Crawler Carl · Matt Dinniman", label: "Sound & motion", crop: { x: 650, y: 990, width: 374, height: 350 } },
   26: { asset: "cthulhu-26", title: "The Call of Cthulhu", credit: "H. P. Lovecraft", label: "Narration & detail", crop: { x: 400, y: 450, width: 550, height: 380 } },
   25: { asset: "cthulhu-25", title: "The Call of Cthulhu", credit: "H. P. Lovecraft", label: "Two speakers", crop: { x: 300, y: 950, width: 530, height: 420 } },
 } as const;
 type SamplePage = keyof typeof SAMPLES;
-const SAMPLE_ORDER: SamplePage[] = [26, 25, 3];
+const SAMPLE_ORDER: SamplePage[] = [26, 25];
 type Crop = { x: number; y: number; width: number; height: number };
 /** The trade in one glance: integrated wins on look, editable on changing words. */
 const CHOICES = {
@@ -35,23 +34,20 @@ const CHOICES = {
     bestFor: "Books you'll keep polishing or publish in more than one language.",
   },
 } as const;
-/** The same moments side by side: where integrated wins (sound), where they tie (captions), where editable wins (translation). */
-const COMPARE_VIEWS = ["sound", "captions", "translation"] as const;
+/** The same moments side by side: where they tie (captions) and where editable wins (translation). */
+const COMPARE_VIEWS = ["captions", "translation"] as const;
 type CompareView = typeof COMPARE_VIEWS[number];
-const COMPARE_LABELS: Record<CompareView, string> = { sound: "Sound effects", captions: "Captions", translation: "Translation" };
+const COMPARE_LABELS: Record<CompareView, string> = { captions: "Captions", translation: "Translation" };
 const VIEW_CROPS: Record<CompareView, Crop> = {
-  sound: { x: 540, y: 1004, width: 470, height: 176 },
   captions: { x: 16, y: 454, width: 992, height: 340 },
   translation: { x: 16, y: 454, width: 992, height: 340 },
 };
 /** Laptop-height windows keep the same moments in a wider strip so the whole choice fits. */
 const SHORT_VIEW_CROPS: Record<CompareView, Crop> = {
-  sound: { x: 540, y: 1008, width: 470, height: 156 },
   captions: { x: 16, y: 454, width: 992, height: 280 },
   translation: { x: 16, y: 454, width: 992, height: 280 },
 };
 const VIEW_TAGS: Record<CompareView, Record<LetteringMode, string>> = {
-  sound: { integrated: "Painted with the art", editable: "Set on top of the art" },
   captions: { integrated: "Painted with the art", editable: "Set on top of the art" },
   translation: { integrated: "Spanish means redrawing every page", editable: "Spanish: same art, new words" },
 };
@@ -69,19 +65,18 @@ function CroppedImage({ src, alt, crop, onError, className = "" }: { src: string
   </div>;
 }
 
-function SampleImage({ page, mode, detail, spanish = false, hideLettering = false, motion = false }: { page: SamplePage; mode: LetteringMode; detail: boolean; spanish?: boolean; hideLettering?: boolean; motion?: boolean }) {
+function SampleImage({ page, mode, detail, spanish = false, hideLettering = false }: { page: SamplePage; mode: LetteringMode; detail: boolean; spanish?: boolean; hideLettering?: boolean }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
   const sample = SAMPLES[page];
   const baseOnly = mode === "editable" && hideLettering;
   const src = `${ASSETS}/${sample.asset}-${baseOnly ? "base" : mode}${spanish ? "-es" : ""}.webp`;
   const description = t(baseOnly ? "Editable artwork only" : LABELS[mode]);
-  const crop = page === 3 && motion ? { x: 320, y: 570, width: 330, height: 310 } : sample.crop;
   return (
     <div>
       {failed ? <div role="status" className="bg-pulp-paper p-5 text-sm leading-relaxed">{t("This sample could not load. You can still compare the tradeoffs below.")} <Button type="button" variant="outline" onClick={() => setFailed(false)}>{t("TRY AGAIN")}</Button></div> : (
         <a href={src} target="_blank" rel="noopener noreferrer" aria-label={`${t("Open full-size sample")}: ${description}, ${t(sample.title)}, ${t("Page")} ${page}${spanish ? ", Español" : ", English"}`} className="block bg-pulp-paper focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red">
-          <CroppedImage src={src} alt={`${t(sample.title)}, ${t("Page")} ${page} · ${description} · ${spanish ? "Español" : "English"}`} crop={detail ? crop : null} onError={() => setFailed(true)} />
+          <CroppedImage src={src} alt={`${t(sample.title)}, ${t("Page")} ${page} · ${description} · ${spanish ? "Español" : "English"}`} crop={detail ? sample.crop : null} onError={() => setFailed(true)} />
         </a>
       )}
     </div>
@@ -116,12 +111,9 @@ function ComparisonImage({ mode, view }: { mode: LetteringMode; view: CompareVie
   const { t } = useI18n();
   const crop = (useShortViewport() ? SHORT_VIEW_CROPS : VIEW_CROPS)[view];
   if (mode === "editable" && view === "captions") return <EditableDemo crop={crop} />;
-  const asset = view === "sound" ? SAMPLES[3].asset : SAMPLES[26].asset;
   const spanish = mode === "editable" && view === "translation";
-  const alt = view === "sound"
-    ? t(mode === "integrated" ? "Integrated lettering: the cat’s cry hand-drawn in a painted burst" : "Editable lettering: the cat’s cry in styled type on a preset burst")
-    : t(mode === "integrated" ? "Integrated lettering: caption and balloon drawn into the panel" : spanish ? "Editable lettering: the same panel with its words in Spanish" : "Editable lettering: caption and balloon set above the finished art");
-  return <CroppedImage src={`${ASSETS}/${asset}-${mode}${spanish ? "-es" : ""}.webp`} alt={alt} crop={crop} />;
+  const alt = t(mode === "integrated" ? "Integrated lettering: caption and balloon drawn into the panel" : spanish ? "Editable lettering: the same panel with its words in Spanish" : "Editable lettering: caption and balloon set above the finished art");
+  return <CroppedImage src={`${ASSETS}/${SAMPLES[26].asset}-${mode}${spanish ? "-es" : ""}.webp`} alt={alt} crop={crop} />;
 }
 
 function Rating({ label, value }: { label: string; value: number }) {
@@ -172,7 +164,7 @@ function ChoiceCard({ mode, view, selected, onChange }: { mode: LetteringMode; v
 export function LetteringChoice({ value, onChange, disabled, heading }: { value: LetteringMode | null; onChange: (value: LetteringMode) => void; disabled: boolean; heading?: ReactNode }) {
   const { t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [view, setView] = useState<CompareView>("sound");
+  const [view, setView] = useState<CompareView>("captions");
   return <div className="space-y-5 short:space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
       {heading}
@@ -212,7 +204,6 @@ function LetteringDetails() {
   const [page, setPage] = useState<SamplePage>(26);
   const [detail, setDetail] = useState(false);
   const [hideLettering, setHideLettering] = useState(false);
-  const [motion, setMotion] = useState(false);
   const sample = SAMPLES[page];
   return <div className="space-y-6 pb-4">
       <section aria-labelledby="lettering-samples-title">
@@ -225,22 +216,18 @@ function LetteringDetails() {
         <Button type="button" variant="outline" aria-pressed={detail} onClick={() => setDetail(!detail)}>{t(detail ? "Show full pages" : "Compare close-ups")}</Button>
       </div>
       <p className="mb-2 text-sm leading-relaxed text-ink-muted">{t(sample.title)} · {sample.credit} · {t("Page")} {page} · {t("English samples")}</p>
-      <p className="mb-3 text-sm leading-relaxed text-ink-muted">{t(page === 3 ? "Compare LEAP and the cat’s cry: the integrated letters and burst are drawn for this scene. The editable version uses Bangers, rotation, outlines, and a burst shape from the current editor." : detail ? "Magnified equally: compare the text spacing, balloon shape, and speaker tails. Switch to full pages to judge the whole composition." : page === 26 ? "Look at the long captions and the balloon beside the statue: spacing and placement shape the reading experience." : "Look at the two speech balloons: their size and tails need to lead you naturally from one speaker to the next.")}</p>
-      {page === 3 && detail && <div role="group" aria-label={t("Sound-effect detail")} className="mb-3 flex flex-wrap gap-2">
-        <Button type="button" variant={motion ? "outline" : "secondary"} aria-pressed={!motion} onClick={() => setMotion(false)}>{t("Cat’s cry")}</Button>
-        <Button type="button" variant={motion ? "secondary" : "outline"} aria-pressed={motion} onClick={() => setMotion(true)}>{t("LEAP in motion")}</Button>
-      </div>}
+      <p className="mb-3 text-sm leading-relaxed text-ink-muted">{t(detail ? "Magnified equally: compare the text spacing, balloon shape, and speaker tails. Switch to full pages to judge the whole composition." : page === 26 ? "Look at the long captions and the balloon beside the statue: spacing and placement shape the reading experience." : "Look at the two speech balloons: their size and tails need to lead you naturally from one speaker to the next.")}</p>
       <div className="mb-4 bg-surface-container p-4">
         <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-bold">
           <input type="checkbox" checked={hideLettering} onChange={event => setHideLettering(event.target.checked)} className="h-5 w-5 shrink-0 accent-ink-black" />
           {t("Hide the editable lettering layer")}
         </label>
-        <p className="mt-1 text-sm leading-relaxed" role="status">{t(hideLettering ? "Only the editable sample changes. Its artwork stays in place. Integrated lettering cannot be switched off: removing it requires an image edit." : "Try it: captions, balloons, and sound effects disappear from the editable sample. The integrated page stays as drawn.")}</p>
+        <p className="mt-1 text-sm leading-relaxed" role="status">{t(hideLettering ? "Only the editable sample changes. Its artwork stays in place. Integrated lettering cannot be switched off: removing it requires an image edit." : "Try it: captions and balloons disappear from the editable sample. The integrated page stays as drawn.")}</p>
       </div>
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         {MODES.map((mode) => <figure key={mode}>
           <figcaption className="mb-2 text-sm leading-relaxed"><strong className="block font-body">{t(LABELS[mode])}</strong><span>{t(mode === "integrated" ? "One image: artwork and words drawn together" : hideLettering ? "Artwork only: lettering layer hidden" : "Two layers: artwork + editable words and shapes")}</span></figcaption>
-          <SampleImage key={`${page}-${mode}-${detail}-${hideLettering}`} page={page} mode={mode} detail={detail} hideLettering={hideLettering} motion={motion} />
+          <SampleImage key={`${page}-${mode}-${detail}-${hideLettering}`} page={page} mode={mode} detail={detail} hideLettering={hideLettering} />
         </figure>)}
       </div>
       <p className="mt-3 text-sm leading-relaxed text-ink-muted">{t("Same words, matched composition, equal display size. Open either image to read it at full size.")}</p>

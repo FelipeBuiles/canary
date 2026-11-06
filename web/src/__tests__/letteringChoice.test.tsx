@@ -30,11 +30,12 @@ describe('lettering choice', () => {
     expect(choose).toHaveBeenCalledWith('integrated');
   });
 
-  it('compares sound, captions and translation on the same real pages', async () => {
+  it('compares captions and translation on the same real page', async () => {
     const user = userEvent.setup();
     render(<I18nProvider><LetteringChoice value={null} onChange={vi.fn()} disabled={false} /></I18nProvider>);
     const choices = () => screen.getAllByRole('img').filter(image => image.tagName === 'IMG').map(image => image.getAttribute('src'));
-    expect(choices()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-editable.webp']);
+    expect(screen.getByRole('button', { name: 'Captions' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('button', { name: 'Sound effects' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Translation' }));
     expect(choices()).toEqual(['/lettering-comparison/cthulhu-26-integrated.webp', '/lettering-comparison/cthulhu-26-editable-es.webp']);
     await user.click(screen.getByRole('button', { name: 'Captions' }));
@@ -48,14 +49,13 @@ describe('lettering choice', () => {
     await openDetails(user);
     expect(screen.getByText(/Prepared comparison:/).textContent).toContain('not an automatic conversion');
     expect(screen.getByText('What this means for your book')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Sound & motion' }));
     const comparison = within(screen.getByRole('region', { name: 'See the difference on a real page' }));
     const sources = () => comparison.getAllByRole('img').map(image => image.getAttribute('src'));
-    expect(sources()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-editable.webp']);
+    expect(sources()).toEqual(['/lettering-comparison/cthulhu-26-integrated.webp', '/lettering-comparison/cthulhu-26-editable.webp']);
+    await user.click(screen.getByRole('button', { name: 'Two speakers' }));
     await user.click(screen.getByRole('button', { name: 'Compare close-ups' }));
-    await user.click(screen.getByRole('button', { name: 'LEAP in motion' }));
     await user.click(screen.getByRole('checkbox', { name: 'Hide the editable lettering layer' }));
-    expect(sources()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-base.webp']);
+    expect(sources()).toEqual(['/lettering-comparison/cthulhu-25-integrated.webp', '/lettering-comparison/cthulhu-25-base.webp']);
     expect(comparison.getByRole('status').textContent).toContain('Integrated lettering cannot be switched off');
     expect(choose).not.toHaveBeenCalled();
     expect((screen.getByRole('radio', { name: /Integrated lettering/ }) as HTMLInputElement).checked).toBe(true);

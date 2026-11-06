@@ -18,7 +18,6 @@ def main():
     specimens = (
         ("cthulhu-26", "style.json", ("source", "es")),
         ("cthulhu-25", "style.json", ("source",)),
-        ("dcc-3", "dcc-3-style.json", ("source",)),
     )
     for specimen, style_file, locales in specimens:
         style = LetteringStyle.model_validate_json((ROOT / style_file).read_text())

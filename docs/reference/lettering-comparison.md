@@ -24,13 +24,10 @@ Page 25 is the second example: two speakers, short and long speech balloons, and
 narration. Both were existing integrated pages generated with Sunburst. Sources
 remain untouched in the user's project.
 
-DCC1.2 page 3 (Dungeon Crawler Carl by Matt Dinniman) adds action lettering:
-the angled `LEAP` and the cat's `MRAAAAAOW!` burst. Its editable version uses
-Comic Neue captions and Bangers effects with the current editor's rotation,
-text outlines and burst shape. It is deliberately styled with those supported
-controls, not reduced to plain text to favor integrated rendering. The two
-close-ups share exactly the same crop bounds in both modes. A caption box was
-expanded to fit the canonical wording; the burst uses the renderer's fitted shape.
+Both examples are public domain (H. P. Lovecraft). The quick comparison above
+the choice offers two views of page 26: Captions (with the live editable demo)
+and Translation. There is no sound-effect specimen; the pros and cons describe
+action lettering in words.
 
 For each editable study, ImageGen reconstructed the areas occupied by lettering
 and balloons, keeping the composition as closely as possible. These are different
@@ -41,7 +38,6 @@ The final base images were visually inspected for unwanted lettering/shapes.
 The exact canonical English strings were copied into typed PageLettering states.
 Placement was manually matched to the original pages. EB Garamond and the actual
 caption/balloon renderer provide software output, not an AI approximation of it.
-The DCC specimen uses the same production renderer and a separate action-comic style.
 The Spanish example is an authored illustrative translation of page 26 using the
 identical clean base image and placements. It is not evidence of automatic
 translation quality. All text variants pass production overflow/glyph validation;
@@ -59,8 +55,7 @@ Assets, inputs and exact generation prompts are in
 `web/public/lettering-comparison/`; `provenance.json` records the production method.
 The comparison is static and available before a project or account-specific
 artifact exists. Specimens contain only the selected example pages and derived
-artwork, never account IDs or private project paths. The original Cthulhu examples
-and the user-selected DCC example have separate provenance records.
+artwork, never account IDs or private project paths.
 
 Rebuild editable composites without provider calls or project mutations:
 
