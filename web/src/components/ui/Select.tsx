@@ -90,13 +90,16 @@ export function Select({
       if (menuRef.current?.contains(event.target as Node)) return;
       setOpen(false);
     }
+    function onResize() {
+      setOpen(false);
+    }
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", onScroll);
+    window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onScroll);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
