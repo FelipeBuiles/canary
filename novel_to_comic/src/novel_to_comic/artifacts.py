@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 if TYPE_CHECKING:
     from novel_to_comic.models.story_bible import StoryBible
 
@@ -34,10 +36,14 @@ def story_bible_path(project_dir: Path) -> Path:
 
 def read_story_bible(project_dir: Path) -> "StoryBible":
     from novel_to_comic.models.story_bible import StoryBible
+    from novel_to_comic.target_artifacts import ArtifactInvalid
     path = story_bible_path(project_dir)
     if not path.exists():
         raise ArtifactMissing("story_bible", path)
-    return StoryBible.model_validate_json(path.read_text())
+    try:
+        return StoryBible.model_validate_json(path.read_text())
+    except ValidationError as exc:
+        raise ArtifactInvalid("story_bible", path, exc) from exc
 
 
 def read_story_bible_safe(project_dir: Path) -> "StoryBible | None":

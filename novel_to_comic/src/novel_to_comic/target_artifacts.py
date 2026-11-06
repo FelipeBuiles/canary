@@ -59,6 +59,7 @@ class ArtifactMissing(Exception):
 
 
 _ARTIFACT_OWNER_STAGES = {
+    "story_bible": "Extract",
     "cast_design": "Cast",
     "cast_review": "Cast",
     "source": "Extract",
