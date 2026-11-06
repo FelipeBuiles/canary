@@ -201,3 +201,12 @@ graphify-out/cost.json
 
 .pi/*
 !.pi/mcp.json
+
+# ── Local-only material (not redistributable or not source) ──────────────────
+# Third-party sample texts stay on the author's machine; only public-domain
+# samples are tracked.
+/samples/*
+!/samples/themonkeyspaw.txt
+/tmp/
+/data/
+/posthog-self-driving-report.md
