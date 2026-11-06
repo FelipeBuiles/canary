@@ -7,3 +7,6 @@ dist/
 .desk.lock
 .audit/setup.*
 
+
+# Private business notes stay local
+/intel/
