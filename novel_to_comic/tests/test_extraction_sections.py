@@ -1226,3 +1226,33 @@ def test_section_prefixes_name_the_part_and_never_look_like_another_part():
     assert sections.section_prefix(1, 2) == "p0001s0002_"
     assert sections.section_prefix(1, 2) != sections.section_prefix(2, 1)
     assert not sections.section_prefix(1, 2).startswith("part")
+
+
+@run_async
+async def test_a_later_section_scene_with_no_source_boundary_is_merged_rather_than_failing_the_section():
+    previous = StoryBible.model_validate(payload(1, 'Ari opened the gate.'))
+    text = 'Ari closed the gate. The rain began. Ari ran home.'
+    raw = payload(2, text)
+    first = raw['scenes'][0]
+    raw['scenes'] += [
+        {**first, 'id': 'p0001s0002_scene_002', 'summary': 'Rain falls.', 'source_start_quote': 'A storm of frogs fell.'},
+        {**first, 'id': 'p0001s0002_scene_003', 'summary': 'Ari runs.', 'source_start_quote': 'Ari ran home.'},
+    ]
+    raw['character_participation'] += [
+        {**raw['character_participation'][0], 'scene_id': scene_id}
+        for scene_id in ('p0001s0002_scene_002', 'p0001s0002_scene_003')]
+    reports = []
+
+    async def generate(**kwargs):
+        return ApiResult(value=json.loads(json.dumps(raw)))
+
+    result = await s1_extract._extract_with_retry(
+        Config(), 'instructions', text, generate=generate, report=reports.append,
+        prepare=lambda value: sections.hydrate_section(value, previous),
+        validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
+
+    assert [(scene.id, scene.source_start_quote) for scene in result.value.scenes] == [
+        ('p0001s0002_scene_001', 'Ari closed the gate.'), ('p0001s0002_scene_003', 'Ari ran home.')]
+    assert result.value.scenes[0].summary == 'Ari crosses the gate. Rain falls.'
+    assert reports == ['Scene openings the model did not copy exactly from the source were settled without another '
+                       'call: p0001s0002_scene_002 merged into p0001s0002_scene_001.']

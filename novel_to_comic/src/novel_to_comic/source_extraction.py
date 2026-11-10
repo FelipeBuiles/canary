@@ -283,6 +283,17 @@ def _find_quote_position(text: str, quote: str, start: int = 0) -> int:
         candidates.append(collapsed)
 
     for candidate in candidates:
+        position = norm_text.find(candidate, start)
+        if position != -1:
+            return position
+    # A line break typed as a space is still an exact copy: headings, dates
+    # and list rows open scenes on lines too short for the fuzzy search below.
+    for candidate in candidates:
+        spaced = re.compile(r"\s+".join(re.escape(word) for word in candidate.split()))
+        if candidate.split() and (match := spaced.search(norm_text, start)):
+            return match.start()
+
+    for candidate in candidates:
         for length in (len(candidate), 80, 60, 40, 25):
             if length > len(candidate):
                 continue
@@ -309,28 +320,27 @@ def align_scene_anchors(story_bible: StoryBible, text: str) -> tuple[str, ...]:
     return align_scene_openings(story_bible.scenes, text)
 
 
-def align_scene_openings(scenes: Iterable[SceneOpening], text: str) -> tuple[str, ...]:
-    """Resolve ordered source openings independently of entity/book metadata."""
-    units = source_units(text)
+def _locate_openings(
+    scenes: list[SceneOpening], text: str, units: tuple[SourceUnit, ...],
+) -> list[int | None]:
+    """Index of the unit each opening starts, in order; ``None`` when it has none."""
     search_from = 0
     previous_index = -1
-    unresolved: list[str] = []
+    located: list[int | None] = []
     for scene in scenes:
+        located.append(None)
         quote = scene.source_start_quote.strip()
         if not quote:
-            unresolved.append(scene.id)
             continue
 
         position = scene.source_start_offset if scene.source_start_offset is not None else text.find(quote, search_from)
         if scene.source_start_offset is not None and (
             position < search_from or not text.startswith(quote, position)
         ):
-            unresolved.append(scene.id)
             continue
         if position == -1 and scene.source_start_offset is None:
             position = _find_quote_position(text, quote, start=search_from)
         if position == -1:
-            unresolved.append(scene.id)
             continue
 
         # Searching forward from the previous boundary already guarantees a
@@ -338,23 +348,108 @@ def align_scene_openings(scenes: Iterable[SceneOpening], text: str) -> tuple[str
         # fuzzy matcher lands inside the unit that boundary already owns.
         unit_index = unit_index_at(units, position)
         if unit_index is None or unit_index <= previous_index:
-            unresolved.append(scene.id)
             continue
         unit = units[unit_index]
         if scene.source_start_offset is not None and (
             position != _semantic_start(unit) or quote != unit.text.strip()
         ):
-            unresolved.append(scene.id)
             continue
-        aligned = unit.text.strip()
-        if not aligned:
-            unresolved.append(scene.id)
+        if not unit.text.strip():
             continue
 
-        scene.source_start_quote = aligned
+        located[-1] = unit_index
         previous_index = unit_index
         search_from = unit.end_offset
+    return located
+
+
+def align_scene_openings(scenes: Iterable[SceneOpening], text: str) -> tuple[str, ...]:
+    """Resolve ordered source openings independently of entity/book metadata."""
+    scenes = list(scenes)
+    units = source_units(text)
+    unresolved: list[str] = []
+    for scene, unit_index in zip(scenes, _locate_openings(scenes, text, units)):
+        if unit_index is None:
+            unresolved.append(scene.id)
+        else:
+            scene.source_start_quote = units[unit_index].text.strip()
     return tuple(unresolved)
+
+
+# Below this a window sentence is not evidence of the scene's opening. Unrelated
+# English sentences of similar length score roughly 0.3-0.5.
+_SETTLE_SIMILARITY = 0.7
+
+
+def _comparable(value: str) -> str:
+    return " ".join(_norm_quote_text(value).split()).casefold()
+
+
+def _opening_similarity(quote: str, sentence: str) -> float:
+    """How well a model's opening quote matches one source sentence.
+
+    A quote that stops early, runs into the next sentence or starts
+    mid-sentence still names its sentence, so only the overlap is compared.
+    """
+    if not quote or not sentence:
+        return 0.0
+    if quote in sentence:
+        return 1.0
+    length = min(len(quote), len(sentence))
+    if length >= 12:
+        quote, sentence = quote[:length], sentence[:length]
+    return SequenceMatcher(None, quote, sentence, autojunk=False).ratio()
+
+
+def settle_scene_openings(
+    scenes: Iterable[SceneOpening], text: str,
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Place the openings ``align_scene_openings`` cannot, without another model call.
+
+    An unresolved scene can only start between the scenes resolved around it.
+    Inside that window a weaker match than the whole-text search accepts is
+    safe, so the closest sentence becomes the opening. A quote that starts
+    inside the previous scene's opening sentence takes the next sentence, the
+    nearest boundary after it. The first scene owns the start of the text.
+
+    Returns each settled scene's exact source sentence, and the scenes that
+    have no boundary of their own. Nothing is mutated.
+    """
+    scenes = list(scenes)
+    units = source_units(text)
+    located = _locate_openings(scenes, text, units)
+    comparable = [_comparable(unit.text) for unit in units]
+    settled: dict[str, str] = {}
+    unplaced: list[str] = []
+    for index, scene in enumerate(scenes):
+        if located[index] is not None:
+            continue
+        if scene.source_start_offset is not None:
+            # Recorded provenance is exact or wrong; it is never guessed.
+            unplaced.append(scene.id)
+            continue
+        previous = max((unit for unit in located[:index] if unit is not None), default=-1)
+        later = located[index + 1:]
+        following = next((unit for unit in later if unit is not None), len(units))
+        # Each unresolved scene ahead of the next resolved one needs a sentence too.
+        pending = next((offset for offset, unit in enumerate(later) if unit is not None), len(later))
+        window = [unit for unit in range(previous + 1, following - pending) if comparable[unit]]
+        quote = _comparable(scene.source_start_quote)
+        choice = None
+        if window:
+            score, best = max((_opening_similarity(quote, comparable[unit]), -unit) for unit in window)
+            if score >= _SETTLE_SIMILARITY:
+                choice = -best
+            elif previous == -1:
+                choice = window[0]
+            elif quote and quote in comparable[previous] and not comparable[previous].startswith(quote):
+                choice = window[0]
+        if choice is None:
+            unplaced.append(scene.id)
+            continue
+        located[index] = choice
+        settled[scene.id] = units[choice].text.strip()
+    return settled, tuple(unplaced)
 
 
 def produce_source_document(

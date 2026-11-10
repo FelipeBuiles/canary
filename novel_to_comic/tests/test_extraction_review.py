@@ -177,7 +177,7 @@ def test_review_cannot_invent_evidence_merge_prior_authorities_or_erase_a_distin
     changes = review()
     protected = frozenset()
     if variant == 'wrong_evidence':
-        changes.character_details[0].evidence[0].source_quote = PASSAGES[0]
+        changes.character_details[0].evidence[0].source_quote = 'Mira grew wings and flew away.'
     elif variant == 'protected_member':
         protected = frozenset({'char_hound_a'})
     elif variant == 'different_look':
@@ -193,21 +193,38 @@ def test_review_cannot_invent_evidence_merge_prior_authorities_or_erase_a_distin
     assert original.model_dump() == snapshot
 
 
-def test_evidence_may_run_past_its_scene_and_a_misattributed_quote_names_its_real_scene():
+def test_evidence_is_grounded_in_code_and_only_words_outside_the_source_are_rejected():
     # A section cut once split one action beat into two scenes; the model's
     # description of the goblins crossed that boundary and three paid attempts
-    # failed on a correction that never said where the words were.
+    # failed. Evidence is checked and discarded, so code settles where it sits.
     spanning = "Two gray hounds snapped at her.\n\nA red tattoo appeared on Mira's face."
     changes = review()
     changes.props[0].evidence[0].source_quote = spanning
     apply_source_review(bible(), changes, TEXT, part_id='part_0001')
 
+    # Words that begin in the neighbouring scene are a boundary drawn one sentence away.
     changes.props[0].evidence[0].source_quote = "She stood six feet tall."
+    apply_source_review(bible(), changes, TEXT, part_id='part_0001')
+    # Typographic quotes and a dropped ending are still that scene's sentence.
+    changes.props[0].evidence[0].source_quote = "Mira equipped a blue jeweled crown, shining"
+    changes.character_details[0].evidence[0].source_quote = "A red tattoo appeared on Mira’s face."
+    apply_source_review(bible(), changes, TEXT, part_id='part_0001')
+
+    # An actor cited far from its words joins the scene that owns them.
+    changes = review()
+    changes.characters[0].evidence[0].scene_id = 'scene_4'
+    result = apply_source_review(bible(), changes, TEXT, part_id='part_0001')
+    assert 'audit_king' in result.scenes[0].character_ids and 'audit_king' not in result.scenes[3].character_ids
+
+    # A correction to one exact scene cannot borrow a distant scene's words.
+    changes = review()
+    changes.scene_details[1].evidence[0].source_quote = "Mira equipped a blue jeweled crown."
     with pytest.raises(ValueError) as error:
         apply_source_review(bible(), changes, TEXT, part_id='part_0001')
-    assert 'Those words are in scene scene_3' in str(error.value)
-    assert '"Mira equipped a blue jeweled crown." to "Two gray hounds snapped at her."' in str(error.value)
+    assert 'Those words are in scene scene_2' in str(error.value)
+    assert 'Scene scene_6 runs from "ABOUT THE AUTHOR Join the reading club' in str(error.value)
 
+    changes = review()
     changes.props[0].evidence[0].source_quote = "Mira flew away."
     with pytest.raises(ValueError, match='not verbatim source text'):
         apply_source_review(bible(), changes, TEXT, part_id='part_0001')
@@ -463,3 +480,121 @@ def test_headings_and_dates_without_punctuation_are_separate_units_so_adjacent_s
     assert align_scene_openings(scenes, UNPUNCTUATED_LOG) == ()
     assert [scene.source_start_quote for scene in scenes] == [
         'ROUND 6 TESTS (VOCABULARY) - RESULTS', 'UPDATE', 'FINAL TEST - SUMMARY']
+
+
+def _whole_source_response(quote, *, move_return_look=False):
+    original = bible()
+    raw = original.model_dump(mode='json')
+    raw['source_review'] = review().model_dump(mode='json')
+    raw['character_participation'] = [dict(character_id=cid, scene_id=scene.id,
+        classification='direct_action', source_quote=scene.source_start_quote)
+        for scene in original.scenes for cid in scene.character_ids]
+    raw['scenes'][4]['source_start_quote'] = quote
+    if move_return_look:
+        raw['characters'][0]['appearance_timeline'][1]['at'] = {'scene_id': 'scene_5', 'beat': None}
+    return raw
+
+
+def _extract_with_an_uncopyable_opening(raw):
+    calls, reports = [], []
+
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return ApiResult(value=json.loads(json.dumps(raw)))
+
+    result = asyncio.run(s1_extract._extract_with_retry(
+        Config(), 'source analyst', TEXT, generate=generate, report=reports.append,
+        validate=s1_extract._check_whole_source_sequences))
+    return result.value, calls, reports
+
+
+def test_an_opening_the_model_never_copies_exactly_is_placed_instead_of_failing_extract():
+    # Production failure: three whole-bible responses kept one near-miss opening and Extract was lost.
+    value, calls, reports = _extract_with_an_uncopyable_opening(_whole_source_response('Mira took the crown off.'))
+    assert len(calls) == 1  # a correction regenerates the whole Story Bible; none is spent on a quote
+    assert [scene.id for scene in value.scenes] == [f'scene_{index}' for index in range(1, 7)]
+    assert value.scenes[4].source_start_quote == 'Mira took off the crown.'
+    assert reports == ['Scene openings the model did not copy exactly from the source were settled without '
+                       'another call: scene_5 placed at its closest source sentence.']
+    build_source_document(TEXT, [SourceSceneAnchor(id=s.id, title=s.title, opening_quote=s.source_start_quote)
+                                 for s in value.scenes])
+
+
+def test_a_scene_with_no_source_boundary_is_merged_into_the_scene_that_owns_its_sentences():
+    value, calls, reports = _extract_with_an_uncopyable_opening(
+        _whole_source_response('The dragon swallowed the moon.', move_return_look=True))
+    assert len(calls) == 1
+    assert [scene.id for scene in value.scenes] == ['scene_1', 'scene_2', 'scene_3', 'scene_4', 'scene_6']
+    assert value.total_scenes == 5
+    assert value.scenes[3].summary == f'{PASSAGES[3]} {PASSAGES[4]}'
+    assert all('scene_5' not in sequence.scenes for sequence in value.sequences)
+    # The look that began in the merged scene now begins after the earlier scene's own beats.
+    returned = [a.at for a in value.characters[0].appearance_timeline if a.state_id == 'return']
+    assert returned[0].scene_id == 'scene_4' and returned[0].beat >= 1
+    assert reports and reports[0].endswith('scene_5 merged into scene_4.')
+    source = build_source_document(TEXT, [SourceSceneAnchor(id=s.id, title=s.title, opening_quote=s.source_start_quote)
+                                          for s in value.scenes])
+    assert ''.join(unit.text for unit in source.units) == TEXT
+
+
+def test_settled_openings_leave_the_correction_for_what_only_the_model_can_fix():
+    wrong = _whole_source_response('The dragon swallowed the moon.')
+    del wrong['characters'][0]['appearance_states'][0]['changed_facets']
+    right = _whole_source_response('Mira took off the crown.')
+    calls = []
+
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return ApiResult(value=wrong if len(calls) == 1 else right)
+
+    value = asyncio.run(s1_extract._extract_with_retry(
+        Config(), 'source analyst', TEXT, generate=generate, validate=s1_extract._check_whole_source_sequences)).value
+    assert len(calls) == 2 and len(value.scenes) == 6
+    assert 'changed_facets' in calls[1]['user_content'] and 'UNRESOLVED SCENE OPENINGS' not in calls[1]['user_content']
+
+
+def test_a_first_scene_with_no_sentence_of_its_own_shares_the_second_scenes_opening():
+    raw = _whole_source_response(PASSAGES[4])
+    raw['scenes'][0]['source_start_quote'] = 'Nothing like the source.'
+    raw['scenes'][1]['source_start_quote'] = PASSAGES[0]
+    value, calls, reports = _extract_with_an_uncopyable_opening(raw)
+    assert len(calls) == 1
+    assert [scene.id for scene in value.scenes] == ['scene_1', 'scene_3', 'scene_4', 'scene_5', 'scene_6']
+    assert value.scenes[0].source_start_quote == 'Mira entered the vault.'
+    assert reports and reports[0].endswith('scene_2 merged into scene_1.')
+
+
+def test_a_dated_heading_copied_with_its_line_break_as_a_space_is_an_exact_opening():
+    # SCP-5031 opens every entry on a date and a heading too short for fuzzy matching.
+    from novel_to_comic.source_extraction import align_scene_openings
+
+    text = ('Item #: SCP-5031\n\nObject Class: Keter\n\n30/06/2019\n\nUPDATE\n\n'
+            'SCP-5031 has said its first word: "Salt".\n\n29/11/2019\n\nFINAL TEST - SUMMARY\n\nTesting concluded.')
+    scenes = [s1_extract._SceneOpening(id=f's{index}', source_start_quote=quote) for index, quote in enumerate(
+        ('Item #: SCP-5031', '30/06/2019 UPDATE', '29/11/2019\nFINAL TEST - SUMMARY'), 1)]
+    assert align_scene_openings(scenes, text) == ()
+    assert [scene.source_start_quote for scene in scenes] == ['Item #: SCP-5031', '30/06/2019', '29/11/2019']
+
+
+def test_openings_settle_only_between_their_resolved_neighbours():
+    from novel_to_comic.source_extraction import settle_scene_openings
+
+    text = 'Ann woke; later Bob left the house in a hurry. Cy sang. Dee ran. Cy sang again.'
+
+    def openings(*quotes):
+        return [s1_extract._SceneOpening(id=f's{index}', source_start_quote=quote)
+                for index, quote in enumerate(quotes, 1)]
+
+    # A scene that starts inside the previous scene's opening sentence takes the next one.
+    fused = openings('Ann woke; later Bob left the house in a hurry.', 'later Bob left the house in a hurry.', 'Dee ran.')
+    assert settle_scene_openings(fused, text) == ({'s2': 'Cy sang.'}, ())
+    assert fused[1].source_start_quote == 'later Bob left the house in a hurry.'  # nothing is mutated
+    # The first scene owns the start of the text; an invented later opening has no boundary.
+    assert settle_scene_openings(openings('Invented words here.', 'Dee ran.', 'Nothing like the source.'), text) == (
+        {'s1': 'Ann woke; later Bob left the house in a hurry.'}, ('s3',))
+    # A sentence that also occurs before the previous scene is never matched backwards.
+    assert settle_scene_openings(openings('Dee ran.', 'Cy sang, again.'), text) == ({'s2': 'Cy sang again.'}, ())
+    # Recorded offsets are exact provenance, never re-guessed.
+    stale = openings('Ann woke; later Bob left the house in a hurry.', 'Dee ran.')
+    stale[1].source_start_offset = 3
+    assert settle_scene_openings(stale, text) == ({}, ('s2',))

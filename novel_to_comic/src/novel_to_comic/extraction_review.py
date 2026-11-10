@@ -16,7 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition, Transition
 from novel_to_comic.models.story_bible import Character, Location, Prop, StoryBible, blank_visual_anchors
-from novel_to_comic.source_extraction import SourceSceneAnchor, align_scene_openings, build_source_document
+from novel_to_comic.source_extraction import (
+    SourceSceneAnchor, _find_quote_position, align_scene_openings, build_source_document,
+)
 from novel_to_comic.text_utils import clean
 
 
@@ -320,23 +322,43 @@ def apply_source_review(bible: StoryBible, review: ExtractionReview, text: str, 
              for scene in source.scenes}
     order = {scene.id: index for index, scene in enumerate(result.scenes)}
 
+    position_of = {scene_id: index for index, scene_id in enumerate(spans)}
+
     def begins_in(scene_id: str, quote: str) -> bool:
         # A quote may run past the scene's last sentence; it must begin inside it.
         start, end = spans[scene_id]
         passage = clean(text[start:end])
         position = clean(text[start:end + len(quote) + 200]).find(quote)
-        return 0 <= position < len(passage)
+        if 0 <= position < len(passage):
+            return True
+        # Evidence is checked here and then discarded, so a transcription slip
+        # (typographic quotes, a dropped word) is still that scene's sentence.
+        return 0 <= _find_quote_position(text[start:end + len(quote) + 200], quote) < end - start
 
-    def evidence(entries):
+    def evidence(entries, *, exact_scene: bool = False):
+        """Ground each entry in this part's source without asking the model again.
+
+        Words that begin in a neighbouring scene are a boundary the model drew
+        one sentence away, so the entry stands. Words from further away are
+        re-cited to the scene that owns them, unless the correction is about
+        one exact scene. Only words that are not source text are rejected.
+        """
         for entry in entries:
             quote = clean(entry.source_quote)
-            if entry.scene_id in spans and quote and begins_in(entry.scene_id, quote):
-                continue
             if entry.scene_id not in spans:
                 raise ValueError(f"Source review evidence must name a scene from this part: {entry.scene_id}.")
+            if quote and begins_in(entry.scene_id, quote):
+                continue
+            cited = position_of[entry.scene_id]
+            owners = sorted((scene_id for scene_id in spans if quote and begins_in(scene_id, quote)),
+                            key=lambda scene_id: abs(position_of[scene_id] - cited))
+            if owners and abs(position_of[owners[0]] - cited) == 1:
+                continue
+            if owners and not exact_scene:
+                entry.scene_id = owners[0]
+                continue
             start, end = spans[entry.scene_id]
             sentences = [unit for unit in source.units if start <= unit.start_offset < end]
-            owners = [scene_id for scene_id in spans if quote and begins_in(scene_id, quote)]
             where = (f"Those words are in scene {owners[0]}; cite that scene or quote words from {entry.scene_id}. "
                      if owners else "Those words are not verbatim source text. ")
             raise ValueError(
@@ -425,7 +447,7 @@ def apply_source_review(bible: StoryBible, review: ExtractionReview, text: str, 
 
     known_ids = {character.id for character in result.characters}
     for details in review.scene_details:
-        evidence(details.evidence)
+        evidence(details.evidence, exact_scene=True)
         if details.id not in scenes or any(e.scene_id != details.id for e in details.evidence):
             raise ValueError("Scene corrections need evidence from that exact local scene.")
         scene = scenes[details.id]

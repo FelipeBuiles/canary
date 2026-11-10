@@ -350,9 +350,15 @@ before generation with a source-formatting/configuration instruction. Shorter
 sources retain the single-call path.
 Extract sends a typed response schema on the initial call and every correction,
 for whole-source extraction, section deltas and the final source review and sequence organization.
-Review evidence must begin in the scene it names and may run past that
-scene's last sentence; a rejected quote's correction names the scene that holds
-it and the named scene's first and last sentences. Shared
+Review evidence is checked and then discarded, so code grounds it without a
+correction. It begins in the scene it names and may run past that scene's last
+sentence; typographic quotes, a line break typed as a space or a dropped ending
+still name that sentence. Words that begin in a neighbouring scene are accepted
+as cited; words from further away are re-cited to the scene that owns them, so
+an added actor joins that scene's roster. A `scene_details` correction keeps
+its exact scene and is rejected instead, as are words that are not source text;
+that correction names the scene that holds the words and the named scene's
+first and last sentences. Shared
 instructions describe source fidelity and visual continuity; whole-source and
 section scope rules are separate. Scene counts, panel counts and description
 tag counts are not extraction quotas. Code derives scene counts and owns source
@@ -566,6 +572,21 @@ known, ID-only character echoes are ignored in the section while remaining in
 the book registry; new candidates or authored updates still require evidence.
 Unrecoverable missing participation pairs are reported together with their
 unresolved opening-quote cause for a single targeted correction.
+An opening quote the model did not copy exactly never fails Extract and never
+spends a correction: a correction regenerates the whole Story Bible, so code
+settles openings on every response before validating it. A quote that differs
+from the source only in whitespace (a line break typed as a space) is an exact
+copy. Otherwise the scene takes the closest source sentence between the scenes
+resolved around it (or, when its quote starts inside the previous scene's
+opening sentence, the next sentence); the first scene owns the start of the
+text. A scene with no boundary of its own is merged into the scene before it,
+which already owns those sentences: summary, roster, objects, evidence and
+appearance positions move with it, beats following the earlier scene's last
+referenced beat. A first scene with no sentence ahead of the second scene's
+opening shares that opening, and the second is merged into it. The stage log
+names each settled scene. Recorded `source_start_offset` provenance is never
+re-guessed, and every other validation still runs on the settled response;
+corrections are spent only on those.
 Candidates absent from every roster and participation entry are identified by
 ID and name in correction feedback. They require source-supported classification
 or removal; definitions alone never establish visual participation.

@@ -5,6 +5,7 @@ completed responses and reconciling book-wide narrative arcs.
 """
 
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
@@ -38,6 +39,7 @@ from novel_to_comic.models.story_bible import MissingVisualAnchor, StoryBible, b
 from novel_to_comic.source_extraction import (
     align_scene_anchors,
     align_scene_openings,
+    settle_scene_openings,
     produce_source_document,
 )
 from novel_to_comic.stage_runtime import StageRuntime
@@ -48,6 +50,7 @@ from novel_to_comic.workspace import FIRST_PART_ID, part_ordinal, workspace_part
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extraction.txt"
 EXTRACT_MAX_OUTPUT_TOKENS = 65536
@@ -233,6 +236,138 @@ def _resolved_scene_anchor_quotes(
         {scene_id: quote for scene_id, quote in quotes.items() if scene_id in unresolved},
     )
 
+
+
+def _dict_nodes(value: object):
+    if isinstance(value, dict):
+        yield value
+        value = list(value.values())
+    if isinstance(value, list):
+        for item in value:
+            yield from _dict_nodes(item)
+
+
+def _fold_scene_into_previous(result: dict, index: int) -> None:
+    """Merge a scene that has no source boundary into the scene before it.
+
+    The raw-payload counterpart of ``join_continued_scene``: the earlier scene
+    already owns those sentences, so it takes the summary, roster and objects,
+    and every reference moves with them. Moved beats follow the earlier
+    scene's last referenced beat so appearance activations keep their order.
+    """
+    scenes = result["scenes"]
+    scene, previous = scenes[index], scenes[index - 1]
+    scene_id, previous_id = scene["id"], previous["id"]
+    nodes = list(_dict_nodes({key: value for key, value in result.items() if key != "scenes"}))
+
+    def object_beats(owner: dict) -> list[int]:
+        return [beat for item in owner.get("transient_objects") or [] if isinstance(item, dict)
+                for beat in item.get("appears_in_beats") or [] if isinstance(beat, int)]
+
+    offset = max([node["beat"] for node in nodes
+                  if node.get("scene_id") == previous_id and isinstance(node.get("beat"), int)]
+                 + object_beats(previous), default=0)
+    for node in nodes:
+        if node.get("scene_id") == scene_id:
+            node["scene_id"] = previous_id
+            if "source_quote" not in node:  # a story position, not quoted evidence
+                node["beat"] = offset + (node.get("beat") or 0) + 1
+        if node.get("first_appearance_scene") == scene_id:
+            node["first_appearance_scene"] = previous_id
+    sequences = result.get("sequences")
+    if isinstance(sequences, list):
+        emptied = []
+        for sequence in sequences:
+            if not isinstance(sequence, dict):
+                continue
+            for key in ("scenes", "scene_ids", "scene_list", "scene_id_list"):
+                listed = [sequence[key]] if isinstance(sequence.get(key), str) else sequence.get(key)
+                if isinstance(listed, list) and scene_id in listed:
+                    sequence[key] = [item for item in listed if item != scene_id]
+                    if not sequence[key]:
+                        emptied.append(sequence)
+        result["sequences"] = [sequence for sequence in sequences
+                               if not any(sequence is item for item in emptied)]
+    review = result.get("source_review")
+    for details in (review.get("scene_details") or []) if isinstance(review, dict) else []:
+        if isinstance(details, dict) and details.get("id") == scene_id:
+            details["id"] = previous_id
+
+    def non_narrative(value: dict) -> bool:
+        kind = value.get("scene_type")
+        return isinstance(kind, str) and re.sub(r"[\s-]+", "_", kind.casefold().strip()) in _NON_NARRATIVE_SCENE_TYPES
+
+    if non_narrative(previous) and not non_narrative(scene):
+        # Front matter that absorbs a story scene becomes that story scene.
+        for field in ("title", "scene_type", "narrative_beat", "location_id"):
+            if field in scene:
+                previous[field] = scene[field]
+    previous["summary"] = f"{previous.get('summary') or ''} {scene.get('summary') or ''}".strip()
+    previous["character_ids"] = list(dict.fromkeys(
+        [*(previous.get("character_ids") or []), *(scene.get("character_ids") or [])]))
+    if previous.get("location_id") is None and not non_narrative(previous):
+        previous["location_id"] = scene.get("location_id")
+    moved = [
+        {**item, "appears_in_beats": [offset + beat + 1 for beat in item.get("appears_in_beats") or []]}
+        if isinstance(item, dict) else item
+        for item in scene.get("transient_objects") or []
+    ]
+    if moved:
+        previous["transient_objects"] = [*(previous.get("transient_objects") or []), *moved]
+    del scenes[index]
+    if "total_scenes" in result:
+        result["total_scenes"] = len(scenes)
+
+
+def _settle_unresolved_openings(raw: object, novel_text: str) -> tuple[object, dict[str, str]]:
+    """Give every scene a source boundary in code instead of asking the model again.
+
+    A correction regenerates the whole Story Bible and Extract has no approval
+    checkpoint, so one opening quote must neither cost another call nor lose
+    the stage. A scene whose opening can be placed between its neighbours
+    keeps that exact sentence; one with no boundary of its own is merged into
+    the scene before it, which already owns those sentences. Returns ``raw``
+    itself when there is nothing to do or nothing safe to do, and otherwise a
+    corrected copy with what was done to each scene.
+    """
+    payload = raw[0] if isinstance(raw, list) and raw else raw
+    if not isinstance(payload, dict) or not isinstance(payload.get("scenes"), list):
+        return raw, {}
+
+    def openings(scenes: list) -> list[_SceneOpening]:
+        return [_SceneOpening.model_validate(scene) for scene in scenes]
+
+    try:
+        current = openings(payload["scenes"])
+    except ValidationError:
+        return raw, {}  # malformed scenes are reported by artifact validation
+    if not align_scene_openings([opening.model_copy() for opening in current], novel_text):
+        return raw, {}
+    result = json.loads(json.dumps(payload))
+    scenes = result["scenes"]
+    outcome: dict[str, str] = {}
+    settled, _ = settle_scene_openings(current, novel_text)
+    for scene in scenes:
+        if scene["id"] in settled:
+            scene["source_start_quote"] = settled[scene["id"]]
+            outcome[scene["id"]] = "placed at its closest source sentence"
+    # Whatever still has no boundary, including a placement that does not
+    # hold in order, is merged rather than guessed.
+    while unresolved := align_scene_openings(openings(scenes), novel_text):
+        index = next(position for position, scene in enumerate(scenes) if scene["id"] == unresolved[0])
+        if index == 0:
+            if len(scenes) == 1:
+                return raw, {}
+            # No sentence precedes the second scene's opening, so the two
+            # scenes share it: the first owns the start of the text.
+            for field in ("source_start_quote", "source_start_offset"):
+                scenes[0].pop(field, None)
+                if field in scenes[1]:
+                    scenes[0][field] = scenes[1][field]
+            index = 1
+        outcome[scenes[index]["id"]] = f"merged into {scenes[index - 1]['id']}"
+        _fold_scene_into_previous(result, index)
+    return ([result, *raw[1:]] if isinstance(raw, list) else result), outcome
 
 
 def estimate_story_bible_output_chars(novel_text: str | bytes | int) -> int:
@@ -759,6 +894,7 @@ async def _extract_with_retry(
     max_output_tokens: int = EXTRACT_MAX_OUTPUT_TOKENS,
     json_schema: dict | None = None,
     registry: StoryBible | None = None,
+    report: Callable[[str], None] | None = None,
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
     previous_response: object = None
@@ -780,14 +916,24 @@ async def _extract_with_retry(
             validate_references(aligned)
         return aligned
 
+    def settle(payload: object) -> tuple[object, dict[str, str]]:
+        try:
+            return _settle_unresolved_openings(payload, novel_text)
+        except (AttributeError, KeyError, TypeError):
+            # A payload too malformed to repair keeps its own validation error.
+            return payload, {}
+
     def parse(raw: object) -> StoryBible:
         nonlocal previous_response, attempt
         attempt += 1
         prepared = prepare(raw) if prepare else hydrate_section(raw, None)
         prior = previous_response
         previous_response = json.loads(json.dumps(prepared))
+        # An opening the model did not copy exactly is settled here, on every
+        # response: a correction regenerates the whole Story Bible for one quote.
+        settled, outcome = settle(prepared)
         try:
-            return validate_response(prepared)
+            bible = validate_response(settled)
         except Exception:
             # Preserve accepted responses and successful cached correction chains.
             # Only reconcile a rejected final attempt, without another submission.
@@ -796,7 +942,16 @@ async def _extract_with_retry(
             reconciled = resolve_correction_references(prepared, prior)
             if reconciled is prepared:
                 raise
-            return validate_response(reconciled)
+            settled, outcome = settle(reconciled)
+            bible = validate_response(settled)
+        if outcome:
+            message = ("Scene openings the model did not copy exactly from the source were settled "
+                       "without another call: "
+                       + "; ".join(f"{scene_id} {action}" for scene_id, action in outcome.items()) + ".")
+            logger.warning(message)
+            if report is not None:
+                report(message)
+        return bible
 
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
@@ -923,6 +1078,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             extract_result = await _extract_with_retry(
                 config, system_prompt + WHOLE_SOURCE_INSTRUCTIONS, novel_text,
                 validate=_check_whole_source_sequences,
+                report=lambda message: ctx.log(message, level="dim"),
             )
             story_bible = extract_result.value
         # Only this part's scenes are anchored in this part's text.

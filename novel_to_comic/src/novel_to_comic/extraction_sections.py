@@ -841,6 +841,7 @@ async def extract_sections(
                     max_output_tokens=SECTION_OUTPUT_TOKENS,
                     json_schema=section_schema(bible, prefix, continuable=previous_scene is not None),
                     registry=bible,
+                    report=lambda message: ctx.log(message, level="dim"),
                 )
             except Exception:
                 # Completed sections are checkpointed; say where a rerun picks up.
