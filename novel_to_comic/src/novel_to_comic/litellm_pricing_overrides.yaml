@@ -9,7 +9,7 @@ aliases:
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
-  gemini-4-argon: vertex_ai/gemini-4-argon
+  gemini-4-carbon: vertex_ai/gemini-4-carbon
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
   claude-haiku-5-5: anthropic/claude-haiku-5-5
@@ -26,6 +26,10 @@ aliases:
   image-flare: openai/gpt-image-2.5-flare
   image-sunburst-runware: runware/gpt-image-2.5-sunburst
   image-flare-runware: runware/gpt-image-2.5-flare
+  image-sunburst-2.6: openai/gpt-image-2.6-sunburst
+  image-flare-2.6: openai/gpt-image-2.6-flare
+  image-sunburst-2.6-runware: runware/gpt-image-2.6-sunburst
+  image-flare-2.6-runware: runware/gpt-image-2.6-flare
 model_overrides:
   # N. Virginia DetectDocumentText, first 1M monthly images; verified 2026-10-07.
   # Conservative list-price accounting; discounts/credits are separate offsets.
@@ -54,11 +58,12 @@ model_overrides:
     mode: chat
     max_input_tokens: 1048576
     max_output_tokens: 65536
-  # Provisional launch rates, operator-approved 2026-10-13; not a verified
-  # Vertex tariff. Cache availability/storage and intro expiry unconfirmed.
+  # Argon's provisional launch rates (operator-approved 2026-10-13), kept for
+  # Carbon on the operator's 2026-11-10 statement that it costs the same. Not a
+  # verified Vertex tariff. Cache availability/storage and intro expiry unconfirmed.
   # https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/
   # Post-intro announced rates: $4/M input, $20/M output. Review before use.
-  gemini-4-argon:
+  gemini-4-carbon:
     input_cost_per_token: 2.0e-06
     cache_read_input_token_cost: 1.0e-07
     output_cost_per_token: 1.0e-05
@@ -193,6 +198,22 @@ model_overrides:
     mode: image_generation
     estimated_output_cost_per_image: 0.25
     estimated_input_cost_per_reference: 0.01
+  # GPT Image 2.6 (2026-11-04): OpenAI publishes the same token rates as 2.5,
+  # but CellCog (2026-11-05, 1024x1024) measured 4.2x the output tokens at low
+  # and 3.3x at medium; high and above matched 2.5 exactly. Labs-only routes;
+  # unmeasured here, so estimates use the allowance and settle on returned tokens.
+  gpt-image-2.6-flare: &gpt_image_2_6
+    estimated_preview_output_tokens: 300
+    expected_preview_output_tokens: 300
+    input_cost_per_token: 5.0e-06
+    image_input_cost_per_token: 8.0e-06
+    cached_text_input_cost_per_token: 1.25e-06
+    cached_image_input_cost_per_token: 2.0e-06
+    output_cost_per_token: 3.0e-05
+    mode: image_generation
+    estimated_output_cost_per_image: 0.25
+    estimated_input_cost_per_reference: 0.01
+  gpt-image-2.6-sunburst: *gpt_image_2_6
   gpt-image-2.5-sunburst:
     estimated_preview_output_tokens: 300
     expected_preview_output_tokens: 300
@@ -316,6 +337,10 @@ model_overrides:
         1344x768: 255
         1536x1024: 255
   runware/gpt-image-2.5-flare: *runware_gpt_image_2_5
+  # Runware reports each task's charged cost; estimates use the 2.6 allowance,
+  # since 2.5's measured token tables do not apply to 2.6.
+  runware/gpt-image-2.6-sunburst: *gpt_image_2_6
+  runware/gpt-image-2.6-flare: *gpt_image_2_6
 
   # https://platform.claude.com/docs/en/models/haiku-5-5/overview (2026-10-07).
   claude-haiku-5-5: &haiku_5_5

@@ -24,6 +24,7 @@ import {
   type ImageArm,
   type ImageCell,
   type ImagePrompt,
+  type ImageQuality,
   type ImageTarget,
   type LabsFunding,
   type LabsProject,
@@ -116,6 +117,18 @@ function seconds(value: number | null | undefined): string {
   return value >= 60 ? `${Math.floor(value / 60)}m ${Math.round(value % 60)}s` : `${value.toFixed(1)}s`;
 }
 
+/** Seconds at the provider when known; a cell's wall time otherwise. */
+function routeSeconds(cell: ImageCell): number {
+  return (cell.provider_latency_ms ?? cell.latency_ms ?? 0) / 1000;
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function count(value: number | null | undefined): string {
   return value == null ? "—" : value.toLocaleString();
 }
@@ -135,10 +148,22 @@ function targetName(targets: ImageTarget[] | undefined, id: string): string {
 }
 
 function armName(targets: ImageTarget[] | undefined, arm: ImageArm): string {
-  return `${targetName(targets, arm.target)} · ${PROMPT_LABEL[arm.prompt]}`;
+  return [targetName(targets, arm.target), arm.quality && `${arm.quality} quality`, PROMPT_LABEL[arm.prompt]]
+    .filter(Boolean).join(" · ");
 }
 
-/** "gemini-4-argon", or "gemini-4-argon · plan: gemini-3.8-flash" for a mixed arm. */
+function armKey(arm: ImageArm): string {
+  return `${arm.target}|${arm.prompt}|${arm.quality ?? ""}`;
+}
+
+const QUALITY_OPTIONS: { value: string; label: string }[] = [
+  { value: "default", label: "Production quality" },
+  { value: "low", label: "Low quality" },
+  { value: "medium", label: "Medium quality" },
+  { value: "high", label: "High quality" },
+];
+
+/** "gemini-4-carbon", or "gemini-4-carbon · plan: gemini-3.8-flash" for a mixed arm. */
 function stageArmLabel(model: string, stageModels: Record<string, string> | undefined): string {
   const overrides = Object.entries(stageModels ?? {}).filter(([, chosen]) => chosen !== model);
   return [model, ...overrides.map(([stage, chosen]) => `${stage}: ${chosen}`)].join(" · ");
@@ -229,7 +254,10 @@ function ArmEditor({ arms, targets, onChange }: {
             className="min-w-0 flex-[1_1_16rem]"
             aria-label={`Arm ${index + 1} model and route`}
             value={arm.target}
-            onValueChange={(target) => update(index, { target })}
+            onValueChange={(target) => update(index, {
+              target,
+              quality: targets.find((candidate) => candidate.id === target)?.accepts_quality ? arm.quality : undefined,
+            })}
             options={targets.map((target) => ({
               value: target.id,
               label: `${target.label} · ${target.provider}${target.available ? "" : " (not enabled)"}`,
@@ -243,6 +271,17 @@ function ArmEditor({ arms, targets, onChange }: {
             onValueChange={(prompt) => update(index, { prompt: prompt as ImagePrompt })}
             options={(Object.keys(PROMPT_LABEL) as ImagePrompt[]).map((prompt) => ({ value: prompt, label: PROMPT_LABEL[prompt] }))}
           />
+          {targets.find((candidate) => candidate.id === arm.target)?.accepts_quality && (
+            <Select
+              className="min-w-0 flex-[1_1_10rem]"
+              aria-label={`Arm ${index + 1} quality`}
+              value={arm.quality ?? "default"}
+              onValueChange={(quality) => update(index, {
+                quality: quality === "default" ? undefined : (quality as ImageQuality),
+              })}
+              options={QUALITY_OPTIONS}
+            />
+          )}
           {arms.length > 2 && (
             <button type="button" aria-label={`Remove arm ${index + 1}`} className="min-h-11 min-w-11 text-ink-muted hover:text-hero-red"
               onClick={() => onChange(arms.filter((_, position) => position !== index))}>
@@ -258,7 +297,9 @@ function ArmEditor({ arms, targets, onChange }: {
       )}
       <p className={META}>
         Production prompt = what Canary sends today (pages are compiled now for each model). Restructured = the same
-        request restated scene-first, with anchors, style and lettering kept word for word.
+        request restated scene-first, with anchors, style and lettering kept word for word. Quality applies to GPT
+        Image targets: Style/Cast items keep their recorded quality unless an arm sets one; pages accept a quality
+        on OpenAI and Runware routes.
       </p>
     </fieldset>
   );
@@ -313,7 +354,7 @@ function ImageCompareSetup({ projects, onStarted }: { projects: LabsProject[]; o
   const [kind, setKind] = useState<"all" | "asset" | "page">("all");
   const [previewing, setPreviewing] = useState<string | null>(null);
   const targets = options.data?.targets ?? [];
-  const armsValid = new Set(arms.map((arm) => `${arm.target}|${arm.prompt}`)).size === arms.length;
+  const armsValid = new Set(arms.map(armKey)).size === arms.length;
   const estimate = useImageCompareEstimate(selected.length && armsValid ? { project, items: selected, arms } : null);
   const visible = (items.data?.items ?? []).filter((item) => kind === "all" || item.kind === kind);
 
@@ -332,7 +373,7 @@ function ImageCompareSetup({ projects, onStarted }: { projects: LabsProject[]; o
       </p>
       <ProjectPicker projects={projects} value={project} onChange={(next) => { setProject(next); setSelected([]); setPreviewing(null); }} />
       <ArmEditor arms={arms} targets={targets} onChange={setArms} />
-      {!armsValid && <p className="font-body text-sm text-hero-red">Each arm must differ in model, route or prompt.</p>}
+      {!armsValid && <p className="font-body text-sm text-hero-red">Each arm must differ in model, route, prompt or quality.</p>}
       <div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className={META}>Items ({selected.length}/{MAX_ITEMS} selected)</span>
@@ -639,7 +680,9 @@ function ImageResult({ runId, cell, label, frame, blind, onRetry, retrying }: {
       {inspector.viewer}
       {cell?.status === "ok" && !blind && (
         <p className={cn(META, "mt-1")}>
-          {seconds((cell.latency_ms ?? 0) / 1000)} · {costWithEquivalent(cell.cost_usd, cell.api_equivalent_usd, cell.funding)}
+          {seconds(routeSeconds(cell))}
+          {cell.queue_ms != null && cell.queue_ms >= 1000 ? ` (+${seconds(cell.queue_ms / 1000)} queued)` : ""}
+          {" · "}{costWithEquivalent(cell.cost_usd, cell.api_equivalent_usd, cell.funding)}
           {" · "}{sizeLabel(cell.output_size)}{cell.output_size && cell.output_size !== cell.requested_size ? ` (asked ${sizeLabel(cell.requested_size)})` : ""}
           {cell.prompt_file && (
             <> · <a className="font-bold text-hero-red" target="_blank" rel="noreferrer" href={labsRunFileUrl(runId, cell.prompt_file)}>
@@ -691,7 +734,7 @@ function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageT
       failed: own.filter((cell) => cell.status === "failed").length,
       cost: costWithEquivalent(sum((cell) => cell.cost_usd), sum((cell) => cell.api_equivalent_usd), done[0]?.funding ?? targets?.find((t) => t.id === arm.target)?.funding),
       perImage: done.length ? sum((cell) => cell.funding === "api" ? cell.cost_usd : cell.api_equivalent_usd) / done.length : null,
-      seconds: done.length ? sum((cell) => cell.latency_ms) / done.length / 1000 : null,
+      seconds: median(done.map(routeSeconds)),
     };
   });
 
@@ -720,7 +763,7 @@ function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageT
               <tr className={cn(META, "text-left")}>
                 <th className="py-1 pr-3 font-normal">Arm</th>
                 <th className="py-1 pr-3 font-normal">Done</th>
-                <th className="py-1 pr-3 font-normal">Avg time</th>
+                <th className="py-1 pr-3 font-normal">Median time</th>
                 <th className="py-1 pr-3 font-normal">Per image (API rates)</th>
                 <th className="py-1 font-normal">Total</th>
               </tr>

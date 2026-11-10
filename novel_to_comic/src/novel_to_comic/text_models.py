@@ -60,11 +60,12 @@ class TextModel:
     # call to attend to more pages.
     review_window_pages: int = 12
     review_window_source_chars: int = 24_000
-    # Another route to the same model shares that model's prompt tuning
-    # (``gemini_tuning``) so a fallback sends what the primary would.
+    # Another route shares that model's prompt tuning (``gemini_tuning``) so a
+    # fallback sends what the primary would. Runware Argon takes Carbon's tuning.
     tuning: str = ""
-    # A route to the same model that takes a call Vertex rejects with 429
-    # (``text_route_fallback``); it must share this model's tuning and controls.
+    # A route that takes a call Vertex rejects with 429 (``text_route_fallback``);
+    # it must share this model's tuning and controls. Carbon's is Runware Argon,
+    # a different model approved 2026-11-10 because Runware does not offer Carbon.
     rate_limit_fallback: str = ""
 
 
@@ -78,7 +79,10 @@ TEXT_MODELS = (
               temperature=False, effort="low", thinking_headroom_tokens=16_384,
               estimated_thinking_tokens=4_096, max_output_tokens=65_536,
               schema_instructions=True),
-    # Vertex probes verified JSON mode and small native schemas (2026-10-13).
+    # Gemini 4 Carbon replaced Argon on 2026-11-10 with Argon's settings; one
+    # plain Vertex generateContent call is the only Carbon-specific check. The
+    # evidence below is Argon's. Vertex probes verified JSON mode and small
+    # native schemas (2026-10-13).
     # Full Extract native decoding rejects the same schema as Gemini 3.8.
     # Thinking allowances use the existing Vertex reservation policy, not model limits.
     # Labs run 20261013-143611-7df22e: Low matched Medium on Extract through
@@ -86,7 +90,7 @@ TEXT_MODELS = (
     # 32-page book, so one window replaces three repetitions of the story.
     # Gateway image input verified 2026-10-13 (one page render: panels and
     # lettering read exactly), so Argon can run lettering checks and visual review.
-    TextModel("gemini-4-argon", "Gemini 4 Argon", "Google Vertex AI", "vertex_ai",
+    TextModel("gemini-4-carbon", "Gemini 4 Carbon", "Google Vertex AI", "vertex_ai",
               temperature=False, streaming=False, effort="low",
               native_vertex_thinking=True, schema_instructions=True,
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
@@ -129,7 +133,7 @@ TEXT_MODELS = (
               temperature=False, streaming=False, effort="low", schema_instructions=True,
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=32_768, review_window_pages=48,
-              review_window_source_chars=120_000, tuning="gemini-4-argon"),
+              review_window_source_chars=120_000, tuning="gemini-4-carbon"),
     # JSON mode verified; native schema support unprobed, so schema instructions.
     TextModel("runware-deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash 1017 · Runware", "Runware", "runware",
               temperature=False, streaming=False, effort="low", schema_instructions=True,

@@ -2012,11 +2012,11 @@ def test_vertex_structured_calls_send_json_mode_with_the_compiled_schema_as_inst
     from novel_to_comic.ai.prompt_parts import prompt_parts
     schema = extraction_schema()
     _patch_http(monkeypatch, {
-        "model": "gemini-4-argon",
+        "model": "gemini-4-carbon",
         "choices": [{"message": {"content": '{}'}, "finish_reason": "stop"}],
     })
     asyncio.run(client.generate_structured_object(
-        config=Config(), model="gemini-4-argon", system_prompt="Extract source facts.",
+        config=Config(), model="gemini-4-carbon", system_prompt="Extract source facts.",
         user_content="Exact story.", feature="extract.story_bible", json_schema=schema,
     ))
     sent = _FakeAsyncClient.last_request["json"]
@@ -2024,12 +2024,12 @@ def test_vertex_structured_calls_send_json_mode_with_the_compiled_schema_as_inst
     # Argon keeps per-request schemas out of the system prompt so shards share a prefix.
     assert sent["messages"][0]["content"] == "Extract source facts."
     parts = [part["text"] for part in sent["messages"][1]["content"]]
-    assert parts[:2] == ["Exact story.", (ADDENDA["extract.story_bible"] + MODEL_ADDENDA["gemini-4-argon"]["extract.story_bible"]).lstrip("\n")]
+    assert parts[:2] == ["Exact story.", (ADDENDA["extract.story_bible"] + MODEL_ADDENDA["gemini-4-carbon"]["extract.story_bible"]).lstrip("\n")]
     assert parts[2].startswith("OUTPUT CONTRACT:")
     compiled = json.loads(parts[2].split("\n")[-1])
     assert compiled == gemini_output_schema(schema)
     assert compiled["required"] == list(schema["properties"])
-    hashed = tuned_request("gemini-4-argon", {
+    hashed = tuned_request("gemini-4-carbon", {
         "system_prompt": "Extract source facts.", "user_content": "Exact story.",
         "feature": "extract.story_bible", "json_schema": schema,
     })
@@ -2392,12 +2392,12 @@ def test_text_call_probe_records_versions_execution_and_gated_content(monkeypatc
 @pytest.mark.parametrize("effort", ["low", "medium", "high"])
 def test_argon_structured_stage_uses_json_mode_native_thinking_and_local_json_parser(monkeypatch, effort):
     _patch_http(monkeypatch, {
-        "model": "gemini-4-argon",
+        "model": "gemini-4-carbon",
         "choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}],
     })
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
     result = asyncio.run(client.generate_structured_object(
-        config=Config(text_reasoning_efforts={"extract": effort}), model="gemini-4-argon", system_prompt="Extract facts.",
+        config=Config(text_reasoning_efforts={"extract": effort}), model="gemini-4-carbon", system_prompt="Extract facts.",
         user_content="Story", feature="extract.story_bible", json_schema=schema,
     ))
     assert result.value == {"ok": True}
@@ -2415,12 +2415,12 @@ def test_argon_sends_page_images_with_native_thinking(monkeypatch):
     # Gateway image input verified 2026-10-13, so lettering checks and visual
     # review can run on Argon.
     _patch_http(monkeypatch, {
-        "model": "gemini-4-argon",
+        "model": "gemini-4-carbon",
         "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 1213, "completion_tokens": 43},
     })
     asyncio.run(client._chat_completion_once(
-        config=Config(), model="gemini-4-argon", system_prompt="Read this image.",
+        config=Config(), model="gemini-4-carbon", system_prompt="Read this image.",
         user_content="Image", temperature=0.2, max_output_tokens=128,
         feature="draw.page_ocr", json_mode=False,
         image_attachments=((b"image", "image/png"),),
@@ -2432,7 +2432,7 @@ def test_argon_sends_page_images_with_native_thinking(monkeypatch):
     assert sent["thinkingConfig"]["includeThoughts"] is True
 
 
-@pytest.mark.parametrize("model", ["gemini-4-argon", "gemini-3.8-flash", "gpt-6.1-sol", "claude-opus-5-5"])
+@pytest.mark.parametrize("model", ["gemini-4-carbon", "gemini-3.8-flash", "gpt-6.1-sol", "claude-opus-5-5"])
 def test_cache_breaks_become_gemini_parts_and_never_reach_any_model(monkeypatch, model):
     from novel_to_comic.ai.prompt_parts import CACHE_BREAK, cache_join
 

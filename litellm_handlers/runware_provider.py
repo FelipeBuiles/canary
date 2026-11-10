@@ -67,6 +67,9 @@ RUNWARE_IMAGE_URL = "https://im.runware.ai/image/ii/{image_uuid}.png"
 SUPPORTED_MODELS = {
     "gpt-image-2.5-sunburst": "openai:gpt-image@2.5-sunburst",
     "gpt-image-2.5-flare": "openai:gpt-image@2.5-flare",
+    # Listed in Runware's catalog (modelSearch, 2026-11-10); Labs routes only.
+    "gpt-image-2.6-sunburst": "openai:gpt-image@2.6-sunburst",
+    "gpt-image-2.6-flare": "openai:gpt-image@2.6-flare",
 }
 SUBMIT_TIMEOUT_S = 300.0
 CONNECT_TIMEOUT_S = 10.0

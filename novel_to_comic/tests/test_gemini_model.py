@@ -40,20 +40,20 @@ def test_gemini_estimate_uses_pinned_rates(model):
     assert resolver.model_output_token_limit(model) == 65_536
 
 
-def test_argon_is_optional_json_text_in_labs_and_all_text_stages():
+def test_carbon_is_optional_json_text_in_labs_and_all_text_stages():
     from novel_to_comic.labs.stage_models import resolve_stage_reasoning, selectable_models
     from novel_to_comic.model_catalog import default_selections
     from novel_to_comic.text_models import reasoning_options
 
-    route = _route("gemini-4-argon")
+    route = _route("gemini-4-carbon")
     assert route["litellm_params"] == {
-        "model": "vertex_ai/gemini-4-argon",
+        "model": "vertex_ai/gemini-4-carbon",
         "vertex_project": "os.environ/VERTEXAI_PROJECT",
         "vertex_location": "os.environ/VERTEXAI_LOCATION",
-        "thinkingConfig": {"thinkingLevel": "medium", "includeThoughts": True},
+        "thinkingConfig": {"thinkingLevel": "low", "includeThoughts": True},
     }
-    assert provider_for_model("gemini-4-argon") == "vertex_ai"
-    wire = text_wire("gemini-4-argon")
+    assert provider_for_model("gemini-4-carbon") == "vertex_ai"
+    wire = text_wire("gemini-4-carbon")
     assert wire.schema_instructions and wire.json_mode
     assert wire.vision
     assert not any((wire.temperature, wire.streaming))
@@ -80,9 +80,9 @@ def test_argon_is_optional_json_text_in_labs_and_all_text_stages():
     assert "max_output_tokens" not in route["model_info"]
 
 
-@pytest.mark.parametrize("model", ["gemini-4-argon", "vertex_ai/gemini-4-argon"])
+@pytest.mark.parametrize("model", ["gemini-4-carbon", "vertex_ai/gemini-4-carbon"])
 def test_argon_provisional_pricing_registration(model):
     resolver = get_pricing_resolver()
-    assert resolver.resolve_model("gemini-4-argon") == "vertex_ai/gemini-4-argon"
+    assert resolver.resolve_model("gemini-4-carbon") == "vertex_ai/gemini-4-carbon"
     assert resolver.estimate_text_cost(model, 1_000_000, 1_000_000).cost_usd == pytest.approx(12)
-    assert _route("gemini-4-argon")["model_info"]["cache_read_input_token_cost"] == 1e-7
+    assert _route("gemini-4-carbon")["model_info"]["cache_read_input_token_cost"] == 1e-7

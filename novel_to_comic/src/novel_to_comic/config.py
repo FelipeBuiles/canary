@@ -81,7 +81,7 @@ PAGE_OCR_ESTIMATED_COST_USD = "0.004"
 
 # Reading an author's change requests against the current render, before a
 # correction is previewed: one vision call that rewrites each request as a
-# precise edit or routes it to Plan or the script. Argon stays an operator
+# precise edit or routes it to Plan or the script. Carbon stays an operator
 # choice while its pricing is provisional.
 CORRECTION_INTERPRETER_MODEL = GATEWAY_GEMINI_FLASH
 # Optional page + approved-reference comparison allowance.

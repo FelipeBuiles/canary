@@ -15,6 +15,11 @@ GATEWAY_IMAGE_FLARE = "image-flare"
 #: GPT Image 2.5 through Runware (startup grant). No partial previews.
 GATEWAY_IMAGE_SUNBURST_RUNWARE = "image-sunburst-runware"
 GATEWAY_IMAGE_FLARE_RUNWARE = "image-flare-runware"
+#: GPT Image 2.6 direct on OpenAI; Labs comparison routes only.
+GATEWAY_IMAGE_SUNBURST_26 = "image-sunburst-2.6"
+GATEWAY_IMAGE_FLARE_26 = "image-flare-2.6"
+GATEWAY_IMAGE_SUNBURST_26_RUNWARE = "image-sunburst-2.6-runware"
+GATEWAY_IMAGE_FLARE_26_RUNWARE = "image-flare-2.6-runware"
 GATEWAY_IMAGE_NANO_BANANA_21 = "image-nano-banana-2.1"
 GATEWAY_IMAGE_MUSE = "image-muse"
 GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
@@ -29,6 +34,8 @@ IMAGE_MODEL_ALIASES = (
 PREVIEW_IMAGE_ALIASES = frozenset({
     GATEWAY_IMAGE_SUNBURST_OPENAI,
     GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_SUNBURST_26,
+    GATEWAY_IMAGE_FLARE_26,
     GATEWAY_IMAGE_NANO_BANANA_21,
 })
 
@@ -128,6 +135,18 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         provider_model="openai/gpt-image-2.5-flare",
         provider_key=IMAGE_PROVIDER_OPENAI,
     ),
+    GATEWAY_IMAGE_SUNBURST_26: ImageModelDescription(
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="GPT Image 2.6 Sunburst",
+        provider_model="openai/gpt-image-2.6-sunburst",
+        provider_key=IMAGE_PROVIDER_OPENAI,
+    ),
+    GATEWAY_IMAGE_FLARE_26: ImageModelDescription(
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="GPT Image 2.6 Flare",
+        provider_model="openai/gpt-image-2.6-flare",
+        provider_key=IMAGE_PROVIDER_OPENAI,
+    ),
     GATEWAY_IMAGE_MUSE: ImageModelDescription(
         route=ImageRoute.MUSE_IMAGE,
         display_name="Muse Image",
@@ -160,6 +179,8 @@ def describe_image_model(model: str) -> ImageModelDescription:
         "gpt-image-2.5-sunburst-2026-09-08",
         "gpt-image-2.5-flare",
         "gpt-image-2.5-flare-2026-09-08",
+        "gpt-image-2.6-sunburst",
+        "gpt-image-2.6-flare",
     }:
         return ImageModelDescription(
             route=ImageRoute.GPT_IMAGE_2,
@@ -450,7 +471,7 @@ def image_model_profile(model: str) -> ImageModelProfile:
             provider_key="codex-dev",
         )
     description = describe_image_model(model)
-    if "gpt-image-2.5-" in description.provider_model:
+    if "gpt-image-2.5-" in description.provider_model or "gpt-image-2.6-" in description.provider_model:
         from dataclasses import replace
         return replace(
             _profile_for_route(description.route, provider_key=description.provider_key),

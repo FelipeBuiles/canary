@@ -76,7 +76,7 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
     if (
         record.funding == "api"
         and record.cost_usd is None
-        and ("gpt-image-2.5-" in resolved or "gpt-image-2.5/" in resolved)
+        and any(marker in resolved for marker in ("gpt-image-2.5-", "gpt-image-2.5/", "gpt-image-2.6-"))
     ):
         pricing, source = resolver._pricing_for(resolved.removesuffix("-2026-09-08"))
         fields = (record.input_text_tokens, record.input_image_tokens,

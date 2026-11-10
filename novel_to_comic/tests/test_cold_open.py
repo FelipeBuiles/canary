@@ -247,7 +247,7 @@ def test_the_job_prints_three_pages_and_isolates_a_failure(tmp_path, monkeypatch
         return "a brief"
 
     async def rank(config, story_bible, record_usage):
-        record_usage(UsageRecord(provider="vertex_ai", model="gemini-4-argon", call_id="rank", operation="text", cost_usd=0.001))
+        record_usage(UsageRecord(provider="vertex_ai", model="gemini-4-carbon", call_id="rank", operation="text", cost_usd=0.001))
         return tuple(look.id for look in reversed(looks))
 
     async def draw(config, story_bible, path, *, candidate_id, **kwargs):

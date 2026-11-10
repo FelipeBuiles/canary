@@ -12,7 +12,7 @@ vi.mock("../api/operator", () => ({
 const settings = {
   reasoning_efforts: { adapt: "medium" },
   reasoning_options: {
-    "gemini-4-argon": ["low", "medium", "high"],
+    "gemini-4-carbon": ["low", "medium", "high"],
     "gpt-6-sol": ["low", "medium", "high"], "claude-opus-5-5": ["low", "medium", "high"],
     "claude-sonnet-5-5": ["low", "medium", "high"], "mimo-v2.6-pro": ["none", "enabled"],
     "bedrock-claude-opus-5-5": ["low", "medium", "high"], "bedrock-claude-sonnet-5-5": ["low", "medium", "high"],
@@ -21,7 +21,7 @@ const settings = {
   text_reasoning_effort_options: ["low", "medium", "high"],
   selections: { adapt: "gpt-6-sol", image: "image-sunburst", draw: "image-sunburst" },
   models: [
-    { id: "gemini-4-argon", label: "Gemini 4 Argon", provider: "Google Vertex AI", kind: "text" as const },
+    { id: "gemini-4-carbon", label: "Gemini 4 Carbon", provider: "Google Vertex AI", kind: "text" as const },
     { id: "gpt-6-sol", label: "GPT-6 Sol", provider: "OpenAI", kind: "text" as const },
     { id: "mimo-v2.6-pro", label: "MiMo", provider: "OpenRouter", kind: "text" as const },
     { id: "claude-opus-5-5", label: "Claude Opus 5.5", provider: "Anthropic", kind: "text" as const },
@@ -33,7 +33,7 @@ const settings = {
   ],
   stages: [{
     id: "adapt", label: "5. Adapt — script & dialogue", description: "Writes dialogue.",
-    model_ids: ["gemini-4-argon", "gpt-6-sol", "claude-opus-5-5", "claude-sonnet-5-5", "mimo-v2.6-pro",
+    model_ids: ["gemini-4-carbon", "gpt-6-sol", "claude-opus-5-5", "claude-sonnet-5-5", "mimo-v2.6-pro",
                 "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"],
   }, {
     id: "image", label: "3–4. Style & Cast — images", description: "Generates style samples and cast references.",
@@ -115,12 +115,12 @@ it("switches an open model to reasoning on", async () => {
 });
 
 
-it("selects Argon with configurable reasoning", async () => {
+it("selects Carbon with configurable reasoning", async () => {
   const user = userEvent.setup();
   render(<OperatorModelPanel connection={connection} />);
-  await user.selectOptions(await screen.findByRole("combobox", { name: /^5. Adapt/ }), "gemini-4-argon");
+  await user.selectOptions(await screen.findByRole("combobox", { name: /^5. Adapt/ }), "gemini-4-carbon");
   expect((screen.getByRole("combobox", { name: /Reasoning —/ }) as HTMLSelectElement).value).toBe("medium");
   await user.selectOptions(screen.getByRole("combobox", { name: /Reasoning —/ }), "high");
   await user.click(screen.getByRole("button", { name: "Save stage models" }));
-  expect(updateOperatorModels).toHaveBeenCalledWith({ adapt: "gemini-4-argon" }, connection, { adapt: "high" });
+  expect(updateOperatorModels).toHaveBeenCalledWith({ adapt: "gemini-4-carbon" }, connection, { adapt: "high" });
 });

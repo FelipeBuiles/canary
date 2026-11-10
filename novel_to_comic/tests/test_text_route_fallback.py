@@ -11,7 +11,7 @@ from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.text_models import TEXT_MODEL_BY_ID, TextModelJob
 
-ARGON, RUNWARE = "gemini-4-argon", "runware-gemini-4-argon"
+ARGON, RUNWARE = "gemini-4-carbon", "runware-gemini-4-argon"
 
 
 def _answer(model):

@@ -58,11 +58,11 @@ def test_readings_come_back_in_draft_order_with_one_per_request(tmp_path: Path) 
             {"change_id": "tail", "route": "draw", "instruction": "Point the tail at Mrs. White.", "reason": "Art."},
         ]})
 
-    result = asyncio.run(interpret_changes(config=Config(correction_model="gemini-4-argon"), page=page,
+    result = asyncio.run(interpret_changes(config=Config(correction_model="gemini-4-carbon"), page=page,
                                            inventory=ApprovedVisualReferenceInventory(), image=b"png",
                                            changes=_changes(), lettering_in_art=True, generate=generate))
     assert [reading.change_id for reading in result.value.changes] == ["tail", "move"]
-    assert calls[0]["model"] == "gemini-4-argon"
+    assert calls[0]["model"] == "gemini-4-carbon"
     assert calls[0]["feature"] == "draw.correction_interpret"
     assert calls[0]["image_attachments"] == ((b"png", "image/png"),)
 

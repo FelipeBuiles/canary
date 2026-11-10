@@ -9,6 +9,14 @@ page. An arm is an image target (model and route) plus a prompt variant:
 - ``sheet_form`` / ``sheet_formation``: a recorded character or state sheet
   restated by ``reference_form_variants`` for entities a turnaround misdescribes.
 
+An arm may also set ``quality`` (``low``, ``medium`` or ``high``) for GPT Image
+targets. Without it, pages use the target's production quality and Style/Cast
+items their recorded quality. Page arms that set it draw through the target's
+OpenAI page profile at that quality, on the target's own route (direct OpenAI or
+Runware), so GPT Image 2.5 and 2.6 compare on one transport. GPT Image 2.6 bills 3-4x the output tokens of 2.5 below
+``high`` (see ``litellm_pricing_overrides.yaml``), so speed comparisons need a
+quality axis, not only a model axis.
+
 Every arm of an item uses the same references in the same order. Nano Banana
 uses its native 1K tier; other asset arms retain recorded quality. Each cell is
 one submission to exactly one route: no
@@ -36,12 +44,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from novel_to_comic.ai.context import ai_request_context
+from novel_to_comic.ai.context import ai_request_context, execution_observer
 from novel_to_comic.server.telemetry import ai_span
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_FLARE_26,
     GATEWAY_IMAGE_FLARE_RUNWARE,
+    GATEWAY_IMAGE_FLARE_26_RUNWARE,
+    GATEWAY_IMAGE_SUNBURST_26,
+    GATEWAY_IMAGE_SUNBURST_26_RUNWARE,
     GATEWAY_IMAGE_SUNBURST_RUNWARE,
     IMAGE_PROVIDER_RUNWARE,
     GATEWAY_IMAGE_SUNBURST,
@@ -56,6 +68,7 @@ from . import prompt_restructure, reference_form_variants, storage
 KIND = "image_compare"
 PROMPTS = ("production", "restructured", *reference_form_variants.VARIANTS)
 _CONCURRENCY = {"api": 12, "codex_subscription": 2}
+QUALITIES = ("low", "medium", "high")
 _ASSET_LABELS = {
     "style_sample": "Style proof", "style_calibration": "Style board", "character_ref": "Character sheet",
     "location_plate": "Location plate", "prop_ref": "Prop", "project_cover": "Cover",
@@ -75,6 +88,13 @@ class ImageTarget:
     model_alias: str = GATEWAY_IMAGE_SUNBURST
     # A route that serves the model through another provider (Runware).
     provider_key: str | None = None
+    # The OpenAI model a direct page profile draws with; set for targets that
+    # can draw pages at an arm's chosen quality.
+    page_model: str | None = None
+
+    @property
+    def accepts_quality(self) -> bool:
+        return self.codex_selector is None and self.model_alias != GATEWAY_IMAGE_NANO_BANANA_21
 
 
 def image_targets() -> list[ImageTarget]:
@@ -82,16 +102,30 @@ def image_targets() -> list[ImageTarget]:
 
     targets = [
         ImageTarget("sunburst-openai", "GPT Image 2.5 Sunburst", "OpenAI API", "api", True,
-                    gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL),
+                    gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL, page_model="gpt-image-2.5-sunburst"),
         ImageTarget("flare-openai", "GPT Image 2.5 Flare", "OpenAI API", "api", True,
-                    gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE),
+                    gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE,
+                    page_model="gpt-image-2.5-flare"),
+        ImageTarget("sunburst-2.6-openai", "GPT Image 2.6 Sunburst", "OpenAI API", "api", True,
+                    gateway_model=GATEWAY_IMAGE_SUNBURST_26, model_alias=GATEWAY_IMAGE_SUNBURST_26,
+                    page_model="gpt-image-2.6-sunburst"),
+        ImageTarget("flare-2.6-openai", "GPT Image 2.6 Flare", "OpenAI API", "api", True,
+                    gateway_model=GATEWAY_IMAGE_FLARE_26, model_alias=GATEWAY_IMAGE_FLARE_26,
+                    page_model="gpt-image-2.6-flare"),
         ImageTarget("sunburst-fal", "GPT Image 2.5 Sunburst", "FAL API", "api", True,
                     gateway_model=FAL_SUNBURST_GATEWAY_MODEL),
         ImageTarget("sunburst-runware", "GPT Image 2.5 Sunburst", "Runware", "api", True,
-                    gateway_model=GATEWAY_IMAGE_SUNBURST_RUNWARE, provider_key=IMAGE_PROVIDER_RUNWARE),
+                    gateway_model=GATEWAY_IMAGE_SUNBURST_RUNWARE, provider_key=IMAGE_PROVIDER_RUNWARE,
+                    page_model="gpt-image-2.5-sunburst"),
         ImageTarget("flare-runware", "GPT Image 2.5 Flare", "Runware", "api", True,
                     gateway_model=GATEWAY_IMAGE_FLARE_RUNWARE, model_alias=GATEWAY_IMAGE_FLARE,
-                    provider_key=IMAGE_PROVIDER_RUNWARE),
+                    provider_key=IMAGE_PROVIDER_RUNWARE, page_model="gpt-image-2.5-flare"),
+        ImageTarget("sunburst-2.6-runware", "GPT Image 2.6 Sunburst", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_SUNBURST_26_RUNWARE, model_alias=GATEWAY_IMAGE_SUNBURST_26,
+                    provider_key=IMAGE_PROVIDER_RUNWARE, page_model="gpt-image-2.6-sunburst"),
+        ImageTarget("flare-2.6-runware", "GPT Image 2.6 Flare", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_FLARE_26_RUNWARE, model_alias=GATEWAY_IMAGE_FLARE_26,
+                    provider_key=IMAGE_PROVIDER_RUNWARE, page_model="gpt-image-2.6-flare"),
         ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1 (1K)", "Vertex AI", "api", True,
                     gateway_model=GATEWAY_IMAGE_NANO_BANANA_21, model_alias=GATEWAY_IMAGE_NANO_BANANA_21),
     ]
@@ -140,11 +174,13 @@ class Prepared:
         in, $30 out per million tokens), so Codex cells are priced as if GPT
         Image 2 consumed as many tokens as Sunburst: an approximation. The Codex
         reasoning model's own tokens are not reported and not included.
-        Flare and Nano Banana 2.1 have no measured consumption yet, so each uses its configured
-        allowances instead of Sunburst's measurements.
+        Flare (2.5 and 2.6), Sunburst 2.6 and Nano Banana 2.1 have no measured consumption yet, so
+        each uses its configured allowances instead of Sunburst's measurements.
         """
         quality = self.quality or quality
-        if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_FLARE_RUNWARE, GATEWAY_IMAGE_NANO_BANANA_21}:
+        if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_FLARE_RUNWARE, GATEWAY_IMAGE_NANO_BANANA_21,
+                                  GATEWAY_IMAGE_SUNBURST_26, GATEWAY_IMAGE_FLARE_26,
+                                  GATEWAY_IMAGE_SUNBURST_26_RUNWARE, GATEWAY_IMAGE_FLARE_26_RUNWARE}:
             return estimate_image_cost(
                 self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
                 ref_count=self.references, prompt_text=self.prompt, basis="expected",
@@ -196,7 +232,8 @@ class AssetItem:
         return [{"role": ref.role, "role_label": ref.role_label, "entity_id": ref.entity_id}
                 for ref in self.wire.references]
 
-    def prepare(self, config: Config, target: ImageTarget, variant: str) -> Prepared:
+    def prepare(self, config: Config, target: ImageTarget, variant: str,
+                quality: str | None = None) -> Prepared:
         recorded = self.wire.prompt_parts[0]
         if variant in reference_form_variants.VARIANTS:
             if self.asset_kind != "character_ref":
@@ -209,7 +246,7 @@ class AssetItem:
         else:
             prompt = recorded
         missing = [text for text in prompt_restructure.required_asset_verbatim(recorded) if text not in prompt]
-        wire = self._wire_for(target, prompt, restructured=variant == "restructured")
+        wire = self._wire_for(target, prompt, restructured=variant == "restructured", quality=quality)
 
         async def submit(output_path: Path) -> UsageRecord:
             from novel_to_comic.ai.client import generate_wire_image_on_route
@@ -227,7 +264,7 @@ class AssetItem:
                         target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL,
                         quality=dict(wire.controls).get("quality"))
 
-    def _wire_for(self, target: ImageTarget, prompt: str, *, restructured: bool):
+    def _wire_for(self, target: ImageTarget, prompt: str, *, restructured: bool, quality: str | None = None):
         references = []
         for ref in self.wire.references:
             ref = replace(ref, source_path=str(self._requests_dir / ref.source_path))
@@ -269,11 +306,19 @@ class AssetItem:
             wire = replace(wire, provider_key=target.provider_key or description.provider_key,
                            requested_alias=target.gateway_model,
                            configured_provider_model=description.provider_model, expected_route=description.route.value,
-                           controls=(("quality", image_quality_for_model(target.model_alias, self.quality)),))
+                           controls=(("quality", image_quality_for_model(target.model_alias,
+                                                                         quality or self.quality)),))
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
 
 # ── Draw pages ───────────────────────────────────────────────────────────────
+
+#: Targets whose pages always draw through a direct OpenAI page profile.
+_DIRECT_PAGE_MODELS = {
+    GATEWAY_IMAGE_FLARE: "gpt-image-2.5-flare",
+    GATEWAY_IMAGE_FLARE_26: "gpt-image-2.6-flare",
+    GATEWAY_IMAGE_SUNBURST_26: "gpt-image-2.6-sunburst",
+}
 
 class PageItem:
     """One planned page, compiled now for the arm's target."""
@@ -283,7 +328,7 @@ class PageItem:
         self.page_number = page_number
         self.quality = "medium"
 
-    def _compile(self, config: Config):
+    def _compile(self, config: Config, target: ImageTarget | None = None, quality: str | None = None):
         from novel_to_comic.models.draw import RetryProvenance
         from novel_to_comic.page_drawing import (
             compile_page_generation_request,
@@ -295,14 +340,16 @@ class PageItem:
         from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
         from novel_to_comic.target_artifacts import TargetArtifacts
 
-        if config.draw_model == GATEWAY_IMAGE_NANO_BANANA_21:
-            profile = nano_banana_21_page_capability_profile()
+        page_model = (target.page_model if target is not None and quality is not None
+                      else _DIRECT_PAGE_MODELS.get(config.draw_model))
+        if page_model is not None:
+            profile = openai_page_capability_profile(page_model, quality=quality or "medium")
             if config.lettering_mode == "integrated":
                 profile = profile.model_copy(update={
                     "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
                 })
-        elif config.draw_model == GATEWAY_IMAGE_FLARE:
-            profile = openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
+        elif config.draw_model == GATEWAY_IMAGE_NANO_BANANA_21:
+            profile = nano_banana_21_page_capability_profile()
             if config.lettering_mode == "integrated":
                 profile = profile.model_copy(update={
                     "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
@@ -317,12 +364,15 @@ class PageItem:
         )
         return profile, compiled
 
-    def prepare(self, config: Config, target: ImageTarget, variant: str) -> Prepared:
+    def prepare(self, config: Config, target: ImageTarget, variant: str,
+                quality: str | None = None) -> Prepared:
         from novel_to_comic.models.draw import FrozenPageGenerationRequest
         from novel_to_comic.page_drawing import CompiledPageGeneration, page_image_quality
 
         config = config.model_copy(update={"draw_model": target.codex_selector or target.model_alias})
-        profile, compiled = self._compile(config)
+        if quality is not None and not target.page_model:
+            raise ValueError(f"{target.label} ({target.provider}) draws pages only at its production quality")
+        profile, compiled = self._compile(config, target, quality)
         request = compiled.request
         production = request.prompt
         prompt = production if variant == "production" else prompt_restructure.restructure_page_prompt(
@@ -341,7 +391,8 @@ class PageItem:
                 result = await page_drawing.runware_page_transport(config, profile).generate(
                     page_drawing.prepare_frozen_page_request(request, compiled.reference_bytes, profile),
                 )
-            elif target.codex_selector or target.model_alias in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
+            elif (target.codex_selector or quality is not None
+                  or target.model_alias in {*_DIRECT_PAGE_MODELS, GATEWAY_IMAGE_NANO_BANANA_21}):
                 adapter = page_drawing.complete_page_adapter(config, profile)
                 result = await adapter.generate(adapter.prepare(compiled))
             else:
@@ -427,15 +478,23 @@ def load_item(project_dir: Path, item_id: str) -> AssetItem | PageItem:
 def validate_arms(arms: list[dict[str, str]]) -> list[dict[str, str]]:
     if not 2 <= len(arms) <= 4:
         raise ValueError("Choose between two and four arms")
-    clean = []
+    clean: list[dict[str, str]] = []
     for arm in arms:
         target, prompt = str(arm.get("target") or ""), str(arm.get("prompt") or "")
-        get_target(target)
+        quality = str(arm.get("quality") or "") or None
+        resolved = get_target(target)
         if prompt not in PROMPTS:
             raise ValueError(f"Prompt must be one of: {', '.join(PROMPTS)}")
-        clean.append({"target": target, "prompt": prompt})
-    if len({(arm["target"], arm["prompt"]) for arm in clean}) != len(clean):
-        raise ValueError("Each arm must differ in model, route or prompt")
+        entry = {"target": target, "prompt": prompt}
+        if quality is not None:
+            if quality not in QUALITIES:
+                raise ValueError(f"Quality must be one of: {', '.join(QUALITIES)}")
+            if not resolved.accepts_quality:
+                raise ValueError(f"{resolved.label} ({resolved.provider}) has no quality choice")
+            entry["quality"] = quality
+        clean.append(entry)
+    if len({(arm["target"], arm["prompt"], arm.get("quality")) for arm in clean}) != len(clean):
+        raise ValueError("Each arm must differ in model, route, prompt or quality")
     return clean
 
 
@@ -449,7 +508,7 @@ def preview(project_dir: Path, item_id: str, arms: list[dict[str, str]]) -> list
     for arm in arms:
         target = get_target(arm["target"])
         try:
-            prepared = item.prepare(config, target, arm["prompt"])
+            prepared = item.prepare(config, target, arm["prompt"], arm.get("quality"))
             out.append({"prompt": prepared.prompt, "chars": len(prepared.prompt),
                         "width": prepared.width, "height": prepared.height, "references": prepared.references,
                         "missing_verbatim": prepared.missing_verbatim,
@@ -471,7 +530,7 @@ def estimate(project_dir: Path, items: list[str], arms: list[dict[str, str]]) ->
         for index, arm in enumerate(arms):
             target = get_target(arm["target"])
             try:
-                prepared = item.prepare(config, target, arm["prompt"])
+                prepared = item.prepare(config, target, arm["prompt"], arm.get("quality"))
             except Exception as exc:  # noqa: BLE001 - reported before any spend
                 problems.append({"item": item_id, "arm": index, "error": clean_exception_message(exc)})
                 continue
@@ -501,7 +560,7 @@ async def run_cell(user_root: Path, run_id: str, project: str, item_id: str, arm
         }]
     cell: dict[str, Any] = {
         "item": item_id, "arm": arm_index, "target": target.id, "prompt": arm["prompt"],
-        "funding": target.funding, "status": "running", "started_at": storage.now(), "attempts": attempts,
+        "quality": arm.get("quality"), "funding": target.funding, "status": "running", "started_at": storage.now(), "attempts": attempts,
     }
     storage.write_cell(user_root, run_id, identifier, cell)
     started = time.perf_counter()
@@ -509,7 +568,7 @@ async def run_cell(user_root: Path, run_id: str, project: str, item_id: str, arm
         project_dir = user_root / project
         config, _ = load_config(project_dir)
         item = load_item(project_dir, item_id)
-        prepared = item.prepare(config, target, arm["prompt"])
+        prepared = item.prepare(config, target, arm["prompt"], arm.get("quality"))
         fingerprint = prepared.fingerprint(target)
         prompt_path = storage.run_file(user_root, run_id, f"prompts/{identifier}.txt")
         if retry_of is not None:
@@ -523,8 +582,12 @@ async def run_cell(user_root: Path, run_id: str, project: str, item_id: str, arm
         output = storage.run_file(user_root, run_id, f"images/{identifier}.png")
         output.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
+        # Canary's admission queue (shared by every OpenAI image arm) waits
+        # inside submit; time from the first request leaving it is the route's own.
+        submitted: list[float] = []
         with ai_span("labs.image", experiment_id=run_id, variant=identifier), \
-                ai_request_context(stage="labs", project_name=f"labs/{run_id}"):
+                ai_request_context(stage="labs", project_name=f"labs/{run_id}"), \
+                execution_observer(lambda: submitted or submitted.append(time.perf_counter())):
             usage = await prepared.submit(output)
     except Exception as exc:
         storage.write_cell(user_root, run_id, identifier, cell | {
@@ -533,9 +596,12 @@ async def run_cell(user_root: Path, run_id: str, project: str, item_id: str, arm
         })
         return
     cost = calculate_cost_breakdown(usage)
-    storage.write_cell(user_root, run_id, identifier, cell | {
+    finished = time.perf_counter()
+    timing = {"queue_ms": int((submitted[0] - started) * 1000),
+              "provider_latency_ms": int((finished - submitted[0]) * 1000)} if submitted else {}
+    storage.write_cell(user_root, run_id, identifier, cell | timing | {
         "status": "ok", "image": f"images/{identifier}.png", "output_size": _png_size(output),
-        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "latency_ms": int((finished - started) * 1000),
         "cost_usd": cost.cost_usd, "cost_source": cost.source,
         "usage": usage.model_dump(include={"input_tokens", "output_tokens", "input_image_tokens",
                                            "image_output_tokens", "funding"}),

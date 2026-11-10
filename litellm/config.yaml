@@ -102,26 +102,30 @@ model_list:
     cache_read_input_token_cost: 7.5e-08
     output_cost_per_token: 3.75e-06
     output_cost_per_reasoning_token: 3.75e-06
-- model_name: gemini-4-argon
+- model_name: gemini-4-carbon
   litellm_params:
-    model: vertex_ai/gemini-4-argon
+    model: vertex_ai/gemini-4-carbon
     vertex_project: os.environ/VERTEXAI_PROJECT
     vertex_location: os.environ/VERTEXAI_LOCATION
-    # Verified native Low/Medium/High levels. Avoid LiteLLM's legacy budget mapping.
+    # Replaced gemini-4-argon on 2026-11-10 (one plain generateContent verified;
+    # thinks by default). Native Low/Medium/High levels were verified on Argon,
+    # not yet on Carbon. Avoid LiteLLM's legacy budget mapping. Route default
+    # Low (2026-11-10), matching the app's default effort for this model.
     thinkingConfig:
-      thinkingLevel: medium
+      thinkingLevel: low
       includeThoughts: true
   model_info:
     mode: chat
-    # JSON mode and small schemas verified 2026-10-13; full Extract native
-    # schema returns 400. Stages keep schema instructions and local validation.
+    # Argon: JSON mode and small schemas verified 2026-10-13; full Extract native
+    # schema returned 400. Carbon is unprobed; stages keep schema instructions and local validation.
     supports_reasoning: true
     supports_response_schema: true
     supports_vision: true
     supports_native_streaming: false
     supports_prompt_caching: false
-    # Provisional launch rates, operator-approved 2026-10-13. Vertex tariff,
-    # cache availability/storage charges and intro expiry remain unconfirmed.
+    # Argon's provisional launch rates (operator-approved 2026-10-13); the
+    # operator stated on 2026-11-10 that Carbon costs the same. No Carbon tariff
+    # is published; cache availability/storage and intro expiry are unconfirmed.
     # https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/
     input_cost_per_token: 2.0e-06
     cache_read_input_token_cost: 1.0e-07
@@ -419,6 +423,25 @@ model_list:
 - model_name: image-flare-runware
   litellm_params:
     model: runware/gpt-image-2.5-flare
+    api_key: os.environ/RUNWARE_API_KEY
+# GPT Image 2.6 (released 2026-11-04), direct on OpenAI. Labs comparison
+# routes only: production Draw and Style/Cast stay on 2.5 Sunburst.
+- model_name: image-sunburst-2.6
+  litellm_params:
+    model: openai-stream/gpt-image-2.6-sunburst
+    api_key: os.environ/OPENAI_API_KEY
+- model_name: image-flare-2.6
+  litellm_params:
+    model: openai-stream/gpt-image-2.6-flare
+    api_key: os.environ/OPENAI_API_KEY
+# GPT Image 2.6 through Runware (startup grant); Labs comparison routes only.
+- model_name: image-sunburst-2.6-runware
+  litellm_params:
+    model: runware/gpt-image-2.6-sunburst
+    api_key: os.environ/RUNWARE_API_KEY
+- model_name: image-flare-2.6-runware
+  litellm_params:
+    model: runware/gpt-image-2.6-flare
     api_key: os.environ/RUNWARE_API_KEY
 # Style/Cast, Draw, and Labs image generation, using the existing Vertex ADC.
 - model_name: image-nano-banana-2.1

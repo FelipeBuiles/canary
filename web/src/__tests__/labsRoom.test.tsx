@@ -82,7 +82,7 @@ describe("Labs", () => {
     expect(screen.getByRole("button", { name: /Arm 1 model and route/ }).textContent).toContain("OpenAI API");
     fireEvent.click(screen.getByRole("button", { name: "Add arm" }));
     expect(screen.getByText("Arm 3")).toBeTruthy();
-    expect(screen.getByText("Each arm must differ in model, route or prompt.")).toBeTruthy();
+    expect(screen.getByText("Each arm must differ in model, route, prompt or quality.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Remove arm 3" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Page 1/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Character sheet/ }));
@@ -102,6 +102,35 @@ describe("Labs", () => {
       kind: "image_compare", project: "story", items: ["page:1"],
       arms: [{ target: "sunburst-openai", prompt: "production" }, { target: "flare-openai", prompt: "production" }],
     }), expect.anything());
+  });
+
+  it("lets GPT Image arms choose a quality and sends it with the arm", () => {
+    state.options.data = {
+      targets: [
+        { ...targets[0], accepts_quality: true, page_quality: true },
+        { id: "flare-2.6-openai", label: "GPT Image 2.6 Flare", provider: "OpenAI API", funding: "api", available: true,
+          accepts_quality: true, page_quality: true },
+        targets[2],
+      ],
+      prompts: ["production", "restructured"],
+      qualities: ["low", "medium", "high"],
+    };
+    renderAt("/labs");
+
+    fireEvent.click(screen.getByRole("button", { name: "Arm 2 model and route" }));
+    fireEvent.click(screen.getByRole("option", { name: /GPT Image 2.6 Flare/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Arm 2 quality" }));
+    fireEvent.click(screen.getByRole("option", { name: "Low quality" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Page 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run 2 images" }));
+
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      arms: [{ target: "sunburst-openai", prompt: "production" },
+        { target: "flare-2.6-openai", prompt: "production", quality: "low" }],
+    }), expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "Arm 2 model and route" }));
+    fireEvent.click(screen.getByRole("option", { name: /via gpt-5.5/ }));
+    expect(screen.queryByRole("button", { name: "Arm 2 quality" })).toBeNull();
   });
 
   it("hides which arm made each image until the reviewer reveals it", () => {

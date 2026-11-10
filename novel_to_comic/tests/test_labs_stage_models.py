@@ -239,16 +239,16 @@ def test_a_mixed_arm_runs_each_stage_on_its_own_model(root, monkeypatch):
 
 
 def test_mixed_arm_reasoning_is_validated_against_each_stages_model():
-    arm = {"id": "mixed", "model": "gemini-4-argon", "stage_models": {"adapt": OPUS},
+    arm = {"id": "mixed", "model": "gemini-4-carbon", "stage_models": {"adapt": OPUS},
            "reasoning_efforts": {"plan": "low"}}
     resolved = stage_models.resolve_arms(["adapt_plan"], [arm, {"id": "b", "model": OPUS}])[0]
-    assert resolved["stage_models"] == {"adapt": OPUS, "plan": "gemini-4-argon"}
+    assert resolved["stage_models"] == {"adapt": OPUS, "plan": "gemini-4-carbon"}
     assert resolved["reasoning_efforts"]["plan"] == "low"
 
     for bad in ({"stage_models": {"draw": OPUS}}, {"stage_models": {"adapt": ""}},
                 {"reasoning_efforts": {"adapt": "low", "plan": "low"}, "stage_models": {"adapt": "mimo-v2.6-pro"}}):
         with pytest.raises(ValueError):
-            stage_models.resolve_arms(["adapt_plan"], [{"id": "a", "model": "gemini-4-argon"} | bad,
+            stage_models.resolve_arms(["adapt_plan"], [{"id": "a", "model": "gemini-4-carbon"} | bad,
                                                        {"id": "b", "model": OPUS}])
 
 
@@ -562,7 +562,7 @@ def test_invalid_comparison_arms_are_rejected_before_spend(arms):
 def test_argon_levels_are_independent_labs_arms(root):
     phases = ["adapt_plan"]
     arms = stage_models.resolve_arms(phases, [
-        {"id": effort, "model": "gemini-4-argon", "reasoning_efforts": {"adapt": effort, "plan": effort}}
+        {"id": effort, "model": "gemini-4-carbon", "reasoning_efforts": {"adapt": effort, "plan": effort}}
         for effort in ("low", "medium", "high")
     ])
     stage_models.validate_spec(root / "story", phases, stage_models.arm_models(arms))

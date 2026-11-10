@@ -143,7 +143,7 @@ MODEL_ADDENDA: dict[str, dict[str, str]] = {
         "adapt.lettering": _FLASH_SOURCE_WORDING,
         "adapt.book": _FLASH_SOURCE_WORDING,
     },
-    "gemini-4-argon": {
+    "gemini-4-carbon": {
         "extract.story_bible": _ARGON_ANCHORS,
         "brief.infer": _ARGON_PROTECTED_LANGUAGE,
         "adapt.lettering": _ARGON_SHOW_DONT_CAPTION,
@@ -179,7 +179,7 @@ def tuned_user_content(model: str, feature: str, content: str) -> str:
 # zero Plan repairs). Flash keeps its long-validated system-prompt contract:
 # the move bought no cache hits (3 of 226 calls in that run) and Flash's Plan
 # repairs rose to 11-19 calls after it.
-_CONTRACT_AFTER_CONTENT = frozenset({"gemini-4-argon"})
+_CONTRACT_AFTER_CONTENT = frozenset({"gemini-4-carbon"})
 
 
 def tuned_request(model: str, request: dict[str, Any]) -> dict[str, Any]:

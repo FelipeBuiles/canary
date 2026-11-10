@@ -270,7 +270,7 @@ def test_page_arms_use_only_their_own_route(root, tmp_path, monkeypatch, target,
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config, *args: (profile, compiled))
     sent = []
 
     class Transport:
@@ -337,7 +337,7 @@ def test_flare_page_submits_its_model_quality_and_references_once(root, tmp_path
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config, *args: (profile, compiled))
     output = io.BytesIO()
     Image.new("RGB", (1024, 1536)).save(output, format="PNG")
     sent = []
@@ -367,6 +367,8 @@ def test_flare_page_submits_its_model_quality_and_references_once(root, tmp_path
 @pytest.mark.parametrize("target,alias,model", [
     ("sunburst-runware", "image-sunburst-runware", "gpt-image-2.5-sunburst"),
     ("flare-runware", "image-flare-runware", "openai/gpt-image-2.5-flare"),
+    ("sunburst-2.6-runware", "image-sunburst-2.6-runware", "openai/gpt-image-2.6-sunburst"),
+    ("flare-2.6-runware", "image-flare-2.6-runware", "openai/gpt-image-2.6-flare"),
 ])
 def test_runware_asset_arms_send_the_same_request_through_the_runware_manifest(root, target, alias, model):
     item = image_compare.AssetItem(root / "story", "new")
@@ -398,7 +400,7 @@ def test_runware_page_submits_once_and_settles_on_the_reported_cost(root, tmp_pa
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config, *args: (profile, compiled))
     output = io.BytesIO()
     Image.new("RGB", (1024, 1536)).save(output, format="PNG")
     sent = []
@@ -435,7 +437,7 @@ def test_a_runware_page_rejects_a_different_upstream_model(root, tmp_path, monke
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config, *args: (profile, compiled))
     output = io.BytesIO()
     Image.new("RGB", (1024, 1536)).save(output, format="PNG")
 
@@ -456,6 +458,10 @@ def test_a_runware_page_rejects_a_different_upstream_model(root, tmp_path, monke
     ([PRODUCTION, PRODUCTION], "must differ"),
     ([PRODUCTION, {"target": "sunburst-openai", "prompt": "freestyle"}], "Prompt must be"),
     ([PRODUCTION, {"target": "dall-e", "prompt": "production"}], "Unknown image target"),
+    ([PRODUCTION, {**PRODUCTION, "quality": "xhigh"}], "Quality must be"),
+    ([PRODUCTION, {"target": "nano-banana-2.1-vertex", "prompt": "production", "quality": "low"}],
+     "no quality choice"),
+    ([{**PRODUCTION, "quality": "low"}, {**PRODUCTION, "quality": "low"}], "must differ"),
 ])
 def test_invalid_arms_are_rejected(arms, message):
     with pytest.raises(ValueError, match=message):
@@ -670,7 +676,7 @@ def test_nano_banana_page_submits_1k_dimensions_to_vertex_once(root, tmp_path, m
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config, *args: (profile, compiled))
     output = io.BytesIO()
     Image.new("RGB", (848, 1264)).save(output, format="PNG")
     sent = []
@@ -752,3 +758,180 @@ def test_flat_workspace_pages_keep_their_direct_ids(root):
     assert [item["id"] for item in pages] == ["page:1"]
     assert pages[0]["label"].startswith("Page 1 · ")
     assert image_compare.load_item(project, "page:1")._project_dir == project
+
+
+# ── GPT Image 2.6 and per-arm quality ───────────────────────────────────────
+
+@pytest.mark.parametrize("target,alias,model", [
+    ("sunburst-2.6-openai", "image-sunburst-2.6", "gpt-image-2.6-sunburst"),
+    ("flare-2.6-openai", "image-flare-2.6", "gpt-image-2.6-flare"),
+])
+def test_gpt_image_26_asset_arms_send_the_recorded_request_to_their_openai_route(root, target, alias, model):
+    item = image_compare.AssetItem(root / "story", "new")
+    resolved = image_compare.get_target(target)
+    wire = item._wire_for(resolved, PROMPT, restructured=False)
+    params, files = serialize_wire_request(wire)
+    prepared = item.prepare(None, resolved, "production")
+
+    assert resolved.funding == "api" and resolved.accepts_quality and resolved.page_model == model
+    assert wire.provider_key == "openai" and wire.requested_alias == alias
+    assert wire.configured_provider_model == f"openai/{model}"
+    assert params["quality"] == "medium" and json.loads(params["canary_wire_request"])["requested_alias"] == alias
+    assert [part[1][1] for part in files] == [b"\x89PNG new"]
+    assert prepared.estimate_usd(resolved, item.quality) == estimate_image_cost(
+        alias, 1, quality="medium", width=1024, height=1024, ref_count=1, prompt_text=PROMPT,
+        basis="expected", include_previews=False,
+    ) > 0
+    usage = _usage().model_copy(update={"model": alias, "provider_model": f"openai/{model}",
+                                        "input_tokens": 11267, "input_text_tokens": 3701,
+                                        "input_image_tokens": 7566, "image_output_tokens": 1132,
+                                        "output_tokens": 1132})
+    # Reference images bill at the image-input rate, as for 2.5; never the text rate.
+    assert calculate_cost_breakdown(usage).cost_usd == pytest.approx(3701 * 5e-6 + 7566 * 8e-6 + 1132 * 3e-5)
+
+
+def test_an_asset_arm_quality_replaces_the_recorded_quality_and_the_fingerprint(root):
+    item = image_compare.AssetItem(root / "story", "new")
+    target = image_compare.get_target("flare-2.6-openai")
+    recorded = item.prepare(None, target, "production")
+    low = item.prepare(None, target, "production", "low")
+
+    assert recorded.quality == "medium" and low.quality == "low"
+    assert low.prompt == recorded.prompt and low.reference_sha256 == recorded.reference_sha256
+    assert low.fingerprint(target) != recorded.fingerprint(target)
+    params, _ = serialize_wire_request(item._wire_for(target, PROMPT, restructured=False, quality="low"))
+    assert params["quality"] == "low"
+
+
+@pytest.mark.parametrize("target,model,gateway", [
+    ("flare-2.6-openai", "gpt-image-2.6-flare", "image-flare-2.6"),
+    ("sunburst-2.6-openai", "gpt-image-2.6-sunburst", "image-sunburst-2.6"),
+    ("sunburst-openai", "gpt-image-2.5-sunburst", "image-sunburst-openai"),
+    ("flare-openai", "gpt-image-2.5-flare", "image-flare"),
+])
+@pytest.mark.parametrize("quality", ["low", "medium", "high"])
+def test_a_page_arm_quality_draws_through_the_direct_openai_profile(root, tmp_path, monkeypatch,
+                                                                     target, model, gateway, quality):
+    from novel_to_comic import style_reference
+    from novel_to_comic.stages import s5_plan
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    monkeypatch.setattr(TargetArtifacts, "read_page", lambda self, number: _page())
+    monkeypatch.setattr(s5_plan, "approved_visual_inventory", lambda path: _inventory())
+    reference_files = _reference_files(tmp_path)
+    monkeypatch.setattr(s5_plan, "approved_reference_files", lambda path: reference_files)
+    monkeypatch.setattr(style_reference, "require_style_reference", lambda *args: None)
+    resolved = image_compare.get_target(target)
+    config = Config(draw_model=resolved.model_alias)
+    profile, compiled = image_compare.PageItem(root / "story", 1)._compile(config, resolved, quality)
+
+    assert profile.model == compiled.request.model == model and profile.provider == "openai"
+    assert page_image_quality(profile.id, profile.provider) == quality
+    adapter = page_drawing.complete_page_adapter(config, profile)
+    assert adapter._gateway_model == gateway and adapter.prepare(compiled)
+
+
+def test_a_page_arm_quality_submits_once_through_the_direct_adapter(root, tmp_path, monkeypatch):
+    profile = openai_page_capability_profile("gpt-image-2.5-sunburst", quality="low")
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    calls = []
+    monkeypatch.setattr(image_compare.PageItem, "_compile",
+                        lambda self, config, target=None, quality=None: calls.append(quality) or (profile, compiled))
+    sent = []
+
+    class Adapter:
+        def prepare(self, compiled):
+            return page_drawing.prepare_frozen_page_request(compiled.request, compiled.reference_bytes, profile)
+
+        async def generate(self, prepared):
+            sent.append(prepared)
+            return CompletePageProviderResult(
+                artifact_kind="complete_page", image_bytes=b"page", media_type="image/png",
+                width=prepared.width, height=prepared.height, latency_ms=5,
+                actual_provider_model=f"openai/{profile.model}", usage=_usage(),
+            )
+
+    monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config, profile: Adapter())
+    for other in ("sunburst_openai_page_transport", "sunburst_fal_page_transport", "runware_page_transport"):
+        monkeypatch.setattr(page_drawing, other, lambda *a: pytest.fail("used a production route"))
+
+    _, cell = _run(root, "page:1", {"target": "sunburst-openai", "prompt": "production", "quality": "low"})
+
+    assert cell["status"] == "ok" and cell["quality"] == "low" and calls == ["low"] and len(sent) == 1
+
+
+@pytest.mark.parametrize("target", ["sunburst-fal"])
+def test_routes_without_a_direct_page_profile_refuse_a_page_quality_before_spend(root, target):
+    item = image_compare.PageItem(root / "story", 1)
+    with pytest.raises(ValueError, match="production quality"):
+        item.prepare(Config(), image_compare.get_target(target), "production", "low")
+
+
+def test_a_cell_separates_admission_queue_time_from_time_at_the_route(root, monkeypatch):
+    import time as clock
+
+    from novel_to_comic.ai.context import notify_execution_started
+
+    async def submit(output_path):
+        await asyncio.sleep(0.05)  # waiting for admission
+        notify_execution_started()
+        notify_execution_started()  # a second HTTP request in the same call keeps the first start
+        await asyncio.sleep(0.02)
+        output_path.write_bytes(b"png")
+        return _usage()
+
+    prepared = image_compare.Prepared(PROMPT, 1024, 1024, 0, [], submit)
+    monkeypatch.setattr(image_compare.AssetItem, "prepare", lambda self, *args: prepared)
+    began = clock.perf_counter()
+    _, cell = _run(root, "asset:new", PRODUCTION)
+    elapsed_ms = (clock.perf_counter() - began) * 1000
+
+    assert cell["status"] == "ok"
+    assert 50 <= cell["queue_ms"] < 70 <= cell["latency_ms"] <= elapsed_ms
+    assert 20 <= cell["provider_latency_ms"] < cell["latency_ms"]
+    assert cell["queue_ms"] + cell["provider_latency_ms"] <= cell["latency_ms"] + 1
+
+
+@pytest.mark.parametrize("target,model,gateway", [
+    ("flare-2.6-runware", "gpt-image-2.6-flare", "image-flare-2.6-runware"),
+    ("sunburst-2.6-runware", "gpt-image-2.6-sunburst", "image-sunburst-2.6-runware"),
+    ("flare-runware", "gpt-image-2.5-flare", "image-flare-runware"),
+    ("sunburst-runware", "gpt-image-2.5-sunburst", "image-sunburst-runware"),
+])
+@pytest.mark.parametrize("quality", [None, "low", "high"])
+def test_runware_page_arms_draw_on_runware_at_the_chosen_quality(root, tmp_path, monkeypatch,
+                                                                 target, model, gateway, quality):
+    assert image_compare.get_target(target).page_model == model
+    profile = openai_page_capability_profile(model, quality=quality or "medium")
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    seen = []
+    monkeypatch.setattr(image_compare.PageItem, "_compile",
+                        lambda self, config, target=None, quality=None: seen.append(quality) or (profile, compiled))
+    sent = []
+
+    class Transport:
+        async def generate(self, prepared):
+            sent.append(prepared)
+            return CompletePageProviderResult(
+                artifact_kind="complete_page", image_bytes=b"page", media_type="image/png",
+                width=prepared.width, height=prepared.height, latency_ms=5,
+                actual_provider_model=f"runware/{model}", usage=_usage(),
+            )
+
+    real = page_drawing.runware_page_transport(Config(), profile)
+    assert real._gateway_model == gateway and real._route_provider == "runware"
+    monkeypatch.setattr(page_drawing, "runware_page_transport", lambda config, profile: Transport())
+    for other in ("sunburst_openai_page_transport", "sunburst_fal_page_transport", "complete_page_adapter"):
+        monkeypatch.setattr(page_drawing, other, lambda *a: pytest.fail("left Runware"))
+    arm = {"target": target, "prompt": "production", **({"quality": quality} if quality else {})}
+
+    _, cell = _run(root, "page:1", arm)
+
+    assert cell["status"] == "ok" and seen == [quality] and len(sent) == 1
+    assert page_image_quality(profile.id, profile.provider) == (quality or "medium")

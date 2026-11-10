@@ -37,8 +37,14 @@ from novel_to_comic.config import (
     Config,
 )
 from novel_to_comic.image_models import (
+    GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_FLARE_26,
+    GATEWAY_IMAGE_FLARE_26_RUNWARE,
     GATEWAY_IMAGE_FLARE_RUNWARE,
     GATEWAY_IMAGE_NANO_BANANA_21,
+    GATEWAY_IMAGE_SUNBURST_26,
+    GATEWAY_IMAGE_SUNBURST_26_RUNWARE,
+    GATEWAY_IMAGE_SUNBURST_OPENAI,
     GATEWAY_IMAGE_SUNBURST_RUNWARE,
     runware_first_enabled,
 )
@@ -175,12 +181,24 @@ def nano_banana_21_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+#: Direct-OpenAI complete-page models and their gateway routes. The 2.6 models
+#: are Labs comparison routes; production Draw selects none of these directly.
+OPENAI_PAGE_GATEWAY_MODELS = {
+    "gpt-image-2.5-sunburst": GATEWAY_IMAGE_SUNBURST_OPENAI,
+    "gpt-image-2.5-flare": GATEWAY_IMAGE_FLARE,
+    "gpt-image-2.6-sunburst": GATEWAY_IMAGE_SUNBURST_26,
+    "gpt-image-2.6-flare": GATEWAY_IMAGE_FLARE_26,
+}
+#: Qualities a direct-OpenAI page profile may submit. ``low`` is Labs-only.
+OPENAI_PAGE_QUALITIES = ("low", "medium", "high")
+
+
 def openai_page_capability_profile(
-    model: str, *, quality: Literal["high", "medium"] = "high",
+    model: str, *, quality: Literal["low", "high", "medium"] = "high",
 ) -> PageCapabilityProfile:
-    if model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
+    if model not in OPENAI_PAGE_GATEWAY_MODELS:
         raise ValueError("Unsupported complete-page OpenAI model")
-    if quality not in {"high", "medium"}:
+    if quality not in OPENAI_PAGE_QUALITIES:
         raise ValueError("Unsupported complete-page OpenAI quality")
     return PageCapabilityProfile(
         id=f"{model}-complete-page-{quality}-hybrid-v1", exact_visible_lettering=False, provider="openai", model=model,
@@ -264,11 +282,11 @@ def page_image_quality(profile_id: str, provider: str) -> str | None:
         _FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID, _RUNWARE_FIRST_PAGE_PROFILE_ID,
     }:
         return "medium"
-    if provider == "openai" and profile_id.removesuffix("-integrated-v1") in {
-        f"{model}-complete-page-medium-hybrid-v1"
-        for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
-    }:
-        return "medium"
+    if provider == "openai":
+        for model in OPENAI_PAGE_GATEWAY_MODELS:
+            for quality in ("low", "medium"):
+                if profile_id.removesuffix("-integrated-v1") == f"{model}-complete-page-{quality}-hybrid-v1":
+                    return quality
     # Retained direct-OpenAI and FAL editions were drawn at high quality.
     if provider in {"openai", "fal-queue"}:
         return "high"
@@ -326,8 +344,8 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
 
     if profile == nano_banana_21_page_capability_profile() or profile == current_page_capability_profile() or any(
         profile == openai_page_capability_profile(model, quality=quality)
-        for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
-        for quality in ("high", "medium")
+        for model in OPENAI_PAGE_GATEWAY_MODELS
+        for quality in OPENAI_PAGE_QUALITIES
     ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile()),
                      sunburst_fallback_page_capability_profile(),
                      _integrated_page_profile(sunburst_fallback_page_capability_profile()),
@@ -1802,8 +1820,7 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
             raise ValueError("Unsupported complete-page profile")
         self._gateway_model = (
             "image-sunburst" if profile.provider == "fal-queue"
-            else OPENAI_SUNBURST_GATEWAY_MODEL if profile.model == "gpt-image-2.5-sunburst"
-            else "image-" + profile.model.removeprefix("gpt-image-2.5-")
+            else OPENAI_PAGE_GATEWAY_MODELS[profile.model]
         )
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
@@ -1841,10 +1858,14 @@ def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) 
 
 
 def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
-    """The profile's GPT Image 2.5 model through Runware alone, with no fallback."""
+    """The profile's GPT Image model through Runware alone, with no fallback.
+
+    The 2.6 routes serve Labs comparisons only."""
     gateway_models = {
         "gpt-image-2.5-sunburst": GATEWAY_IMAGE_SUNBURST_RUNWARE,
         "gpt-image-2.5-flare": GATEWAY_IMAGE_FLARE_RUNWARE,
+        "gpt-image-2.6-sunburst": GATEWAY_IMAGE_SUNBURST_26_RUNWARE,
+        "gpt-image-2.6-flare": GATEWAY_IMAGE_FLARE_26_RUNWARE,
     }
     if profile.model not in gateway_models:
         raise ValueError(f"Runware has no route for {profile.model}")

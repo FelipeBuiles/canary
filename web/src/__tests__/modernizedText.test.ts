@@ -9,7 +9,7 @@ describe("modernized text export", () => {
   });
 
   it("names the file after the project and model", () => {
-    expect(modernizedFilename("The Monkey’s Paw", "gemini-4-argon")).toBe("the-monkeys-paw-gemini-4-argon.txt");
+    expect(modernizedFilename("The Monkey’s Paw", "gemini-4-carbon")).toBe("the-monkeys-paw-gemini-4-carbon.txt");
     expect(modernizedFilename("", "")).toBe("modernized.txt");
   });
 });

@@ -1,7 +1,9 @@
-"""Vertex-first Argon text calls with Runware as the rate-limit route.
+"""Vertex-first Carbon text calls with Runware Argon as the rate-limit route.
 
-A text model may name a ``rate_limit_fallback`` route to the same model
-(``TextModel``). While ``CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`` is set, a call
+A text model may name a ``rate_limit_fallback`` route sharing its tuning and
+controls (``TextModel``). Runware does not offer Gemini 4 Carbon, so Carbon's
+fallback is Runware's Gemini 4 Argon (operator-approved 2026-11-10). While
+``CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`` is set, a call
 to it switches to that route only after the gateway answers 429: Vertex
 rejects a rate-limited request before generation, so nothing ran and nothing
 was billed. The primary attempt gets no 429 retries of its own; its failed

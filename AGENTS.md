@@ -48,8 +48,10 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   never hidden. Do not extend this to other routes.
 - The second approved route switch (2026-10-27): `run_rate_limit_fallback`
   (`text_route_fallback.py`, behind `CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`)
-  moves a Vertex Argon text call to `runware-gemini-4-argon` only after Vertex
-  answers 429, a definite and unbilled non-submission. It never switches on
+  moves a Vertex Carbon (`gemini-4-carbon`) text call to `runware-gemini-4-argon`
+  only after Vertex answers 429, a definite and unbilled non-submission. Runware
+  does not offer Carbon, so the fallback runs Argon with Carbon's prompt tuning
+  (approved 2026-11-10). It never switches on
   timeouts, 5xx or unknown outcomes, never returns to Vertex within a call,
   records both attempts, and is off inside Labs. Do not extend it to other
   models or failure kinds.

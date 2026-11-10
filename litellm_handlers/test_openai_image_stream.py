@@ -43,7 +43,8 @@ def run(image=(), params=None, model="openai-stream/gpt-image-2.5-sunburst"):
     return asyncio.run(call)
 
 
-@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare",
+                                   "gpt-image-2.6-sunburst", "gpt-image-2.6-flare"])
 def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch, model):
     seen = use_transport(monkeypatch, lambda request: httpx.Response(
         200, headers={"content-type": "text/event-stream", "x-request-id": "req_1"},
@@ -70,7 +71,8 @@ def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch
     assert result._hidden_params["response_cost"] is None
 
 
-@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare",
+                                   "gpt-image-2.6-sunburst", "gpt-image-2.6-flare"])
 def test_streamed_generation_sends_json(monkeypatch, model):
     seen = use_transport(monkeypatch, lambda request: httpx.Response(
         200, headers={"content-type": "text/event-stream"},

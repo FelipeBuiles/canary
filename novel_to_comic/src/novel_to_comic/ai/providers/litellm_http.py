@@ -158,7 +158,7 @@ def serialize_wire_request(
 
 def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
     """Serialize the OpenAI Images API envelope."""
-    if "gpt-image-2.5-" in wire.configured_provider_model:
+    if "gpt-image-2.5-" in wire.configured_provider_model or "gpt-image-2.6-" in wire.configured_provider_model:
         quality = dict(wire.controls).get("quality", "auto")
         if quality not in {"auto", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError("Unsupported GPT Image 2.5 quality")
@@ -175,7 +175,7 @@ def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
         "n": 1,
         **dict(wire.controls),
     }
-    if wire.requested_alias in {"image-sunburst-openai", "image-flare"}:
+    if wire.requested_alias in {"image-sunburst-openai", "image-flare", "image-sunburst-2.6", "image-flare-2.6"}:
         # The streaming OpenAI handler needs the frozen dimensions/controls;
         # LiteLLM removes standard Images fields for custom providers.
         params["canary_wire_request"] = wire.to_json()

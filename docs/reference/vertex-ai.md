@@ -68,9 +68,24 @@ that receives usage. Trial credits offset eligible charges on that account;
 they do not make provider usage free in Canary's cost records. Verify the
 project's billing account and remaining credit in Cloud Console before generation.
 
-## Gemini 4 Argon (optional text route)
+## Gemini 4 Carbon (optional text route)
 
-As of October 13, 2026, `gemini-4-argon` selects the exact gateway target
+As of November 10, 2026, `gemini-4-carbon` replaces `gemini-4-argon` as the
+Vertex Gemini 4 route and selects the exact gateway target
+`vertex_ai/gemini-4-carbon`. It keeps Argon's settings, tuning and provisional
+rates; the operator stated Carbon costs the same as Argon with slightly better
+reasoning. Before the switch, one free `countTokens` and one plain-text
+`generateContent` call (45 input, 9 output and 79 thinking tokens, no thinking
+configuration) succeeded in `global` for the `canary-vertex` project. The public
+publisher-model catalog did not list Carbon. Thinking levels, JSON mode,
+schemas, vision, caching and limits are not yet verified on Carbon: the evidence
+below was gathered on Argon and is kept as the basis for the inherited settings.
+Runware does not offer Carbon, so its 429 fallback is `runware-gemini-4-argon`
+(see [stage contracts](stage-contracts.md)).
+
+### Argon evidence (October 2026)
+
+As of October 13, 2026, `gemini-4-argon` selected the exact gateway target
 `vertex_ai/gemini-4-argon`, using the same ADC credentials and
 `VERTEXAI_PROJECT` / `VERTEXAI_LOCATION` settings. The operator reported HTTP 200
 from direct `countTokens` and plain-text `generateContent` in `global`.

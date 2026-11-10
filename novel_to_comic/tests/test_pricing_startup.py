@@ -102,4 +102,6 @@ def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
         "gpt-image-2.5-sunburst", "openai/gpt-image-2.5/sunburst",
         "gpt-image-2.5-flare", "gemini-nano-banana-2.1",
         "runware/gpt-image-2.5-sunburst", "runware/gpt-image-2.5-flare",
+        "gpt-image-2.6-sunburst", "gpt-image-2.6-flare",
+        "runware/gpt-image-2.6-sunburst", "runware/gpt-image-2.6-flare",
     }

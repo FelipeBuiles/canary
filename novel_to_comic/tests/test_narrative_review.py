@@ -629,7 +629,7 @@ def test_review_window_size_follows_the_reviewing_route():
         {"id": f"omitted_{n}", "text": "x" * 13000} for n in range(3)
     ] + context["units"]
     flash = [_supplied(p) for p in _review_prompts(context, "gemini-3.8-flash")]
-    argon = [_supplied(p) for p in _review_prompts(context, "gemini-4-argon")]
+    argon = [_supplied(p) for p in _review_prompts(context, "gemini-4-carbon")]
     assert len(flash) > 1
     # One window holds every unit, so no copy is repeated as reader context.
     assert len(argon) == 1

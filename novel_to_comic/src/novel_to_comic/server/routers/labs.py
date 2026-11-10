@@ -63,10 +63,12 @@ def image_compare_options(user_id: str = Depends(get_current_user)) -> dict[str,
     return {
         "targets": [
             {"id": target.id, "label": target.label, "provider": target.provider,
-             "funding": target.funding, "available": target.available}
+             "funding": target.funding, "available": target.available,
+             "accepts_quality": target.accepts_quality, "page_quality": target.page_model is not None}
             for target in image_compare.image_targets()
         ],
         "prompts": list(image_compare.PROMPTS),
+        "qualities": list(image_compare.QUALITIES),
     }
 
 

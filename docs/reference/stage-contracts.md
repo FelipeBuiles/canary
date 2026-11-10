@@ -1783,12 +1783,13 @@ Turning the switch off changes only new editions and wires: both Sunburst
 identities stay spendable, so every existing edition keeps its route.
 
 Text calls have one route switch. With `CANARY_RUNWARE_TEXT_FALLBACK_ENABLED`
-set, a Vertex `gemini-4-argon` call that the gateway answers with 429 moves once
-to `runware-gemini-4-argon`, the same model with Argon's prompt tuning, on its
-first rate limit (`text_route_fallback.py`). A 429 is a definite, unbilled
+set, a Vertex `gemini-4-carbon` call that the gateway answers with 429 moves once
+to `runware-gemini-4-argon` on its first rate limit. Runware does not offer
+Carbon, so this is Gemini 4 Argon with Carbon's prompt tuning (approved
+2026-11-10) (`text_route_fallback.py`). A 429 is a definite, unbilled
 non-submission. The failed Vertex attempt and the Runware attempt are separate
 AI events, each with its own call guarantee, and usage records `runware` as the
-provider. The first 429 opens a per-worker circuit, so for five minutes Argon
+provider. The first 429 opens a per-worker circuit, so for five minutes Carbon
 calls go straight to Runware. Timeouts, 5xx and unknown outcomes never switch,
 a call never returns to Vertex, and Runware's own 429s use the normal retry
 budget. Checkpoints stay keyed on the stage's configured model, so a stage

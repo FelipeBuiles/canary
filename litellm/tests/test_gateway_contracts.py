@@ -165,8 +165,9 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "claude-haiku-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware",
-        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-argon",
+        "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware", "image-sunburst-2.6", "image-flare-2.6",
+        "image-sunburst-2.6-runware", "image-flare-2.6-runware",
+        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-carbon",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract", "runware-gemini-4-argon", "runware-deepseek-v4.1-flash-1017", "runware-gpt-6.1-terra",
     }
@@ -593,6 +594,8 @@ def test_vertex_gemini_route_preserves_project_schema_vision_reasoning_and_usage
 @pytest.mark.parametrize("alias,model", [
     ("image-sunburst-openai", "gpt-image-2.5-sunburst"),
     ("image-flare", "gpt-image-2.5-flare"),
+    ("image-sunburst-2.6", "gpt-image-2.6-sunburst"),
+    ("image-flare-2.6", "gpt-image-2.6-flare"),
 ])
 def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(monkeypatch, edit, previews, alias, model):
     """The Draw page transport's exact fields through the Router, as the proxy runs them."""
@@ -751,13 +754,13 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
 
 @pytest.mark.parametrize("output_mode", ["plain", "json_object", "json_schema"])
 @pytest.mark.parametrize("effort", [None, "low", "medium", "high"])
-def test_argon_route_serializes_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort):
+def test_carbon_route_serializes_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort):
     import json
     import litellm
 
     _vertex_adc(monkeypatch)
     monkeypatch.setattr(litellm, "model_cost", _bundled_cost_map())
-    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-4-argon")
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-4-carbon")
     seen = []
 
     def send(self, request, **kwargs):
@@ -779,16 +782,16 @@ def test_argon_route_serializes_verified_output_with_adc_without_inferred_contro
         output["response_format"] = {"type": "json_object"}
     elif output_mode == "json_schema":
         output["response_format"] = {"type": "json_schema", "json_schema": {"name": "probe", "schema": schema}}
-    response = router.completion(model="gemini-4-argon", messages=[
+    response = router.completion(model="gemini-4-carbon", messages=[
         {"role": "system", "content": "Return an answer."}, {"role": "user", "content": "Hello"},
     ], max_completion_tokens=4096, **output)
     request = seen[-1]
     assert request.url.host == "aiplatform.googleapis.com"
-    assert request.url.path.endswith("/projects/fixture-project/locations/global/publishers/google/models/gemini-4-argon:generateContent")
+    assert request.url.path.endswith("/projects/fixture-project/locations/global/publishers/google/models/gemini-4-carbon:generateContent")
     assert request.headers["authorization"] == "Bearer fixture-token"
     assert "x-goog-api-key" not in request.headers
     generation = json.loads(request.content)["generationConfig"]
-    expected = {"max_output_tokens": 4096, "thinkingConfig": {"thinkingLevel": effort or "medium", "includeThoughts": True}}
+    expected = {"max_output_tokens": 4096, "thinkingConfig": {"thinkingLevel": effort or "low", "includeThoughts": True}}
     if output_mode != "plain":
         expected["response_mime_type"] = "application/json"
     if output_mode == "json_schema":

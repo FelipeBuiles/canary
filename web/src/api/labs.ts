@@ -21,7 +21,13 @@ export interface ImageTarget {
   provider: string;
   funding: LabsFunding;
   available: boolean;
+  /** GPT Image targets: an arm may choose low, medium or high quality. */
+  accepts_quality?: boolean;
+  /** Pages too (direct OpenAI); other targets apply quality to Style/Cast only. */
+  page_quality?: boolean;
 }
+
+export type ImageQuality = "low" | "medium" | "high";
 
 export type ImagePrompt =
   | "production"
@@ -32,6 +38,8 @@ export type ImagePrompt =
 export interface ImageArm {
   target: string;
   prompt: ImagePrompt;
+  /** Omitted: production quality for pages, recorded quality for Style/Cast. */
+  quality?: ImageQuality;
 }
 
 export interface ImageItem {
@@ -123,7 +131,11 @@ export interface ImageCell {
   /** Earlier failed attempts of this cell, oldest first. */
   attempts?: { started_at?: string; latency_ms?: number; error?: string }[];
   image?: string;
+  /** Wall time of the cell, including any wait in Canary's admission queue. */
   latency_ms?: number;
+  /** Wait in the admission queue, and time from submission to result. */
+  queue_ms?: number;
+  provider_latency_ms?: number;
   cost_usd?: number | null;
   error?: string;
 }

@@ -57,7 +57,9 @@ except ModuleNotFoundError:
 
 
 OPENAI_API_BASE = "https://api.openai.com/v1"
-SUPPORTED_MODELS = frozenset({"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"})
+SUPPORTED_MODELS = frozenset({
+    "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2.6-sunburst", "gpt-image-2.6-flare",
+})
 STREAM_TIMEOUT_S = 300.0
 CONNECT_TIMEOUT_S = 10.0
 # Controls the frozen manifest may carry; anything else is rejected, never

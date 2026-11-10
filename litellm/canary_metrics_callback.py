@@ -12,7 +12,7 @@ from canary_metrics import record
 _MODELS = frozenset({
     "gpt-6.1-sol", "gpt-6-sol",
     "gpt-6-luna",
-    "gemini-3.8-flash", "gemini-4-argon",
+    "gemini-3.8-flash", "gemini-4-carbon",
     "claude-opus-5-5",
     "claude-sonnet-5-5",
     "claude-haiku-5-5",
@@ -29,6 +29,10 @@ _MODELS = frozenset({
     "image-flare",
     "image-sunburst-runware",
     "image-flare-runware",
+    "image-sunburst-2.6",
+    "image-flare-2.6",
+    "image-sunburst-2.6-runware",
+    "image-flare-2.6-runware",
     "image-nano-banana-2.1",
     "ocr-textract",
 })

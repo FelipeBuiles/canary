@@ -262,16 +262,16 @@ def test_api_zero_dollars_with_activity_retains_minimum():
 def test_small_call_thinking_allowance_tracks_recorded_style_usage():
     # Recorded totals, 45 days to 2026-10-27: Argon Style briefs billed p95 160
     # output tokens and proof copy 66; Flash briefs reached 1,356 when they thought.
-    brief = 200 + thinking_allowance("gemini-4-argon", 900, 200)
-    copy = 100 + thinking_allowance("gemini-4-argon", 700, 100)
+    brief = 200 + thinking_allowance("gemini-4-carbon", 900, 200)
+    copy = 100 + thinking_allowance("gemini-4-carbon", 700, 100)
     assert 1_356 <= brief < 2_000
     assert 1_356 <= copy < brief
-    flat = get_flat_estimate("gemini-4-argon", 900 * 4, 800)
-    assert estimate_text_cost("gemini-4-argon", 900 * 4, output_chars=800) < flat / 2
+    flat = get_flat_estimate("gemini-4-carbon", 900 * 4, 800)
+    assert estimate_text_cost("gemini-4-carbon", 900 * 4, output_chars=800) < flat / 2
 
 
 def test_large_call_thinking_allowance_keeps_the_route_ceiling():
-    assert thinking_allowance("gemini-4-argon", 12_000, 9_000) == 4_096
+    assert thinking_allowance("gemini-4-carbon", 12_000, 9_000) == 4_096
     assert thinking_allowance("claude-opus-5-5", 30_000, 8_000) == 4_096
     assert thinking_allowance("mimo-v2.6-pro", 900, 200) == 0
 
