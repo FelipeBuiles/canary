@@ -116,6 +116,11 @@ export function getColdOpen(project: string): Promise<{ cold_open: ColdOpen | nu
   return apiFetch(`${seriesPath(project)}/cold-open`);
 }
 
+/** Bring the first pages into an empty Look as its proofs. Free; selects nothing. */
+export function adoptColdOpen(project: string): Promise<{ adopted: string[] }> {
+  return apiFetch(`${seriesPath(project)}/cold-open/adopt`, { method: "POST" });
+}
+
 export function setColdOpenFavorite(project: string, lookId: string | null): Promise<{ favorite_look_id: string | null }> {
   return apiFetch(`${seriesPath(project)}/cold-open/favorite`, {
     method: "POST", body: JSON.stringify({ look_id: lookId }),

@@ -18,6 +18,8 @@ import {
   useGenerateProjectCover,
   useProjectCoverEstimate,
   useProjects,
+  useColdOpen,
+  useAdoptColdOpen,
 } from "../../api/queries";
 import { Columns2, Eye, EyeOff, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { BookLetteringPanel } from "../../components/lettering/BookLetteringPanel";
@@ -180,6 +182,20 @@ export function StyleRoom() {
     });
   }
 
+  // The author's first pages are real proofs: an empty Look opens on them,
+  // at no cost, instead of asking for a paid batch before anything can be chosen.
+  const { data: coldOpenData } = useColdOpen(id);
+  const adoptColdOpen = useAdoptColdOpen();
+  const adoptFirstPages = adoptColdOpen.mutate;
+  const firstPagesWaiting = !!coldOpenData?.cold_open && coldOpenData.cold_open.status !== "printing"
+    && coldOpenData.cold_open.looks.some((look) => look.status === "ready" && !look.adopted);
+  const lookIsEmpty = !!stylesData && stylesData.suggestions.length === 0 && !batchInFlight && !proofsInFlight;
+  const adoptionIdle = adoptColdOpen.isIdle;
+  const layingOutFirstPages = lookIsEmpty && firstPagesWaiting && (adoptionIdle || adoptColdOpen.isPending);
+  useEffect(() => {
+    if (id && lookIsEmpty && firstPagesWaiting && adoptionIdle) adoptFirstPages({ project: id });
+  }, [id, lookIsEmpty, firstPagesWaiting, adoptionIdle, adoptFirstPages]);
+
   // Track the suggest-more-styles SSE job: it streams stage_complete /
   // stage_fail under the "style_suggest" stage tag.
   useEffect(() => {
@@ -217,6 +233,9 @@ export function StyleRoom() {
 
   if (isLoading) {
     return <RoomShell project={id ?? ""} isLoading loadingText="MIXING PALETTES…" />;
+  }
+  if (layingOutFirstPages) {
+    return <RoomShell project={id ?? ""} isLoading loadingText="LAYING OUT YOUR FIRST PAGES…" />;
   }
 
   if (!id) {
@@ -323,6 +342,8 @@ export function StyleRoom() {
   const hiddenSuggestions = suggestions.filter((suggestion) => suggestion.hidden);
   const yoursCount = shownSuggestions.filter(isAuthorDirection).length;
   const suggestedCount = shownSuggestions.length - yoursCount;
+  // Only the first pages are on the table: say plainly that more can be drawn.
+  const onlyFirstPages = suggestions.length > 0 && suggestions.every((suggestion) => suggestion.origin === "cold_open");
   const effectiveFilter = yoursCount > 0 && suggestedCount > 0 ? proofFilter : "all";
   const filteredSuggestions = effectiveFilter === "yours"
     // Newest first: directions are appended, so a higher index is more recent.
@@ -461,7 +482,7 @@ export function StyleRoom() {
             <h2 id="find-the-look" className="font-display text-[2.5rem] font-black uppercase leading-[0.9] tracking-[-0.04em] sm:text-[3.25rem]">{t("Find the look")}</h2>
             <p className="mt-3 max-w-[40rem] font-body text-base leading-6 text-pulp-paper/80">{t("Every proof draws the same scene from your story, so you compare styles, not scenes.")}</p>
             {suggestionFailure && <div className="mt-6 bg-bristol px-4 py-1 text-ink-black">{notices}</div>}
-            {/* The author's first pages, where the look is actually chosen. */}
+            {/* First pages Look could not take as proofs stay a first impression here. */}
             <ColdOpen project={projectName} variant="look" className="mt-8" />
             <div className="mt-7">{composer}</div>
           </div>
@@ -473,6 +494,18 @@ export function StyleRoom() {
       ) : !letteringOpen && (
         <div className="flex min-h-[34rem] flex-1 flex-col studio-desktop:min-h-0 studio-desktop:flex-row">
           <section aria-label={t("Style proofs")} className="benday-ink flex min-w-0 flex-1 flex-col text-pulp-paper">
+            {onlyFirstPages && !batchInFlight && (
+              <div role="note" className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-pulp-paper/14 px-5 py-3">
+                <p className="min-w-0 flex-1 basis-[22rem] font-body text-[0.9375rem] leading-6 text-pulp-paper/85">
+                  <span className="font-semibold text-narrator-gold">{t("Your first pages are ready to use.")}</span>{" "}
+                  {t("Choose one for your book, or generate more proofs to see other looks for the same scene.")}
+                </p>
+                <button type="button" onClick={() => setShowDirectionComposer(true)} disabled={letteringOpen}
+                  className={cn(DARK_BUTTON, "border-ink-black! bg-narrator-gold! text-ink-black! hover:bg-narrator-gold/90!")}>
+                  <Plus size={15} aria-hidden="true" />{t("Generate more proofs")}
+                </button>
+              </div>
+            )}
             <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-5 py-2.5">
               {drawn.length > 1 && (
                 <div role="group" aria-label={t("Proof view")} className="inline-flex border border-pulp-paper/22">
@@ -526,9 +559,12 @@ export function StyleRoom() {
                 {projectConfig?.lettering_mode !== "integrated" && styleSelected && (
                   <button type="button" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)} className={DARK_BUTTON}>{t("Edit book lettering")}</button>
                 )}
-                <button type="button" onClick={() => setShowDirectionComposer(true)} disabled={letteringOpen} className={DARK_BUTTON}>
-                  <Plus size={15} aria-hidden="true" />{t("New direction")}
-                </button>
+                {/* With only first pages, the note above carries this action. */}
+                {!onlyFirstPages && (
+                  <button type="button" onClick={() => setShowDirectionComposer(true)} disabled={letteringOpen} className={DARK_BUTTON}>
+                    <Plus size={15} aria-hidden="true" />{t("New direction")}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -572,6 +608,7 @@ export function StyleRoom() {
                 onPick={(picked) => { setCurrentId(picked); setProofView("table"); }}
                 onNew={() => setShowDirectionComposer(true)}
                 newDisabled={letteringOpen}
+                moreProofs={onlyFirstPages}
               />
             )}
           </section>
@@ -607,7 +644,7 @@ export function StyleRoom() {
         </div>
       )}
 
-      <Sheet open={showDirectionComposer && suggestions.length > 0} title={t("New direction")} onClose={() => setShowDirectionComposer(false)} wide>
+      <Sheet open={showDirectionComposer && suggestions.length > 0} title={onlyFirstPages ? t("Generate more proofs") : t("New direction")} onClose={() => setShowDirectionComposer(false)} wide>
         {composer}
       </Sheet>
 

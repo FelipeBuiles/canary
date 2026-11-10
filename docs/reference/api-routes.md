@@ -52,6 +52,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/projects/{project}/location-plate-versions/restore` | `restore_location_plate_version` | `cast_assets.py` |
 | `GET` | `/api/projects/{project}/cold-open` | `get_cold_open` | `cold_open.py` |
 | `GET` | `/api/projects/{project}/cold-open/proof/{look_id}` | `get_cold_open_proof` | `cold_open.py` |
+| `POST` | `/api/projects/{project}/cold-open/adopt` | `adopt_cold_open` | `cold_open.py` |
 | `POST` | `/api/projects/{project}/cold-open/favorite` | `set_cold_open_favorite` | `cold_open.py` |
 | `GET` | `/api/projects/{project}/config` | `get_config` | `config.py` |
 | `PATCH` | `/api/projects/{project}/config` | `update_config` | `config.py` |

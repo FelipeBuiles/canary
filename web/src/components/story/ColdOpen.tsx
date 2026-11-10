@@ -16,11 +16,12 @@ type Variant = "press" | "rail" | "look";
  * The Cold Open: one page of the author's opening in three looks, drawn while
  * Extract reads the rest of the book. Canary pays for it, so it shows no
  * credits, and a favorite is a preference Look highlights, never a selection.
+ * Look adopts the printed pages as its first proofs when it opens empty.
  *
  * Each placement matches what the author is doing: the `press` fills the wait
  * while Extract and Brief run; beside the Brief, a quiet `rail` card keeps the
- * Brief the task; in Look's empty room, `look` puts the pages where choosing
- * a look happens.
+ * Brief the task; in Look's empty room, `look` shows pages Look could not take
+ * as proofs (still printing, or a different scene) as a first impression.
  */
 export function ColdOpen({ project, variant, watching = false, lookReady = false, className }: {
   project: string;
@@ -88,14 +89,14 @@ function ColdOpenPress({ project, coldOpen, className }: { project: string; cold
   );
 }
 
-/** In Look's empty room: the pages sit where the look is chosen. */
+/** In Look's empty room: pages that are not proofs, shown as a first impression. */
 function ColdOpenLook({ project, coldOpen, className }: { project: string; coldOpen: ColdOpenData; className?: string }) {
   const { t } = useI18n();
   return (
     <section aria-labelledby="cold-open-look" className={className}>
       <p id="cold-open-look" className="font-meta text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-narrator-gold">{t("Your first pages")}</p>
       <p className="mt-2 max-w-[40rem] font-body text-[0.9375rem] leading-6 text-pulp-paper/80">
-        {t("Look draws its own directions next. Mark the page you like best: pages that show the same scene join the proofs at no cost.")}
+        {t("A first impression of your story. To choose your book's look, create proofs below.")}
       </p>
       <SheetRow project={project} coldOpen={coldOpen} printedOnly className="mt-5 max-w-[52rem]" />
     </section>

@@ -82,3 +82,13 @@ it("shows looks as drawing while their main image's job redraws them", async () 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   expect(tileState()).toBe("Drawing…");
 });
+
+it("shows a placeholder, not a broken image, when the main reference has no image yet", async () => {
+  await mount();
+  const main = () => within(screen.getByRole("group", { name: "Looks" })).getByRole("button", { name: "Main" });
+  // The portrait and its full-size fallback both 404 before Cast has drawn anything.
+  fireEvent.error(main().querySelector("img")!);
+  const fallback = main().querySelector("img");
+  if (fallback) fireEvent.error(fallback);
+  expect(main().querySelector("img")).toBeNull();
+});

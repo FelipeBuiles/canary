@@ -124,6 +124,42 @@ def _mutate(root: Path, change) -> ColdOpenRecord:
         return record
 
 
+def adopt_first_pages(project_dir: Path, config: Config) -> list[str]:
+    """Open Look on the first pages: adopt them as its proofs when it has none.
+
+    No model call and no spend: only pages that are exactly the proofs Style
+    would draw now are adopted (``adoptable_looks``). Nothing is selected for
+    the author. An empty, never-run Style stage becomes reviewable, so choosing
+    one of these proofs is its checkpoint approval like any other proof.
+    """
+    from novel_to_comic import artifacts
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.stages import s2_style as style
+    from novel_to_comic.state import StageStatus, load_state
+
+    root = series_root(project_dir)
+    if not artifacts.story_bible_path(root).exists():
+        return []
+    with production_lock(root):
+        state = load_state(root)
+        # A running batch owns the portfolio and adopts these pages itself.
+        if state.stages["style"].status == StageStatus.RUNNING or style.load_suggestions(root):
+            return []
+        bible = artifacts.read_story_bible(root)
+        adopted = cold_open.adoptable_looks(config, root, bible)
+        if not adopted:
+            return []
+        cold_open.adopt_into_style(root, adopted, 1)
+        style.save_suggestions(root, adopted, bible.title)
+        if state.stages["style"].status == StageStatus.PENDING:
+            ctx = StageRuntime("style", state, root)
+            ctx.begin(len(adopted))
+            for _ in adopted:
+                ctx.record_item_done()
+            ctx.complete()
+    return [suggestion["id"] for suggestion in adopted]
+
+
 async def execute_cold_open(app, job, root: Path, config: Config) -> None:
     from novel_to_comic.stages import s2_style as style
     from novel_to_comic.style_briefing import style_sample_selection

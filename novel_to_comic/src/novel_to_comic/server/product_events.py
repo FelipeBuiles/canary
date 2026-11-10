@@ -44,6 +44,8 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     # The North Star for the Cold Open: upload to first page of the author's story.
     "cold_open_printed": frozenset({"pages", "ranking", "story_copy", "latency_ms"}),
     "cold_open_favorite": frozenset({"look_id"}),
+    # First pages that opened Look as its proofs, with no generation.
+    "cold_open_adopted": frozenset({"pages"}),
     "page_outcome": frozenset({"outcome", "page_number", "render_revision", "generation_id", "category", "mode"}),
     "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency", "stripe_mode"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency", "stripe_mode"}),

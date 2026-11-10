@@ -78,6 +78,21 @@ def get_cold_open_proof(project_id: str, look_id: str, request: Request, project
         data, media_type="image/png", headers={"Cache-Control": cache, "ETag": f'"{identity}"'})
 
 
+@router.post("/cold-open/adopt", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
+def adopt_cold_open(project_id: str, project=Depends(get_project), user_id: str = Depends(get_current_user)):
+    """Bring the first pages into an empty Look as its proofs. Free; selects nothing."""
+    from ..cold_open_jobs import adopt_first_pages
+
+    project_dir, config, _state = project
+    if cold_open.read_record(project_dir) is None:
+        raise HTTPException(404, "This project has no Cold Open.")
+    adopted = adopt_first_pages(project_dir, config)
+    if adopted:
+        capture_server_event("cold_open_adopted", user_id=user_id, project_id=project_id,
+                             properties={"pages": len(adopted)})
+    return {"adopted": adopted}
+
+
 class FavoriteBody(BaseModel):
     look_id: str | None
 

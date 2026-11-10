@@ -15,11 +15,13 @@ const state = vi.hoisted(() => {
   return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"],
     jobs: [] as GenerationJob[], castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn(),
     presentation: { mutate: vi.fn(), isPending: false }, suggestions: undefined as Array<Record<string, unknown>> | undefined,
-    stylesMeta: {} as Record<string, boolean> };
+    stylesMeta: {} as Record<string, boolean>, coldOpen: null as unknown,
+    adopt: { mutate: vi.fn(), isIdle: true, isPending: false } };
 });
 vi.mock("../api/queries", () => ({
   // The Cold Open has its own tests; these projects never had one.
-  useColdOpen: () => ({ data: { cold_open: null } }),
+  useColdOpen: () => ({ data: { cold_open: state.coldOpen } }),
+  useAdoptColdOpen: () => state.adopt,
   useSetColdOpenFavorite: () => ({ mutate: vi.fn(), isPending: false }),
   useStyles: () => ({ data: { ...state.stylesMeta, suggestions: state.suggestions ?? state.labels.map((label, index) => ({
     id: label, index, label, origin: "generated", template: `Full ${label} direction`, has_sample: true, is_active: false,
@@ -325,5 +327,60 @@ it("starts additional styles at directions until the new batch supplies its own 
   } finally {
     state.stylesMeta = {};
     state.jobs = [];
+  }
+});
+
+const firstPage = (id: string, adopted: boolean) => ({ id, label: id, medium: "ink", status: "ready", error: null, adopted,
+  image_url: `/proof/${id}`, preview_target: `cold_open/proof_${id}.png` });
+
+it("opens an empty Look on the author's first pages instead of asking for a paid batch", () => {
+  state.suggestions = [];
+  state.coldOpen = { status: "ready", phase: null, scene_title: "The square", scene_summary: "", chapter: 1,
+    story_copy: true, favorite_look_id: "noir", looks: [firstPage("noir", false), firstPage("ink", false)] };
+  try {
+    render(room());
+    expect(state.adopt.mutate).toHaveBeenCalledWith({ project: "book" });
+    // The room waits for the proofs rather than flashing the paid composer.
+    expect(screen.queryByRole("heading", { name: "Find the look" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create six directions" })).toBeNull();
+  } finally {
+    state.suggestions = undefined;
+    state.coldOpen = null;
+    state.adopt.mutate.mockReset();
+  }
+});
+
+it("keeps first pages Look cannot take as a first impression beside the composer", () => {
+  state.suggestions = [];
+  state.coldOpen = { status: "ready", phase: null, scene_title: "The square", scene_summary: "", chapter: 1,
+    story_copy: true, favorite_look_id: null, looks: [firstPage("noir", false)] };
+  state.adopt = { ...state.adopt, isIdle: false };
+  try {
+    render(room());
+    expect(state.adopt.mutate).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Find the look" })).toBeTruthy();
+    expect(screen.getByText(/A first impression of your story/)).toBeTruthy();
+  } finally {
+    state.suggestions = undefined;
+    state.coldOpen = null;
+    state.adopt = { ...state.adopt, isIdle: true };
+  }
+});
+
+it("says plainly that more proofs can be generated when only first pages are on the table", async () => {
+  const user = userEvent.setup();
+  state.suggestions = ["Noir", "Ink"].map((label, index) => ({
+    id: label, index, label, origin: "cold_open", template: `Full ${label} direction`, has_sample: true, is_active: false,
+  }));
+  try {
+    render(room());
+    expect(state.adopt.mutate).not.toHaveBeenCalled();
+    expect(screen.getByText("Your first pages are ready to use.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New direction" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Generate more proofs" }));
+    expect(screen.getByRole("heading", { name: "Art-direct for me" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Bring your own" })).toBeTruthy();
+  } finally {
+    state.suggestions = undefined;
   }
 });

@@ -27,6 +27,7 @@ export function ProofFilmstrip({
   onPick,
   onNew,
   newDisabled,
+  moreProofs = false,
 }: {
   projectName: string;
   suggestions: StyleSuggestion[];
@@ -36,6 +37,8 @@ export function ProofFilmstrip({
   onPick: (id: string) => void;
   onNew: () => void;
   newDisabled: boolean;
+  /** Only the author's first pages are here: name the tile for what it adds. */
+  moreProofs?: boolean;
 }) {
   const { t } = useI18n();
   const { attach: stripRef, ...strip } = useScrollStrip<HTMLUListElement>();
@@ -87,7 +90,7 @@ export function ProofFilmstrip({
         <li className="shrink-0">
           <button type="button" onClick={onNew} disabled={newDisabled}
             className="flex h-[4.6875rem] w-[3.75rem] flex-col items-center justify-center gap-1 border border-dashed border-pulp-paper/35 text-center font-meta text-[0.625rem] font-semibold leading-tight text-pulp-paper/85 transition-colors hover:border-narrator-gold hover:text-narrator-gold disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-narrator-gold">
-            <Plus size={16} aria-hidden="true" />{t("New direction")}
+            <Plus size={16} aria-hidden="true" />{moreProofs ? t("More proofs") : t("New direction")}
           </button>
         </li>
       </ul>

@@ -303,6 +303,45 @@ def test_style_adopts_only_proofs_it_would_draw_identically(tmp_path):
     assert cold_open.adoptable_looks(config, root, bible) == []  # never twice
 
 
+def test_look_opens_on_the_first_pages_without_generation(tmp_path):
+    from novel_to_comic.stages.s2_style import load_suggestions, save_suggestions
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+
+    root, _part = _series(tmp_path)
+    save_state(create_initial_state("demo", "novel.txt"), root)
+    config = Config()
+    bible = _opening_bible()
+    artifacts.story_bible_path(root).write_text(bible.model_dump_json())
+    record = cold_open.begin_record(root, "part_0001", bible)
+    looks = choose_looks(bible)
+    record.looks = [ColdOpenLook(id=look.id, label=look.label, medium="m", status="ready") for look in looks]
+    record.looks[1].status = "failed"
+    record.favorite_look_id = looks[2].id
+    cold_open.write_record(root, record)
+    for look in (looks[0], looks[2]):
+        request = cold_open._proof_request(config, root, bible, look.suggestion, None)
+        path = cold_open.proof_path(root, look.id)
+        path.write_bytes(look.id.encode())
+        artifacts.write_asset_meta(path, {"provenance": {"execution_fingerprint": request.wire.execution_fingerprint}})
+
+    assert cold_open_jobs.adopt_first_pages(root, config) == [looks[2].id, looks[0].id]  # the favorite leads
+    assert [suggestion["id"] for suggestion in load_suggestions(root)] == [looks[2].id, looks[0].id]
+    assert artifacts.style_sample_path(root, 1).read_bytes() == looks[2].id.encode()
+    # Reviewable, so choosing a proof approves Style; nothing is selected for the author.
+    style_state = load_state(root).stages["style"]
+    assert style_state.status == StageStatus.AWAITING_REVIEW and style_state.items_done == 2
+    assert Config().style_template == config.style_template
+    assert cold_open_jobs.adopt_first_pages(root, config) == []  # never twice
+
+    # Look's own proofs are never joined uninvited.
+    other, _part = _series(tmp_path / "other")
+    save_state(create_initial_state("demo", "novel.txt"), other)
+    artifacts.story_bible_path(other).write_text(bible.model_dump_json())
+    cold_open.write_record(other, record.model_copy(update={"adopted_look_ids": []}))
+    save_suggestions(other, [looks[1].suggestion], bible.title)
+    assert cold_open_jobs.adopt_first_pages(other, config) == []
+
+
 def test_the_cold_open_never_holds_the_author_s_work_back():
     from novel_to_comic.server.admission import mutation_conflicts, project_busy
 

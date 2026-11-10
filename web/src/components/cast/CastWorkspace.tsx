@@ -212,6 +212,7 @@ export function CastWorkspace({ project, entry, sub, toolbar, stageRegenerating,
             entry={entry}
             mainSrc={kind === "character" ? versionedUrl(`${portraitUrl(project, entity.id)}?t=${encodeURIComponent(image.timestamp)}`) : image.imageSrc}
             mainFallback={image.imageSrc}
+            mainMissing={image.missing}
             mainDrawing={image.isGenerating}
             looks={looks}
             selected={lookId}
@@ -396,17 +397,20 @@ function LookDetails({ entry, look, outdated, failure, busy, keeping, onKeep, ke
 type Looks = ReturnType<typeof useLooks>;
 
 /** Main plus every look, under the stage. Picking one puts it on the stage and in the panel. */
-function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected, onSelect }: {
+function LooksStrip({ entry, mainSrc, mainFallback, mainMissing, mainDrawing, looks, selected, onSelect }: {
   entry: CastEntry;
   mainSrc: string;
   mainFallback: string;
+  mainMissing: boolean;
   mainDrawing: boolean;
   looks: Looks;
   selected: string | null;
   onSelect: (stateId: string | null) => void;
 }) {
   const { t } = useI18n();
-  const [mainFailed, setMainFailed] = useState(false);
+  // Sources that failed to load; keyed by URL so a redraw (new timestamp) tries again.
+  const [failedMain, setFailedMain] = useState<ReadonlySet<string>>(() => new Set());
+  const mainShown = mainMissing ? null : [mainSrc, mainFallback].find((src) => !failedMain.has(src)) ?? null;
   const art = entry.kind === "character" ? "h-16 w-16" : "h-[3.9375rem] w-28";
   const tile = cn(
     "group flex shrink-0 flex-col gap-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold",
@@ -427,8 +431,15 @@ function LooksStrip({ entry, mainSrc, mainFallback, mainDrawing, looks, selected
       </span>
       <button type="button" aria-pressed={selected === null} onClick={() => onSelect(null)} className={tile}>
         <span className={frame(selected === null)}>
-          <img src={thumbnailUrl(mainFailed ? mainFallback : mainSrc)} alt="" onError={() => setMainFailed(true)}
-            className={cn("h-full w-full object-cover", mainDrawing && "opacity-40")} />
+          {mainShown && (
+            <img key={mainShown} src={thumbnailUrl(mainShown)} alt="" onError={() => setFailedMain((prev) => new Set(prev).add(mainShown))}
+              className={cn("h-full w-full object-cover", mainDrawing && "opacity-40")} />
+          )}
+          {(!mainShown || mainDrawing) && (
+            <span aria-hidden="true" className="benday-ink absolute inset-0 flex items-center justify-center bg-ink-black/60">
+              {mainDrawing ? <span className="size-2 bg-narrator-gold motion-safe:animate-pulse" /> : <Plus size={16} className="text-pulp-paper/60" />}
+            </span>
+          )}
         </span>
         <span className={caption(selected === null)}>{t("Main")}</span>
       </button>

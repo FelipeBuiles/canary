@@ -36,7 +36,7 @@ import {
   runFinishPreflight,
   triggerExport,
 } from "./pages";
-import { createStyleDirection, generateStyleValidation, getColdOpen, getStyles, setColdOpenFavorite, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
+import { adoptColdOpen, createStyleDirection, generateStyleValidation, getColdOpen, getStyles, setColdOpenFavorite, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import { invalidateProject, splitProjectKey } from "./projectScope";
 import {
@@ -765,6 +765,15 @@ export function useColdOpen(project: string | undefined, watching = false) {
       if (status === "printing") return 1500;
       return !status && watching ? 3000 : false;
     },
+  });
+}
+
+/** Look opens on the first pages; stays pending until the room has refetched them. */
+export function useAdoptColdOpen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project }: { project: string }) => adoptColdOpen(project),
+    onSuccess: (_data, { project }) => invalidateProject(qc, project),
   });
 }
 

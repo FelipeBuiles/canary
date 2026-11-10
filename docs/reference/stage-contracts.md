@@ -135,7 +135,9 @@ Cast belong to the series.
   for it. Style adopts a Cold
   Open proof into its picker only when the proof's request fingerprint equals
   the one Style would build; the author's favorite is a highlight, never a
-  selection.
+  selection. An empty Look adopts those proofs when the room opens
+  (`POST /cold-open/adopt`): no model call, no spend, and a never-run Style
+  stage becomes reviewable. Paid curation adopts them the same way.
 - **Brief.** A later part's draft takes `themes`, `point_of_view`,
   `narrator_treatment`, `tone`, `motifs` and `transformation_level` from the
   nearest earlier approved Brief; the author can still edit them. Its
