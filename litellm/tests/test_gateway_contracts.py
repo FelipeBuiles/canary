@@ -167,7 +167,8 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
         "claude-sonnet-5-5", "claude-haiku-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
         "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware", "image-sunburst-2.6", "image-flare-2.6",
         "image-sunburst-2.6-runware", "image-flare-2.6-runware",
-        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-carbon",
+        "image-minimax-h3-runware", "image-minimax-h3-highspeed-runware",
+        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-carbon", "gemini-4-hydrogen",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract", "runware-gemini-4-argon", "runware-deepseek-v4.1-flash-1017", "runware-gpt-6.1-terra",
     }
@@ -754,13 +755,15 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
 
 @pytest.mark.parametrize("output_mode", ["plain", "json_object", "json_schema"])
 @pytest.mark.parametrize("effort", [None, "low", "medium", "high"])
-def test_carbon_route_serializes_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort):
+# 1000 input + 150 output (thinking bills as output) at each route's rates.
+@pytest.mark.parametrize(("alias", "cost"), [("gemini-4-carbon", 0.0035), ("gemini-4-hydrogen", 0.002625)])
+def test_gemini_4_routes_serialize_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort, alias, cost):
     import json
     import litellm
 
     _vertex_adc(monkeypatch)
     monkeypatch.setattr(litellm, "model_cost", _bundled_cost_map())
-    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-4-carbon")
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == alias)
     seen = []
 
     def send(self, request, **kwargs):
@@ -782,12 +785,12 @@ def test_carbon_route_serializes_verified_output_with_adc_without_inferred_contr
         output["response_format"] = {"type": "json_object"}
     elif output_mode == "json_schema":
         output["response_format"] = {"type": "json_schema", "json_schema": {"name": "probe", "schema": schema}}
-    response = router.completion(model="gemini-4-carbon", messages=[
+    response = router.completion(model=alias, messages=[
         {"role": "system", "content": "Return an answer."}, {"role": "user", "content": "Hello"},
     ], max_completion_tokens=4096, **output)
     request = seen[-1]
     assert request.url.host == "aiplatform.googleapis.com"
-    assert request.url.path.endswith("/projects/fixture-project/locations/global/publishers/google/models/gemini-4-carbon:generateContent")
+    assert request.url.path.endswith(f"/projects/fixture-project/locations/global/publishers/google/models/{alias}:generateContent")
     assert request.headers["authorization"] == "Bearer fixture-token"
     assert "x-goog-api-key" not in request.headers
     generation = json.loads(request.content)["generationConfig"]
@@ -797,4 +800,4 @@ def test_carbon_route_serializes_verified_output_with_adc_without_inferred_contr
     if output_mode == "json_schema":
         expected["response_json_schema"] = schema
     assert generation == expected
-    assert response._hidden_params["response_cost"] == pytest.approx(0.0035)
+    assert response._hidden_params["response_cost"] == pytest.approx(cost)

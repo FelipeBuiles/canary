@@ -71,6 +71,7 @@ const OperatorModelPanel = lazy(() => import("../components/OperatorModelPanel")
 
 const HostMaintenancePanel = lazy(() => import("../components/HostMaintenancePanel").then(({ HostMaintenancePanel }) => ({ default: HostMaintenancePanel })));
 const EnvironmentPanel = lazy(() => import('../components/EnvironmentPanel').then(({ EnvironmentPanel }) => ({ default: EnvironmentPanel })));
+const RuntimeSettingsPanel = lazy(() => import('../components/RuntimeSettingsPanel').then(({ RuntimeSettingsPanel }) => ({ default: RuntimeSettingsPanel })));
 
 const MarketingDesk = import.meta.env.DEV ? lazy(() => import("../components/marketing/MarketingDesk").then(({ MarketingDesk }) => ({ default: MarketingDesk }))) : null;
 
@@ -1038,7 +1039,7 @@ export function BackofficePage() {
             {activeView === "support" && <FeedbackInbox connection={connection} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
             {activeView === "host" && <Suspense fallback={<p role="status">Loading host maintenance…</p>}><HostMaintenancePanel connection={connection} /></Suspense>}
-            {activeView === 'environment' && <Suspense fallback={<p role="status">Loading environment…</p>}><EnvironmentPanel connection={connection} /></Suspense>}
+            {activeView === 'environment' && <Suspense fallback={<p role="status">Loading environment…</p>}><RuntimeSettingsPanel connection={connection} /><EnvironmentPanel connection={connection} /></Suspense>}
             {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}
           </div>
         </main>

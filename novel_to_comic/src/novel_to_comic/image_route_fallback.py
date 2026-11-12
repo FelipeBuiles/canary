@@ -255,6 +255,10 @@ async def _run_openai_first(
     request_key: str,
     estimate_openai_usd: Callable[[], float],
 ) -> tuple[T, str, dict[str, object] | None]:
+    from novel_to_comic.sponsored_budget import refuse_cash_route
+
+    # Covers the whole chain: OpenAI here and the FAL backup behind it.
+    refuse_cash_route("OpenAI")
     if OPENAI_SUNBURST_CIRCUIT.is_open():
         increment_metric("canary_image_route_fallbacks_total", reason="circuit_open", surface=surface)
         return await backup(), "fal-queue", {"from_route": "openai", "reason": "circuit_open"}

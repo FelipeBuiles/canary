@@ -10,7 +10,7 @@ import { LegalLayout } from "../../layout/LegalLayout";
  */
 export function TermsPage() {
   return (
-    <LegalLayout title="Terms of Service" updated="July 2, 2026">
+    <LegalLayout title="Terms of Service" updated="November 12, 2026">
       <p>
         These Terms of Service ("Terms") govern your use of the Scenewright web
         application (the "Service"). By creating an account or using the Service,
@@ -78,7 +78,11 @@ export function TermsPage() {
       <h2>6. Credits &amp; Payment</h2>
       <p>
         Certain features require credits, which may be purchased. All purchases
-        are processed by Stripe. Credits do not expire. We may change pricing or
+        are processed by Stripe. Purchased credits do not expire. Promotional
+        credits, which we may grant without payment, are limited to one grant
+        per person and per payment card, expire on the date shown when they are
+        granted, have no cash value, and may be withdrawn where we find abuse
+        of an offer. We may end a promotional offer at any time. We may change pricing or
         package sizes at any time; changes do not affect credits already in your
         account. Except where required by law, credits are non-refundable.
       </p>

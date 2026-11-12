@@ -10,6 +10,8 @@ import { BrandMark } from "../../components/BrandMark";
 import { cn } from "../../lib/cn";
 import { useI18n } from "../../i18n";
 import { getAcquisition, trackSignupSubmitted } from "../../telemetry";
+import { TurnstileWidget } from "../../components/TurnstileWidget";
+import { turnstileSiteKey, useTurnstileSiteKey } from "../../lib/turnstile";
 
 type AuthMode = "signin" | "signup";
 
@@ -48,6 +50,25 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const [error, setError] = useState<Error | string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // With a site key configured, Supabase Auth rejects email requests without a token.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const siteKey = useTurnstileSiteKey();
+  const captcha = siteKey ? { captchaToken: captchaToken ?? undefined } : {};
+
+  async function captchaMissing(): Promise<boolean> {
+    // The key arrives from the server; wait for it so a fast submit is not sent without a token.
+    if (!(await turnstileSiteKey()) || captchaToken) return false;
+    setError(t("Complete the check below, then try again."));
+    return true;
+  }
+
+  function spendCaptcha() {
+    // A token is good for one request, whether it succeeded or not.
+    if (!siteKey) return;
+    setCaptchaToken(null);
+    setCaptchaReset((count) => count + 1);
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,6 +87,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     if (submitting || loading) return;
     setError(null);
     setMessage(null);
+    if (await captchaMissing()) return;
     setSubmitting(true);
     try {
       if (mode === "signup") {
@@ -75,19 +97,23 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
             // First-touch attribution survives the email-confirmation hop.
             data: { studio_name: studioName, ...signupMetadata(searchParams, getAcquisition()) },
             emailRedirectTo: authRedirectUrl(sampleDestination),
+            ...captcha,
           },
         });
         if (error) throw error;
         trackSignupSubmitted();
         setMessage(t("Check {email} for the confirmation link.", { email: email.trim() }));
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(), password, ...(siteKey ? { options: captcha } : {}),
+        });
         if (error) throw error;
         navigate(sampleDestination, { replace: true });
       }
     } catch (error) {
       setError(error instanceof Error ? error : new Error(t("We couldn't complete that request. Please try again.")));
     } finally {
+      spendCaptcha();
       setSubmitting(false);
     }
   }
@@ -120,16 +146,18 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
       setError(t("Enter your email above, then tap “Forgot password?” again."));
       return;
     }
+    if (await captchaMissing()) return;
     setSubmitting(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: authRedirectUrl("/reset-password"),
+        redirectTo: authRedirectUrl("/reset-password"), ...captcha,
       });
       if (error) throw error;
       setMessage(t("Check {email} for a password-reset link.", { email: email.trim() }));
     } catch (error) {
       setError(error instanceof Error ? error : new Error(t("We couldn't send the reset link. Please try again.")));
     } finally {
+      spendCaptcha();
       setSubmitting(false);
     }
   }
@@ -253,6 +281,10 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   placeholder="••••••••"
                 />
 
+                {siteKey && (
+                  <TurnstileWidget siteKey={siteKey} onToken={setCaptchaToken} resetSignal={captchaReset} />
+                )}
+
                 {error && (typeof error === "string" ? <p role="alert" className="bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">{error}</p> : <ErrorNotice error={error} operation="auth" />)}
                 {message && (
                   <p role="status" className="bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
@@ -276,7 +308,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 )}
                 {mode === "signup" && (
                   <p className="pt-1 text-center font-body text-[0.8rem] font-semibold text-ink-black/60">
-                    No subscription. Credits never expire. By creating an
+                    No subscription. Purchased credits never expire. By creating an
                     account you agree to our{" "}
                     <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
                       Terms

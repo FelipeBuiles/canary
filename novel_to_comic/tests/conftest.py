@@ -47,3 +47,12 @@ def lettering_browsers(request):
 def isolated_ai_admission(monkeypatch):
     from novel_to_comic.ai import admission
     monkeypatch.setattr(admission, "_controller", admission.new_controller())
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_settings():
+    """Settings come from the environment alone unless a test supplies stored values."""
+    from novel_to_comic import runtime_settings
+    runtime_settings.use_loader(lambda: None)
+    yield
+    runtime_settings.use_loader(lambda: None)

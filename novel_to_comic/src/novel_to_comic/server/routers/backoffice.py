@@ -1045,3 +1045,52 @@ def operator_host_status():
 def operator_host_maintenance(body: HostMaintenanceRequest):
     from ..host_maintenance import host_request
     return host_request(body.model_dump(exclude_none=True))
+
+
+class RuntimeSettingWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str = Field(max_length=2000)
+
+
+def _runtime_settings_payload() -> dict[str, Any]:
+    from novel_to_comic import runtime_settings
+
+    return {"store": runtime_settings.store_state(), "settings": runtime_settings.effective()}
+
+
+@router.get("/settings")
+def read_runtime_settings() -> dict[str, Any]:
+    """Operator settings that apply without a restart, with each value's source."""
+    return _runtime_settings_payload()
+
+
+@router.put("/settings/{key}")
+def write_runtime_setting(key: str, body: RuntimeSettingWrite) -> dict[str, Any]:
+    from novel_to_comic import runtime_settings
+
+    try:
+        runtime_settings.set_override(key, body.value)
+    except runtime_settings.InvalidSetting as error:
+        raise HTTPException(422, str(error)) from error
+    except runtime_settings.SettingsStoreUnavailable as error:
+        raise HTTPException(409, str(error)) from error
+    except Exception as error:
+        logger.exception("Runtime setting %s could not be stored", key)
+        raise HTTPException(503, "The setting could not be stored. Nothing changed.") from error
+    return _runtime_settings_payload()
+
+
+@router.delete("/settings/{key}")
+def clear_runtime_setting(key: str) -> dict[str, Any]:
+    from novel_to_comic import runtime_settings
+
+    try:
+        runtime_settings.clear_override(key)
+    except runtime_settings.InvalidSetting as error:
+        raise HTTPException(404, str(error)) from error
+    except runtime_settings.SettingsStoreUnavailable as error:
+        raise HTTPException(409, str(error)) from error
+    except Exception as error:
+        logger.exception("Runtime setting %s override could not be removed", key)
+        raise HTTPException(503, "The override could not be removed. Nothing changed.") from error
+    return _runtime_settings_payload()

@@ -212,9 +212,12 @@ async def _run_stage_with_credits(
     request: Request | None = None,
     queue_draw_pages: bool = False,
     approve_part: str | None = None,
+    chain_sponsor: str | None = None,
     **_unused_kwargs,
 ) -> None:
     admit_stage_action(config, stage)
+    # Set when this run is Canary-paid, so the stage it auto-chains is too.
+    sponsor: str | None = None
     if stage == "plan" and not rerun:
         from novel_to_comic.stages.s4_adapt import published_adaptation_needs_repair
 
@@ -334,7 +337,14 @@ async def _run_stage_with_credits(
                 await asyncio.to_thread(_sync_draw_progress, project_dir, request.app)
             job_id = None
         else:
+            from .cold_open_jobs import free_opening_sponsor
+
+            # A free Extract auto-chains Brief. An account without credits would
+            # fail there, so Canary pays for that one chained Brief as well.
+            sponsor = (free_opening_sponsor(project_dir, state, project_id, stage, rerun=rerun, claim=True)
+                       or (chain_sponsor if stage in STAGE_AUTO_CHAIN.get("extract", ()) and not rerun else None))
             job_id = await run_credited_stage(
+                sponsor=sponsor,
                 user_id=user_id,
                 project_id=project_id,
                 project_dir=project_dir,
@@ -512,6 +522,7 @@ async def _run_stage_with_credits(
             project_id,
             rerun=False,
             request=request,
+            chain_sponsor=sponsor,
         )
         if state.stages[next_stage].status != StageStatus.COMPLETE:
             break

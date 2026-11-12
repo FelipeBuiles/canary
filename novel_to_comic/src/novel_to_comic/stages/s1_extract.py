@@ -1016,6 +1016,15 @@ def _part_source(project_dir: Path, state) -> tuple[str | None, int, str | bytes
     return part, part_ordinal(part) if part else 1, _read_novel(novel_path)
 
 
+def source_text(project_dir: Path, state) -> str:
+    """The source text this Extract would read; empty when unreadable."""
+    try:
+        text = _part_source(project_dir, state)[2]
+    except Exception:
+        return ""
+    return text if isinstance(text, str) else ""
+
+
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
     """Execute Stage 1: Extract one part's Story Bible additions.
 

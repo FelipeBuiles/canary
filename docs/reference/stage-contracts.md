@@ -138,6 +138,66 @@ Cast belong to the series.
   selection. An empty Look adopts those proofs when the room opens
   (`POST /cold-open/adopt`): no model call, no spend, and a never-run Style
   stage becomes reviewable. Paid curation adopts them the same way.
+- **Canary-paid work.** `sponsored_budget.py` limits everything that runs with
+  a sponsor. `CANARY_SPONSORED_DAILY_USD` is a ceiling on one UTC day's
+  sponsored provider cost across all accounts (unset: US$10 in production, no
+  ceiling elsewhere; 0 admits nothing). It is checked at admission, so a job
+  already running finishes and one day can exceed it by one job.
+  `CANARY_SPONSORED_GRANT_ROUTES_ONLY` (unset: on in production) makes a
+  sponsored image fail instead of moving to the OpenAI or FAL route. With
+  `CANARY_FREE_OPENING_MAX_CHARS` set, the first Extract of the account's
+  Cold Open project is sponsored when the first part is at most that many
+  characters, so an account without credits reaches its Cold Open
+  (`free_opening_sponsor`). It uses the Cold Open's grant. A failed run
+  retries free; a completed Extract, a rerun, a later part or a longer
+  upload is paid by the author. Unset or 0, no Extract is sponsored. The
+  Brief that a sponsored Extract auto-chains is sponsored too, and the
+  estimate quotes both at 0 credits.
+  `CANARY_IMAGE_CASH_ROUTES_DISABLED` closes the OpenAI and FAL image routes
+  to all work, paid as well as sponsored.
+  Where accounts are limited (production), the run request also checks the
+  person (`server/free_opening_guard.py`): a verified, non-disposable email
+  no other account has used (Gmail dots and `+tags` ignored;
+  `CANARY_DISPOSABLE_EMAIL_DOMAINS` adds domains), an opening no other
+  account has had read free, and at most `CANARY_FREE_OPENING_PER_IP_DAILY`
+  (default 2) new claims per visitor address per UTC day. Claims are kept as
+  SHA-256 digests on the projects volume. A refusal is silent: the run is
+  priced normally. The grant is claimed by the run request; the job only
+  honors a project that already holds it. Signup's bot check is Cloudflare
+  Turnstile (`CANARY_TURNSTILE_SITE_KEY`, served by `/api/public-config`),
+  verified by Supabase Auth.
+- **Live settings.** `runtime_settings.py` declares the operator settings that
+  can change while the server runs (the Cold Open, Canary-paid work and grant
+  settings above). A value comes from the Supabase `app_settings` table
+  (`docs/migrations/2026-11-12-app-settings.sql`) when one is stored, else the
+  environment variable of the same name, else the reader's default. The table
+  is read at most once a minute; a failed read keeps the last values, and
+  before any successful read the settings that give something away are off.
+  Without the table the environment alone applies. Operators read and change
+  them at `/api/ops/backoffice/settings` (Backoffice → Environment → Live
+  settings); writes are bounded per setting. Secrets and settings that need a
+  restart stay with the host configuration.
+- **First-chapter grant.** `server/card_grant.py`, off unless
+  `CANARY_CARD_GRANT_CREDITS` is positive, and requiring
+  `docs/migrations/2026-11-12-card-chapter-grant.sql`. An account with a
+  printed Cold Open may verify a card in Stripe Checkout setup mode
+  (`POST /api/billing/card-grant/checkout`): nothing is charged and the card
+  is not attached to a customer. The `checkout.session.completed` webhook
+  reads the card fingerprint and grants once per card and per account
+  (`claim_card_chapter_grant`), within `CANARY_CARD_GRANT_SEATS` (default
+  100) and before `CANARY_CARD_GRANT_ENDS`; prepaid cards are refused. The
+  grant is a ledger row. After `CANARY_CARD_GRANT_EXPIRY_DAYS` (default 30)
+  its unspent part is taken back by a negative row
+  (`expire_card_chapter_grants`), swept before a balance is read; usage
+  spends the grant before purchased credits. To close the offer while
+  grants are still expiring, set the end date or zero seats and keep the
+  credits setting, or set `CANARY_CARD_GRANT_EXPIRE=1`. Work paid with
+  granted credits uses the normal image routes, including the cash ones
+  unless `CANARY_IMAGE_CASH_ROUTES_DISABLED` is set. With
+  `CANARY_FIRST_PURCHASE_BONUS_PERCENT`, a grant holder's first purchase
+  while the grant is unexpired adds that share as bonus credits, once
+  (`grant_first_purchase_bonus`). Rollout steps:
+  [free-offer rollout](../plans/2026-11-12-free-offer-rollout.md).
 - **Brief.** A later part's draft takes `themes`, `point_of_view`,
   `narrator_treatment`, `tone`, `motifs` and `transformation_level` from the
   nearest earlier approved Brief; the author can still edit them. Its

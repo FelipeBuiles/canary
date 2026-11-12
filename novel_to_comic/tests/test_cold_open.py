@@ -354,3 +354,262 @@ def test_the_cold_open_never_holds_the_author_s_work_back():
     assert not mutation_conflicts(app, "u:p", "/styles/suggest")
     # Deleting the project still waits: the job writes into it.
     assert project_busy(app, "u:p", ambient=True)
+
+
+# --- Canary-paid first Extract, the daily ceiling, and grant routes only ---
+
+from novel_to_comic import image_route_fallback, sponsored_budget  # noqa: E402
+from novel_to_comic.server import free_opening_guard  # noqa: E402
+from novel_to_comic.server.free_opening_guard import Applicant  # noqa: E402
+from novel_to_comic.state import StageStatus  # noqa: E402
+
+
+def _applicant(email="mara@example.com", ip="203.0.113.7", verified=True):
+    return Applicant(email, verified, ip)
+
+
+def _extract_state(status=StageStatus.PENDING):
+    return SimpleNamespace(stages={"extract": SimpleNamespace(status=status)})
+
+
+def _free_opening(tmp_path, monkeypatch, *, length=9000, env="production"):
+    monkeypatch.setenv("CANARY_ENV", env)
+    monkeypatch.delenv("CANARY_COLD_OPEN_PER_ACCOUNT", raising=False)
+    monkeypatch.delenv("CANARY_SPONSORED_DAILY_USD", raising=False)
+    monkeypatch.setenv("CANARY_FREE_OPENING_MAX_CHARS", "20000")
+    monkeypatch.delenv("CANARY_FREE_OPENING_PER_IP_DAILY", raising=False)
+    monkeypatch.delenv("CANARY_DISPOSABLE_EMAIL_DOMAINS", raising=False)
+    monkeypatch.setattr("novel_to_comic.stages.s1_extract.source_text",
+                        lambda *_: ("Mara crossed the square. " * length)[:length])
+    volume = tmp_path / "volume"
+    part = create_part_workspace(volume / "account" / "series", "part_0001")
+    return volume, part
+
+
+def test_the_first_extract_is_free_only_when_enabled(tmp_path, monkeypatch):
+    _, part = _free_opening(tmp_path, monkeypatch)
+    sponsor = lambda **kw: cold_open_jobs.free_opening_sponsor(  # noqa: E731
+        **{"part_dir": part, "state": _extract_state(), "project_id": "project", "stage": "extract",
+           "applicant": _applicant(), **kw})
+    monkeypatch.delenv("CANARY_FREE_OPENING_MAX_CHARS")
+    assert sponsor() is None  # off unless the operator sets a length
+    monkeypatch.setenv("CANARY_FREE_OPENING_MAX_CHARS", "20000")
+    assert sponsor() == "cold_open"
+    assert not (part.parent.parent.parent / cold_open_jobs.GRANTS_FILE).exists()  # asking claims nothing
+    assert not (part.parents[3] / free_opening_guard.CLAIMS_FILE).exists()
+    assert sponsor(stage="brief") is None
+    assert sponsor(rerun=True) is None
+    assert sponsor(project_id=None) is None
+    assert sponsor(state=_extract_state(StageStatus.COMPLETE)) is None
+    later = create_part_workspace(part.parent.parent, "part_0002")
+    assert sponsor(part_dir=later) is None
+
+
+def test_a_long_upload_pays_for_its_own_extract(tmp_path, monkeypatch):
+    _, part = _free_opening(tmp_path, monkeypatch, length=20001)
+    assert cold_open_jobs.free_opening_sponsor(
+        part, _extract_state(), "project", "extract", applicant=_applicant()) is None
+
+
+def test_the_free_extract_spends_the_account_s_one_grant(tmp_path, monkeypatch):
+    _, part = _free_opening(tmp_path, monkeypatch)
+    claim = lambda project: cold_open_jobs.free_opening_sponsor(  # noqa: E731
+        part, _extract_state(), project, "extract", claim=True, applicant=_applicant())
+    assert claim("project-a") == "cold_open"
+    assert claim("project-a") == "cold_open"  # a failed run retries free
+    # The job has no request to judge; it honors what the run request admitted.
+    assert cold_open_jobs.free_opening_sponsor(part, _extract_state(), "project-a", "extract", claim=True) == "cold_open"
+    assert claim("project-b") is None
+    # The Cold Open that follows uses the same grant, not a second one.
+    assert cold_open_jobs.claim_grant(part.parent.parent.parent, "project-a")
+    monkeypatch.setenv("CANARY_COLD_OPEN_PER_ACCOUNT", "0")
+    assert claim("project-a") is None  # the kill switch covers the free Extract too
+
+
+def test_the_daily_ceiling_stops_new_sponsored_work(tmp_path, monkeypatch):
+    volume, part = _free_opening(tmp_path, monkeypatch)
+    assert sponsored_budget.daily_ceiling_usd() == 10.0
+    sponsored_budget.record_spend(volume, 6.0)
+    assert sponsored_budget.has_room(volume)
+    sponsored_budget.record_spend(volume, 4.5)
+    sponsored_budget.record_spend(volume, None)
+    assert sponsored_budget.spent_today_usd(volume) == 10.5
+    assert not sponsored_budget.has_room(volume)
+    assert cold_open_jobs.free_opening_sponsor(
+        part, _extract_state(), "project", "extract", claim=True, applicant=_applicant()) is None
+    assert not (volume / "account" / cold_open_jobs.GRANTS_FILE).exists()  # a refused day keeps the grant
+    # A new day starts from zero.
+    monkeypatch.setattr(sponsored_budget, "_today", lambda: "2999-01-01")
+    assert sponsored_budget.spent_today_usd(volume) == 0.0 and sponsored_budget.has_room(volume)
+    monkeypatch.setenv("CANARY_ENV", "development")
+    assert sponsored_budget.daily_ceiling_usd() is None  # local work is never refused
+
+
+def test_the_ceiling_refuses_a_cold_open_without_spending_the_grant(tmp_path, monkeypatch):
+    volume, part = _free_opening(tmp_path, monkeypatch)
+    (part.parent.parent / "state.json").write_text("{}")
+    TargetArtifacts(part).write_opening_snapshot(
+        OpeningSnapshot(bible=_opening_bible(), text=OPENING, whole_source=False))
+    monkeypatch.setattr(cold_open_jobs, "enqueue_generation_job", lambda app, **kw: pytest.fail("admitted"))
+    sponsored_budget.record_spend(volume, 10.0)
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={}))
+    assert cold_open_jobs.start_cold_open(
+        app, user_id="user", project_id="project", part_dir=part, config=Config()) is None
+    assert not (volume / "account" / cold_open_jobs.GRANTS_FILE).exists()
+
+
+def test_sponsored_calls_count_toward_the_ceiling_from_either_workspace(tmp_path):
+    volume = tmp_path / "volume"
+    assert sponsored_budget.volume_for_workspace(volume / "account") == volume
+    assert sponsored_budget.volume_for_workspace(volume / "account" / "series" / "parts") == volume
+    usage = UsageRecord(provider="vertex", model="gemini", call_id="call-2", operation="text", cost_usd=0.02)
+    with ai_request_context(user_id="u", job_id="job", sponsor="cold_open",
+                            workspace_id=str(volume / "account" / "series" / "parts")):
+        client._finalize_event(event_id="call-2", status="succeeded", feature="extract",
+                               model_alias="gemini", latency_ms=10, usage=usage, operation="text")
+    assert sponsored_budget.spent_today_usd(volume) > 0
+    before = sponsored_budget.spent_today_usd(volume)
+    with ai_request_context(user_id="u", job_id="job", workspace_id=str(volume / "account")):
+        client._finalize_event(event_id="call-3", status="succeeded", feature="extract",
+                               model_alias="gemini", latency_ms=10, usage=usage, operation="text")
+    assert sponsored_budget.spent_today_usd(volume) == before  # the author's own calls are not sponsored spend
+
+
+def test_sponsored_images_never_reach_a_cash_route(monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "production")
+    monkeypatch.delenv("CANARY_SPONSORED_GRANT_ROUTES_ONLY", raising=False)
+
+    async def forbidden():
+        pytest.fail("a cash route was submitted")
+
+    async def openai_chain():
+        return await image_route_fallback._run_openai_first(
+            primary=forbidden, backup=forbidden, surface="asset", request_key="k",
+            estimate_openai_usd=lambda: 0.05)
+
+    async def runware_down():
+        raise __import__("httpx").ConnectError("down")
+
+    image_route_fallback.RUNWARE_CIRCUIT.reset()
+    with ai_request_context(user_id="u", sponsor="cold_open"):
+        with pytest.raises(sponsored_budget.SponsoredRouteUnavailable):
+            asyncio.run(openai_chain())
+        # Runware first: its failure stops the job instead of moving to OpenAI.
+        with pytest.raises(sponsored_budget.SponsoredRouteUnavailable):
+            asyncio.run(image_route_fallback._run_runware_first(
+                primary=runware_down, backup=openai_chain, surface="asset", request_key="k"))
+    image_route_fallback.RUNWARE_CIRCUIT.reset()
+    monkeypatch.setenv("CANARY_ENV", "development")
+    assert not sponsored_budget.grant_routes_only()
+
+
+def test_a_sponsored_stage_holds_no_credits(tmp_path, monkeypatch):
+    from novel_to_comic.ai.context import current_ai_request_context
+    from novel_to_comic.server import credited_job
+
+    held = []
+    monkeypatch.setattr(credited_job, "get_db", lambda: object())
+    monkeypatch.setattr(credited_job, "classify_operations", lambda ops: None)
+    monkeypatch.setattr(credited_job, "stage_operations", lambda config, stage: ())
+    monkeypatch.setattr(credited_job, "estimate_stage_credit_reservation",
+                        lambda *a: pytest.fail("a sponsored stage is not priced against the author"))
+    monkeypatch.setattr(credited_job, "reserve_credits",
+                        lambda db, user, project, stage, amount, **kw: held.append(amount) or (None, "job"))
+    monkeypatch.setattr(credited_job, "assert_reservation_active", lambda *a: None)
+    seen = []
+
+    async def run():
+        seen.append(current_ai_request_context().sponsor)
+
+    asyncio.run(credited_job.run_credited_stage(
+        user_id="u", project_id="p", project_dir=tmp_path, config=Config(), state=None,
+        stage="extract", run=run, sponsor="cold_open"))
+    assert held == [0] and seen == ["cold_open"]
+
+
+def test_one_free_opening_per_person_not_per_account(tmp_path, monkeypatch):
+    volume, part = _free_opening(tmp_path, monkeypatch)
+    other = create_part_workspace(volume / "second-account" / "series", "part_0001")
+    ask = lambda part_dir, **who: cold_open_jobs.free_opening_sponsor(  # noqa: E731
+        part_dir, _extract_state(), "project", "extract", claim=True, applicant=_applicant(**who))
+
+    assert cold_open_jobs.free_opening_sponsor(part, _extract_state(), "project", "extract", claim=True) is None
+    assert ask(part, verified=False) is None
+    assert ask(part, email=None) is None
+    assert ask(part, email="mara@mailinator.com") is None
+    assert not (volume / "account" / cold_open_jobs.GRANTS_FILE).exists()
+    assert ask(part, email="M.a.ra+comics@googlemail.com") == "cold_open"
+    # A second account: the same mailbox, then the same manuscript, are refused.
+    assert ask(other, email="mara@gmail.com", ip="198.51.100.2") is None
+    assert ask(other, email="someone@example.org", ip="198.51.100.2") is None
+    monkeypatch.setattr("novel_to_comic.stages.s1_extract.source_text", lambda *_: "A different story begins here.")
+    assert ask(other, email="someone@example.org", ip="198.51.100.2") == "cold_open"
+    assert not (volume / "second-account" / free_opening_guard.CLAIMS_FILE).exists()
+    stored = (volume / free_opening_guard.CLAIMS_FILE).read_text()
+    assert "gmail" not in stored and "198.51" not in stored  # digests only
+
+
+def test_an_address_claims_two_free_openings_a_day(tmp_path, monkeypatch):
+    volume, _ = _free_opening(tmp_path, monkeypatch)
+    for index, expected in enumerate((None, None, "address_limit")):
+        applicant = _applicant(email=f"author{index}@example.com")
+        assert free_opening_guard.claim(volume, f"account-{index}", applicant, f"Story number {index}.",
+                                        commit=True) == expected
+    assert free_opening_guard.claim(volume, "account-9", _applicant(email="x@example.com", ip=None),
+                                    "Another story.", commit=False) is None
+    monkeypatch.setattr(sponsored_budget, "_today", lambda: "2999-01-01")
+    assert free_opening_guard.claim(volume, "account-3", _applicant(email="late@example.com"),
+                                    "Tomorrow's story.", commit=True) is None
+
+
+def test_email_and_opening_normalization(monkeypatch):
+    normalize = free_opening_guard.normalize_email
+    assert normalize(" Jo.Hn+x@GMail.com ") == normalize("john@googlemail.com") == "john@gmail.com"
+    assert normalize("jo.hn+x@example.com") == "jo.hn@example.com"
+    assert normalize("not-an-address") is None and normalize("+tag@example.com") is None
+    assert free_opening_guard.is_disposable("a@sub.yopmail.com")
+    assert not free_opening_guard.is_disposable("a@example.com")
+    monkeypatch.setenv("CANARY_DISPOSABLE_EMAIL_DOMAINS", "example.com, ")
+    assert free_opening_guard.is_disposable("a@example.com")
+    fingerprint = free_opening_guard.opening_fingerprint
+    assert fingerprint("The bell rang.  Mara ran!") == fingerprint("the bell rang\nmara ran")
+    assert fingerprint("The bell rang.") != fingerprint("The bell sang.")
+
+
+def test_token_identity_reads_the_authenticated_request():
+    import jwt
+
+    from novel_to_comic.server.auth import token_identity
+
+    def request(claims=None, header=None):
+        token = jwt.encode(claims, "k" * 32, algorithm="HS256") if claims is not None else ""
+        return SimpleNamespace(headers={"authorization": header if header is not None else f"Bearer {token}"})
+
+    assert token_identity(request({"sub": "u", "email": "a@example.com"})) == ("a@example.com", True)
+    assert token_identity(request({"sub": "u", "email": "a@example.com",
+                                   "user_metadata": {"email_verified": False}})) == ("a@example.com", False)
+    assert token_identity(request({"sub": "u"})) == (None, False)
+    assert token_identity(request(header="")) == (None, False)
+    assert token_identity(request(header="Bearer nonsense")) == (None, False)
+
+
+def test_the_operator_can_close_the_cash_routes_to_all_image_work(monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "development")
+    monkeypatch.delenv("CANARY_IMAGE_CASH_ROUTES_DISABLED", raising=False)
+    calls = []
+
+    async def openai():
+        calls.append("openai")
+        return "image"
+
+    async def chain():
+        return await image_route_fallback._run_openai_first(
+            primary=openai, backup=openai, surface="draw", request_key="k", estimate_openai_usd=lambda: 0.05)
+
+    image_route_fallback.OPENAI_SUNBURST_CIRCUIT.reset()
+    with ai_request_context(user_id="u"):  # the author's own paid work
+        assert asyncio.run(chain())[:2] == ("image", "openai")
+        monkeypatch.setenv("CANARY_IMAGE_CASH_ROUTES_DISABLED", "true")
+        with pytest.raises(sponsored_budget.SponsoredRouteUnavailable):
+            asyncio.run(chain())
+    assert calls == ["openai"]

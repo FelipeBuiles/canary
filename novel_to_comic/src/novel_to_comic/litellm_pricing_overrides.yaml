@@ -10,6 +10,7 @@ aliases:
   gpt-6-luna: openai/gpt-6-luna
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   gemini-4-carbon: vertex_ai/gemini-4-carbon
+  gemini-4-hydrogen: vertex_ai/gemini-4-hydrogen
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
   claude-haiku-5-5: anthropic/claude-haiku-5-5
@@ -30,6 +31,8 @@ aliases:
   image-flare-2.6: openai/gpt-image-2.6-flare
   image-sunburst-2.6-runware: runware/gpt-image-2.6-sunburst
   image-flare-2.6-runware: runware/gpt-image-2.6-flare
+  image-minimax-h3-runware: runware/minimax-h3-image
+  image-minimax-h3-highspeed-runware: runware/minimax-h3-image-highspeed
 model_overrides:
   # N. Virginia DetectDocumentText, first 1M monthly images; verified 2026-10-07.
   # Conservative list-price accounting; discounts/credits are separate offsets.
@@ -67,6 +70,14 @@ model_overrides:
     input_cost_per_token: 2.0e-06
     cache_read_input_token_cost: 1.0e-07
     output_cost_per_token: 1.0e-05
+    mode: chat
+  # Google launch rates (2026-11-12), flat across the context window; no Vertex
+  # pricing page entry yet. Cache storage charges unconfirmed.
+  # https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/
+  gemini-4-hydrogen:
+    input_cost_per_token: 1.5e-06
+    cache_read_input_token_cost: 7.5e-08
+    output_cost_per_token: 7.5e-06
     mode: chat
   # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
   # Shared by the production API route and Labs Codex subscription usage.
@@ -341,6 +352,26 @@ model_overrides:
   # since 2.5's measured token tables do not apply to 2.6.
   runware/gpt-image-2.6-sunburst: *gpt_image_2_6
   runware/gpt-image-2.6-flare: *gpt_image_2_6
+  # MiniMax H3 Image (Runware model page, 2026-11-10): billed per token at
+  # $2.30/M text in, $1.50/M image in, $3.80/M image out. Outputs up to ~4 MP
+  # use ~4,100 image tokens; each reference ~2,050 input tokens; the rewritten
+  # prompt counts as text input. Runware reports the charged cost, which
+  # settles the call; the allowances reserve credits before it.
+  runware/minimax-h3-image:
+    input_cost_per_token: 2.3e-06
+    image_input_cost_per_token: 1.5e-06
+    output_cost_per_token: 3.8e-06
+    mode: image_generation
+    estimated_output_cost_per_image: 0.03
+    estimated_input_cost_per_reference: 0.004
+  # Highspeed: the same model and limits at twice the image token rates.
+  runware/minimax-h3-image-highspeed:
+    input_cost_per_token: 2.3e-06
+    image_input_cost_per_token: 3.0e-06
+    output_cost_per_token: 7.6e-06
+    mode: image_generation
+    estimated_output_cost_per_image: 0.05
+    estimated_input_cost_per_reference: 0.007
 
   # https://platform.claude.com/docs/en/models/haiku-5-5/overview (2026-10-07).
   claude-haiku-5-5: &haiku_5_5

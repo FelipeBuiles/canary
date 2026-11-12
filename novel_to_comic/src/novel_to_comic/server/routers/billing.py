@@ -9,11 +9,15 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from novel_to_comic import runtime_settings
+
+from .. import card_grant
 from ..auth import get_current_user
 from ..branding import get_branding
 from ..checkout_receipts import InvalidCheckoutReceipt, checkout_receipt, offer_snapshot
 from ..db import get_db
 from ..product_events import capture_server_event
+from ..ratelimit import limiter
 
 router = APIRouter()
 logger = logging.getLogger("pulp.billing")
@@ -226,6 +230,85 @@ async def create_checkout(
     return {"url": session.url}
 
 
+def _stripe_mode(value: Any) -> str:
+    live = value.get("livemode") if isinstance(value, dict) else getattr(value, "livemode", None)
+    return "live" if live is True else "test" if live is False else "unknown"
+
+
+def _card_grant_limit() -> str:
+    """Per-address limit on opening the card form, a target for card testing."""
+    return runtime_settings.raw("CANARY_RATE_LIMIT_CARD_GRANT") or "3/hour"
+
+
+@router.get("/card-grant")
+async def card_grant_status(request: Request, user_id: str = Depends(get_current_user)):
+    """Whether this account may verify a card for its first-chapter grant."""
+    account_dir = request.app.state.projects_dir / user_id
+    return await run_in_threadpool(card_grant.status, get_db(), user_id, account_dir)
+
+
+@router.post("/card-grant/checkout")
+@limiter.limit(_card_grant_limit)
+async def create_card_grant_checkout(request: Request, user_id: str = Depends(get_current_user)):
+    """Open Stripe Checkout in setup mode: the card is verified and never charged."""
+    account_dir = request.app.state.projects_dir / user_id
+    state = await run_in_threadpool(card_grant.status, get_db(), user_id, account_dir)
+    if not state["available"]:
+        raise HTTPException(409, {"code": "card_grant_unavailable", "reason": state.get("reason") or "disabled"})
+    _stripe()
+    origin = _checkout_origin(request)
+    try:
+        session = await run_in_threadpool(
+            stripe.checkout.Session.create,
+            mode="setup",
+            currency="usd",
+            payment_method_types=["card"],
+            success_url=f"{origin}/credits?card_grant=success",
+            cancel_url=f"{origin}/credits?card_grant=cancelled",
+            metadata={"user_id": user_id, "purpose": card_grant.PURPOSE},
+        )
+    except stripe.error.StripeError as exc:
+        raise _wrap_stripe_error(exc) from exc
+    capture_server_event("card_grant_started", user_id=user_id,
+                         request_id=getattr(request.state, "request_id", None),
+                         properties={"stripe_mode": _stripe_mode(session)})
+    return {"url": session.url}
+
+
+def _handle_card_grant(session: dict) -> None:
+    """Grant the first chapter once the verified card is new to Canary."""
+    user_id = (session.get("metadata") or {}).get("user_id")
+    setup_intent_id = session.get("setup_intent")
+    if session.get("status") != "complete" or not isinstance(user_id, str) or not isinstance(setup_intent_id, str):
+        logger.warning("Ignoring incomplete card verification session %s", session.get("id"))
+        return
+
+    def refuse(reason: str) -> None:
+        logger.info("Card grant refused user=%s reason=%s", user_id, reason)
+        capture_server_event("card_grant_refused", user_id=user_id,
+                             properties={"reason": reason, "stripe_mode": _stripe_mode(session)})
+
+    if not card_grant.open_now():
+        return refuse("ended")
+    _stripe()
+    intent = _stripe_dict(stripe.SetupIntent.retrieve(setup_intent_id, expand=["payment_method"]))
+    method = intent.get("payment_method")
+    card = (method.get("card") or {}) if isinstance(method, dict) else {}
+    fingerprint = card.get("fingerprint")
+    if intent.get("status") != "succeeded" or not isinstance(fingerprint, str) or not fingerprint:
+        return refuse("card_unverified")
+    if card.get("funding") == "prepaid":
+        # A prepaid card is a fresh fingerprint for a few dollars.
+        return refuse("prepaid_card")
+    verdict = card_grant.claim(get_db(), user_id=user_id, fingerprint=fingerprint, setup_intent_id=setup_intent_id)
+    if verdict == "granted":
+        logger.info("Card grant given user=%s credits=%d", user_id, card_grant.grant_credits())
+        capture_server_event("card_grant_claimed", user_id=user_id, properties={
+            "credits": card_grant.grant_credits(), "stripe_mode": _stripe_mode(session)})
+    elif verdict != "duplicate":
+        refuse(verdict)
+
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     """Receive Stripe events. Must use raw request body for signature verification."""
@@ -246,7 +329,12 @@ async def stripe_webhook(request: Request):
 
     if event["type"] in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         session = _stripe_dict(event["data"]["object"])
-        await run_in_threadpool(_handle_checkout_completed, session)
+        if session.get("mode") == "setup":
+            # A card verification: nothing was paid, so it is never a purchase.
+            if (session.get("metadata") or {}).get("purpose") == card_grant.PURPOSE:
+                await run_in_threadpool(_handle_card_grant, session)
+        else:
+            await run_in_threadpool(_handle_checkout_completed, session)
 
     return {"status": "ok"}
 
@@ -325,3 +413,10 @@ def _handle_checkout_completed(session: dict) -> None:
         logger.info("Added %d credits for user %s (payment_intent %s)", receipt.credits, receipt.user_id, receipt.payment_intent_id)
     else:
         logger.info("Duplicate webhook for payment_intent %s — skipping", receipt.payment_intent_id)
+    # Attempted on retries too: a delivery that settled the purchase and then
+    # failed must still be able to add the bonus, and the bonus is idempotent.
+    bonus = card_grant.grant_first_purchase_bonus(db, user_id=receipt.user_id, purchased_credits=receipt.credits)
+    if bonus:
+        logger.info("Added %d first-purchase bonus credits for user %s", bonus, receipt.user_id)
+        capture_server_event("first_purchase_bonus_granted", user_id=receipt.user_id, properties={
+            "credits": bonus, "stripe_mode": _stripe_mode(session)})

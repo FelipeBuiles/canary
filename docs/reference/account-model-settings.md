@@ -235,12 +235,13 @@ approve action would (the Brief as drafted) and marks that stage `auto_approved`
 copy has its own settings; **Remove** deletes just that arm. Changing one stage's
 model makes a mixed arm, such as one model's Adapt feeding another's Plan within
 the same phase; that stage's reasoning resets to the new model's default. GPT and Claude API and
-subscription routes, Gemini 3.8 Flash and Gemini 4 Carbon on Vertex offer Low,
-Medium and High. MiMo and DeepSeek offer Off and On. Labs defaults to Low for
-Gemini 3.8 Flash and Gemini 4 Carbon, Medium for GPT/Claude and Off for the
+subscription routes, Gemini 3.8 Flash and Gemini 4 Hydrogen and Carbon on Vertex
+offer Low, Medium and High. MiMo and DeepSeek offer Off and On. Labs defaults to
+Low for Gemini 3.8 Flash and Gemini 4, Medium for GPT/Claude and Off for the
 open-model routes. These are run-specific
-settings, independent of backoffice defaults. Carbon sends native thinking
-levels; see [verified Vertex controls](vertex-ai.md#gemini-4-carbon-optional-text-route).
+settings, independent of backoffice defaults. Hydrogen and Carbon send native
+thinking levels; see [Hydrogen](vertex-ai.md#gemini-4-hydrogen-default-gemini-4-route)
+and [verified Vertex controls](vertex-ai.md#gemini-4-carbon-optional-text-route).
 
 Create and estimate APIs accept `arms`, each with a unique `id`, a default
 `model`, optional `stage_models` overrides and a `reasoning_efforts` mapping by
@@ -253,9 +254,9 @@ For example:
   "project": "my-story",
   "phases": ["extract_brief"],
   "arms": [
-    {"id": "low", "model": "gemini-4-carbon", "reasoning_efforts": {"extract": "low", "brief": "low"}},
-    {"id": "high", "model": "gemini-4-carbon", "reasoning_efforts": {"extract": "high", "brief": "high"}},
-    {"id": "mixed", "model": "gemini-4-carbon", "stage_models": {"brief": "gemini-3.8-flash"},
+    {"id": "low", "model": "gemini-4-hydrogen", "reasoning_efforts": {"extract": "low", "brief": "low"}},
+    {"id": "high", "model": "gemini-4-hydrogen", "reasoning_efforts": {"extract": "high", "brief": "high"}},
+    {"id": "mixed", "model": "gemini-4-hydrogen", "stage_models": {"brief": "gemini-3.8-flash"},
      "reasoning_efforts": {"extract": "low", "brief": "low"}}
   ]
 }

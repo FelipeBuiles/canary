@@ -122,6 +122,33 @@ def test_invalid_requests_never_leave_the_gateway(params, detail):
     assert detail in str(exc_info.value)
 
 
+@pytest.mark.parametrize(("model", "air"), [
+    ("minimax-h3-image", "minimax:h3@image"),
+    ("minimax-h3-image-highspeed", "minimax:h3@image-highspeed"),
+])
+def test_minimax_task_sends_no_gpt_settings_and_keeps_content_check_off(model, air):
+    task = rw.inference_task(model, "page", _wire(controls=(("output_format", "png"), ("n", 1))))
+
+    assert task["model"] == air
+    assert "settings" not in task  # no moderation/quality tier; promptOptimizer keeps its default
+    assert task["safety"] == {"checkContent": False}
+    assert (task["width"], task["height"], task["outputFormat"]) == (1024, 1536, "PNG")
+
+
+@pytest.mark.parametrize(("params", "detail"), [
+    (_wire(), "unsupported controls ['quality']"),
+    (_wire(width=464, height=1536, controls=()), "outside MiniMax H3 limits"),
+    (_wire(width=512, height=1024, controls=()), "outside MiniMax H3 limits"),  # under 0.66 MP
+    (_wire(width=640, height=2048, controls=()), "outside MiniMax H3 limits"),  # beyond 1:3
+])
+def test_minimax_rejects_quality_and_out_of_range_sizes_before_submission(params, detail):
+    with pytest.raises(rw.RunwareImageError) as exc_info:
+        rw.inference_task("minimax-h3-image", "page", params)
+
+    assert exc_info.value.phase == "request_validation"
+    assert detail in str(exc_info.value)
+
+
 def test_unsupported_model_is_rejected():
     with pytest.raises(rw.RunwareImageError, match="unsupported Runware image model"):
         rw.upstream_model_name("runware/gpt-image-2")

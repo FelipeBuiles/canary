@@ -78,6 +78,29 @@ def _verify_token(token: str) -> str:
         raise jwt.InvalidTokenError("Invalid subject") from exc
 
 
+def token_identity(request: Request) -> tuple[str | None, bool]:
+    """The email and its verification, from this request's bearer token.
+
+    Only for a request ``get_current_user`` has already authenticated: the
+    token is decoded here without verifying it again. Supabase issues no
+    session for an unconfirmed address while confirmation is required, so a
+    token is unverified only when it says so or carries no email.
+    """
+    scheme, _, credentials = (request.headers.get("authorization") or "").partition(" ")
+    if scheme.lower() != "bearer" or not credentials.strip():
+        return None, False
+    try:
+        payload = jwt.decode(credentials.strip(), options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None, False
+    email = payload.get("email")
+    if not isinstance(email, str) or not email.strip():
+        return None, False
+    metadata = payload.get("user_metadata")
+    verified = not (isinstance(metadata, dict) and metadata.get("email_verified") is False)
+    return email, verified
+
+
 async def get_current_user(
     request: Request,
     response: Response,

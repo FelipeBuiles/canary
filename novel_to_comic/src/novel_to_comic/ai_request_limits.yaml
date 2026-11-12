@@ -25,7 +25,8 @@ budgets:
       max: 16384
       auto: 8192
   runware_images:
-    aliases: [image-sunburst-runware, image-flare-runware, image-sunburst-2.6-runware, image-flare-2.6-runware]
+    aliases: [image-sunburst-runware, image-flare-runware, image-sunburst-2.6-runware, image-flare-2.6-runware,
+              image-minimax-h3-runware, image-minimax-h3-highspeed-runware]
     pool: runware_images
     # Upstream OpenAI capacity sits behind Runware; keep the direct allowance.
     requests_per_minute: 18

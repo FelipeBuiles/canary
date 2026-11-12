@@ -52,6 +52,8 @@ from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FLARE_26,
     GATEWAY_IMAGE_FLARE_RUNWARE,
     GATEWAY_IMAGE_FLARE_26_RUNWARE,
+    GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE,
+    GATEWAY_IMAGE_MINIMAX_H3_RUNWARE,
     GATEWAY_IMAGE_SUNBURST_26,
     GATEWAY_IMAGE_SUNBURST_26_RUNWARE,
     GATEWAY_IMAGE_SUNBURST_RUNWARE,
@@ -91,10 +93,13 @@ class ImageTarget:
     # The OpenAI model a direct page profile draws with; set for targets that
     # can draw pages at an arm's chosen quality.
     page_model: str | None = None
+    # A model only Runware serves, with no quality tier (MiniMax H3).
+    runware_page_model: str | None = None
 
     @property
     def accepts_quality(self) -> bool:
-        return self.codex_selector is None and self.model_alias != GATEWAY_IMAGE_NANO_BANANA_21
+        return (self.codex_selector is None and self.runware_page_model is None
+                and self.model_alias != GATEWAY_IMAGE_NANO_BANANA_21)
 
 
 def image_targets() -> list[ImageTarget]:
@@ -126,6 +131,13 @@ def image_targets() -> list[ImageTarget]:
         ImageTarget("flare-2.6-runware", "GPT Image 2.6 Flare", "Runware", "api", True,
                     gateway_model=GATEWAY_IMAGE_FLARE_26_RUNWARE, model_alias=GATEWAY_IMAGE_FLARE_26,
                     provider_key=IMAGE_PROVIDER_RUNWARE, page_model="gpt-image-2.6-flare"),
+        ImageTarget("minimax-h3-runware", "MiniMax H3 Image", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_MINIMAX_H3_RUNWARE, model_alias=GATEWAY_IMAGE_MINIMAX_H3_RUNWARE,
+                    provider_key=IMAGE_PROVIDER_RUNWARE, runware_page_model="minimax-h3-image"),
+        ImageTarget("minimax-h3-highspeed-runware", "MiniMax H3 Image Highspeed", "Runware", "api", True,
+                    gateway_model=GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE,
+                    model_alias=GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE,
+                    provider_key=IMAGE_PROVIDER_RUNWARE, runware_page_model="minimax-h3-image-highspeed"),
         ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1 (1K)", "Vertex AI", "api", True,
                     gateway_model=GATEWAY_IMAGE_NANO_BANANA_21, model_alias=GATEWAY_IMAGE_NANO_BANANA_21),
     ]
@@ -174,13 +186,14 @@ class Prepared:
         in, $30 out per million tokens), so Codex cells are priced as if GPT
         Image 2 consumed as many tokens as Sunburst: an approximation. The Codex
         reasoning model's own tokens are not reported and not included.
-        Flare (2.5 and 2.6), Sunburst 2.6 and Nano Banana 2.1 have no measured consumption yet, so
+        Flare (2.5 and 2.6), Sunburst 2.6, MiniMax H3 and Nano Banana 2.1 have no measured consumption yet, so
         each uses its configured allowances instead of Sunburst's measurements.
         """
         quality = self.quality or quality
         if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_FLARE_RUNWARE, GATEWAY_IMAGE_NANO_BANANA_21,
                                   GATEWAY_IMAGE_SUNBURST_26, GATEWAY_IMAGE_FLARE_26,
-                                  GATEWAY_IMAGE_SUNBURST_26_RUNWARE, GATEWAY_IMAGE_FLARE_26_RUNWARE}:
+                                  GATEWAY_IMAGE_SUNBURST_26_RUNWARE, GATEWAY_IMAGE_FLARE_26_RUNWARE,
+                                  GATEWAY_IMAGE_MINIMAX_H3_RUNWARE, GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE}:
             return estimate_image_cost(
                 self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
                 ref_count=self.references, prompt_text=self.prompt, basis="expected",
@@ -296,18 +309,20 @@ class AssetItem:
                                        *codex_runtime.image_execution_controls()))),
             )
         else:
-            from novel_to_comic.image_models import describe_image_model, image_model_profile
+            from novel_to_comic.image_models import ImageRoute, describe_image_model, image_model_profile
 
             description = describe_image_model(target.model_alias)
             profile = image_model_profile(target.model_alias)
             if len(references) > profile.max_references:
                 raise ValueError(f"{target.label} accepts at most {profile.max_references} references; "
                                  f"this request has {len(references)}")
+            # MiniMax H3 has no quality tier: its requests carry no quality control.
+            controls = () if description.route == ImageRoute.MINIMAX_H3 else (
+                ("quality", image_quality_for_model(target.model_alias, quality or self.quality)),)
             wire = replace(wire, provider_key=target.provider_key or description.provider_key,
                            requested_alias=target.gateway_model,
                            configured_provider_model=description.provider_model, expected_route=description.route.value,
-                           controls=(("quality", image_quality_for_model(target.model_alias,
-                                                                         quality or self.quality)),))
+                           controls=controls)
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
 
@@ -335,6 +350,7 @@ class PageItem:
             current_page_capability_profile,
             openai_page_capability_profile,
             nano_banana_21_page_capability_profile,
+            runware_only_page_capability_profile,
             select_book_edition,
         )
         from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
@@ -342,7 +358,13 @@ class PageItem:
 
         page_model = (target.page_model if target is not None and quality is not None
                       else _DIRECT_PAGE_MODELS.get(config.draw_model))
-        if page_model is not None:
+        if target is not None and target.runware_page_model is not None:
+            profile = runware_only_page_capability_profile(target.runware_page_model)
+            if config.lettering_mode == "integrated":
+                profile = profile.model_copy(update={
+                    "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
+                })
+        elif page_model is not None:
             profile = openai_page_capability_profile(page_model, quality=quality or "medium")
             if config.lettering_mode == "integrated":
                 profile = profile.model_copy(update={

@@ -5,7 +5,7 @@
 ## House rules
 
 - Show real output only. Say "AI-assisted" plainly; the author directs, the studio produces.
-- No prices, credits, free generations or model names in any public copy or media.
+- No prices, credit quantities or model names in any public copy or media. The free offer (a free opening, then credits for a first chapter after card verification) may be named only with its conditions, as set out under "Free offer" in `marketing/knowledge/claims-policy.md`.
 - Never name an artist as a style ("in the style of…"). Describe medium, era and mood instead.
 - Keep "Your novel. Any style." as the one signature line; write everything else as normal sentences rather than stacks of two-word fragments.
 - Credit sources every time: *The Masque of the Red Death*, Edgar Allan Poe (public domain); *Kaitlin Out of Space*, Krishan Coupland (CC0); *Site-30's Janitor*, JanitorCakeworth, SCP Wiki (CC BY-SA 3.0).

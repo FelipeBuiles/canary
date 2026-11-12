@@ -130,6 +130,31 @@ model_list:
     input_cost_per_token: 2.0e-06
     cache_read_input_token_cost: 1.0e-07
     output_cost_per_token: 1.0e-05
+- model_name: gemini-4-hydrogen
+  litellm_params:
+    model: vertex_ai/gemini-4-hydrogen
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: os.environ/VERTEXAI_LOCATION
+    # Default Vertex Gemini 4 route since 2026-11-12, over Carbon. Verified in
+    # global that day: countTokens, plain generateContent with native
+    # thinkingLevel low (thinks, billed as output), JSON mode and one image read.
+    # Medium/High levels and native schemas are unprobed. Settings follow Carbon.
+    thinkingConfig:
+      thinkingLevel: low
+      includeThoughts: true
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_vision: true
+    supports_native_streaming: false
+    supports_prompt_caching: false
+    # Google launch rates, flat across the context window; no Vertex pricing
+    # page entry when checked 2026-11-12. Cached input 95% off.
+    # https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/
+    input_cost_per_token: 1.5e-06
+    cache_read_input_token_cost: 7.5e-08
+    output_cost_per_token: 7.5e-06
 - model_name: claude-opus-5-5
   litellm_params:
     model: anthropic/claude-opus-5-5
@@ -442,6 +467,15 @@ model_list:
 - model_name: image-flare-2.6-runware
   litellm_params:
     model: runware/gpt-image-2.6-flare
+    api_key: os.environ/RUNWARE_API_KEY
+# MiniMax H3 Image through Runware (startup grant); Labs comparison routes only.
+- model_name: image-minimax-h3-runware
+  litellm_params:
+    model: runware/minimax-h3-image
+    api_key: os.environ/RUNWARE_API_KEY
+- model_name: image-minimax-h3-highspeed-runware
+  litellm_params:
+    model: runware/minimax-h3-image-highspeed
     api_key: os.environ/RUNWARE_API_KEY
 # Style/Cast, Draw, and Labs image generation, using the existing Vertex ADC.
 - model_name: image-nano-banana-2.1

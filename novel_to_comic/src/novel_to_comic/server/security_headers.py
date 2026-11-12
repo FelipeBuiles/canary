@@ -13,7 +13,9 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "base-uri 'self'",
         "object-src 'none'",
         "frame-ancestors 'none'",
-        "script-src 'self' https://js.stripe.com https://www.googletagmanager.com",
+        # challenges.cloudflare.com serves the signup bot check (Turnstile).
+        "script-src 'self' https://js.stripe.com https://www.googletagmanager.com "
+        "https://challenges.cloudflare.com",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
         "img-src 'self' data: blob: https:",
@@ -27,7 +29,8 @@ CONTENT_SECURITY_POLICY = "; ".join(
             "https://*.googletagmanager.com"
         ),
         # The homepage film loads the privacy-enhanced YouTube player on click.
-        "frame-src https://js.stripe.com https://hooks.stripe.com https://www.youtube-nocookie.com",
+        "frame-src https://js.stripe.com https://hooks.stripe.com https://www.youtube-nocookie.com "
+        "https://challenges.cloudflare.com",
         "worker-src 'self' blob:",
         "form-action 'self' https://checkout.stripe.com",
     )

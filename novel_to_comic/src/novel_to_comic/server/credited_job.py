@@ -75,6 +75,7 @@ async def run_credited_stage(
     stage: str,
     run: Callable[[], Awaitable[None]],
     fresh_adaptation: bool = False,
+    sponsor: str | None = None,
 ) -> str:
     """Reserve credits for a stage, run it inside an ai_request_context, release the hold.
 
@@ -84,7 +85,10 @@ async def run_credited_stage(
     classify_operations(stage_operations(config, stage))
     db = get_db()
     try:
-        if fresh_adaptation:
+        if sponsor is not None:
+            # Canary-paid: nothing is held, authorized or debited.
+            reservation_credits = 0
+        elif fresh_adaptation:
             if stage != "adapt":
                 raise ValueError("Only Adapt supports a fresh adaptation reservation")
             reservation_credits = estimate_adaptation_restart(config, project_dir, state)["reserved_credits"] or 0
@@ -119,6 +123,7 @@ async def run_credited_stage(
             workspace_id=str(project_dir.parent),
             stage=stage,
             job_id=job_id,
+            sponsor=sponsor,
         ):
             await run()
         return job_id

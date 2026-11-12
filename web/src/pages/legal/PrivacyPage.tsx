@@ -37,6 +37,15 @@ export function PrivacyPage() {
           <strong>Technical data:</strong> basic request information (IP,
           browser) as needed to serve the app and detect abuse.
         </li>
+        <li>
+          <strong>Free-offer records:</strong> when an account receives a free
+          opening, we keep one-way fingerprints (hashes) of its email address,
+          the network address it came from, and the first words of the
+          manuscript, so the same person or story is not given the offer twice.
+          The fingerprints cannot be turned back into the original values. If
+          you verify a card for a first-chapter grant, we keep the card
+          fingerprint Stripe gives us, which is not a card number.
+        </li>
       </ul>
 
       <h2>How We Use Your Information</h2>
@@ -52,7 +61,9 @@ export function PrivacyPage() {
         Your uploaded manuscripts and generated images are stored on our
         server's disk, organized under your account. Account, project, and
         usage records are stored in our database (Supabase). Payments are
-        processed by Stripe; we do not store your full card number.
+        processed by Stripe; we do not store your full card number. A card
+        you verify for a first-chapter grant is checked by Stripe, is not
+        charged, and is not saved for later payments.
       </p>
 
       <h2>Who Processes Your Data</h2>
@@ -66,7 +77,12 @@ export function PrivacyPage() {
           <strong>Supabase</strong> for authentication and the database.
         </li>
         <li>
-          <strong>Stripe</strong> for payment processing.
+          <strong>Stripe</strong> for payment processing and card verification.
+        </li>
+        <li>
+          <strong>Cloudflare Turnstile</strong>, where enabled, checks that
+          sign-up, sign-in and password-reset requests come from a person. It
+          receives technical information about your browser and network.
         </li>
         <li>
           <strong>Google Analytics</strong>, when you allow it, measures visits,

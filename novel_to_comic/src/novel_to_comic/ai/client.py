@@ -1168,6 +1168,12 @@ def _finalize_event(
     except Exception:
         # Metrics are optional and must not interfere with usage settlement.
         pass
+    if sponsor is not None and (workspace := current_ai_request_context().workspace_id):
+        from novel_to_comic import sponsored_budget
+
+        # An unpriced call still counts, at its estimate, toward the daily ceiling.
+        sponsored_budget.record_spend(
+            sponsored_budget.volume_for_workspace(workspace), cost_usd if cost_usd is not None else estimated_cost_usd)
     update: dict[str, Any] = {
         "finished_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "status": status,

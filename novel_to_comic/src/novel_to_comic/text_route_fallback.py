@@ -21,12 +21,12 @@ other models or failure kinds without approval.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TypeVar
 
+from novel_to_comic import runtime_settings
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.image_route_fallback import RouteCircuit, increment_metric
 from novel_to_comic.text_models import text_wire
@@ -40,7 +40,7 @@ _pinned: ContextVar[bool] = ContextVar("text_route_pinned", default=False)
 
 
 def fallback_enabled() -> bool:
-    return os.environ.get("CANARY_RUNWARE_TEXT_FALLBACK_ENABLED", "").strip().lower() in {"1", "true"}
+    return runtime_settings.raw("CANARY_RUNWARE_TEXT_FALLBACK_ENABLED").lower() in {"1", "true"}
 
 
 @contextmanager

@@ -104,4 +104,5 @@ def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
         "runware/gpt-image-2.5-sunburst", "runware/gpt-image-2.5-flare",
         "gpt-image-2.6-sunburst", "gpt-image-2.6-flare",
         "runware/gpt-image-2.6-sunburst", "runware/gpt-image-2.6-flare",
+            "runware/minimax-h3-image", "runware/minimax-h3-image-highspeed",
     }

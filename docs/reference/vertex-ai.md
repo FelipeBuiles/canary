@@ -68,6 +68,29 @@ that receives usage. Trial credits offset eligible charges on that account;
 they do not make provider usage free in Canary's cost records. Verify the
 project's billing account and remaining credit in Cloud Console before generation.
 
+## Gemini 4 Hydrogen (default Gemini 4 route)
+
+As of November 12, 2026, `gemini-4-hydrogen` is the operator's default Gemini 4
+text route, replacing Carbon in the Backoffice stage selections. It selects the
+exact gateway target `vertex_ai/gemini-4-hydrogen`. Carbon remains selectable.
+Hydrogen takes Carbon's settings and prompt tuning (`TextModel.tuning`): Low
+default effort, native `thinkingConfig` levels, schema instructions with JSON
+mode, no streaming, 48-page review windows and the same thinking allowances.
+
+Verified in `global` for the `canary-vertex` project on November 12, 2026, with
+no retries: one free `countTokens` (`gemini-4-hydrogen-preview` returned 404);
+one plain `generateContent` with `thinkingLevel: low` (STOP, correct answer;
+65 input, 5 output and 119 thinking tokens); and one JSON-mode call reading a
+synthetic image (exact lettering and shape, 1,092 image tokens). Medium and High
+levels, native schemas, caching and limits are unverified on Hydrogen.
+
+Pricing uses Google's
+[launch rates](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/):
+$1.50/M input, $7.50/M output and $0.075/M cached input, flat across the
+context window. The Vertex pricing page had no Hydrogen entry when checked.
+The approved Runware 429 fallback covers Carbon only, so a rate-limited
+Hydrogen call fails as other Vertex calls do.
+
 ## Gemini 4 Carbon (optional text route)
 
 As of November 10, 2026, `gemini-4-carbon` replaces `gemini-4-argon` as the

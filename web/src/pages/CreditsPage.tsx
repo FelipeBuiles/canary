@@ -10,6 +10,7 @@ import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
 import { Surface } from "../components/ui/Surface";
+import { CardGrantOffer } from "../components/CardGrantOffer";
 import { EntityCard, SectionHeader } from "../components/composites";
 import { CreditHistoryLedger } from "../components/credits/CreditHistoryLedger";
 import { groupRunsByDay, matchesLedgerFilter, type LedgerFilter } from "../lib/creditsHistory";
@@ -123,6 +124,8 @@ export function CreditsPage() {
         </div>
       )}
 
+      <CardGrantOffer outcome={searchParams.get("card_grant")} />
+
       <Surface tone="ink" shadow="paper" className="grid overflow-hidden md:grid-cols-[minmax(0,1fr)_320px]">
         <div className="px-6 py-8 text-bristol sm:px-9 sm:py-10">
           <h1 className="font-display text-[2.4rem] sm:text-[3.2rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol">
@@ -157,7 +160,7 @@ export function CreditsPage() {
       </Surface>
 
       <section tabIndex={-1} id="credit-packs" className="mt-10 scroll-mt-6">
-        <SectionHeader variant="underline" title="Add credits" description="One-time packs. No subscription, and your credits do not expire." />
+        <SectionHeader variant="underline" title="Add credits" description="One-time packs. No subscription, and purchased credits do not expire." />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {packagesLoading
             ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-60" />)
@@ -195,7 +198,7 @@ export function CreditsPage() {
         {checkout.isError && <p role="alert" className="mt-4 font-body text-sm text-hero-red">Checkout could not be opened. Please choose your pack again to retry.</p>}
         {cancelledParam && <p role="status" className="mt-4 font-body text-sm text-ink-muted">Checkout was cancelled. You can choose a pack when you're ready.</p>}
         <p className="mt-5 font-body text-[0.86rem] font-semibold text-ink-muted">
-          Payments processed securely by Stripe. Credits never expire. Purchases
+          Payments processed securely by Stripe. Purchased credits never expire. Purchases
           are subject to our{" "}
           <Link to="/legal/terms" className="text-ink-black underline underline-offset-2">
             Terms

@@ -20,6 +20,9 @@ GATEWAY_IMAGE_SUNBURST_26 = "image-sunburst-2.6"
 GATEWAY_IMAGE_FLARE_26 = "image-flare-2.6"
 GATEWAY_IMAGE_SUNBURST_26_RUNWARE = "image-sunburst-2.6-runware"
 GATEWAY_IMAGE_FLARE_26_RUNWARE = "image-flare-2.6-runware"
+#: MiniMax H3 Image through Runware; Labs comparison routes only.
+GATEWAY_IMAGE_MINIMAX_H3_RUNWARE = "image-minimax-h3-runware"
+GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE = "image-minimax-h3-highspeed-runware"
 GATEWAY_IMAGE_NANO_BANANA_21 = "image-nano-banana-2.1"
 GATEWAY_IMAGE_MUSE = "image-muse"
 GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
@@ -71,9 +74,9 @@ def runware_first_enabled() -> bool:
 
     Frozen editions and wires keep the identity they were created with.
     """
-    import os
+    from novel_to_comic import runtime_settings
 
-    return os.environ.get("CANARY_RUNWARE_FIRST_ENABLED", "").strip().lower() in {"1", "true"}
+    return runtime_settings.raw("CANARY_RUNWARE_FIRST_ENABLED").lower() in {"1", "true"}
 
 
 class ImageRoute(str, Enum):
@@ -85,6 +88,7 @@ class ImageRoute(str, Enum):
     SEEDREAM = "seedream"
     GPT_IMAGE_2 = "gpt_image_2"
     MUSE_IMAGE = "muse_image"
+    MINIMAX_H3 = "minimax_h3"
     CODEX_BUILTIN = "codex_builtin"
     UNKNOWN = "unknown"
 
@@ -146,6 +150,18 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         display_name="GPT Image 2.6 Flare",
         provider_model="openai/gpt-image-2.6-flare",
         provider_key=IMAGE_PROVIDER_OPENAI,
+    ),
+    GATEWAY_IMAGE_MINIMAX_H3_RUNWARE: ImageModelDescription(
+        route=ImageRoute.MINIMAX_H3,
+        display_name="MiniMax H3 Image",
+        provider_model="runware/minimax-h3-image",
+        provider_key=IMAGE_PROVIDER_RUNWARE,
+    ),
+    GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE: ImageModelDescription(
+        route=ImageRoute.MINIMAX_H3,
+        display_name="MiniMax H3 Image Highspeed",
+        provider_model="runware/minimax-h3-image-highspeed",
+        provider_key=IMAGE_PROVIDER_RUNWARE,
     ),
     GATEWAY_IMAGE_MUSE: ImageModelDescription(
         route=ImageRoute.MUSE_IMAGE,
@@ -292,6 +308,7 @@ _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
     ImageRoute.SEEDREAM: None,
     ImageRoute.GPT_IMAGE_2: None,
     ImageRoute.MUSE_IMAGE: None,
+    ImageRoute.MINIMAX_H3: None,
     ImageRoute.UNKNOWN: None,
 }
 
@@ -305,6 +322,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
     ImageRoute.SEEDREAM: (),
     ImageRoute.GPT_IMAGE_2: (),
     ImageRoute.MUSE_IMAGE: (),
+    ImageRoute.MINIMAX_H3: (),
     ImageRoute.UNKNOWN: (),
 }
 
@@ -324,6 +342,8 @@ _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
     # OpenRouter's Muse catalog entry does not advertise a quality control;
     # leave the control out rather than implying that LiteLLM will honor it.
     ImageRoute.MUSE_IMAGE: frozenset(),
+    # MiniMax H3 has no quality tier; size alone sets the cost.
+    ImageRoute.MINIMAX_H3: frozenset(),
     ImageRoute.UNKNOWN: frozenset(),
 }
 
@@ -420,6 +440,8 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
     ImageRoute.GPT_IMAGE_2: 4,
     # OpenRouter documents Muse Image with up to ten reference images.
     ImageRoute.MUSE_IMAGE: 10,
+    # Runware documents MiniMax H3 with up to sixteen reference images.
+    ImageRoute.MINIMAX_H3: 16,
     ImageRoute.UNKNOWN: 10,
 }
 
@@ -431,6 +453,7 @@ _ROUTE_PROVIDER_KEYS: dict[ImageRoute, str] = {
     ImageRoute.SEEDREAM: IMAGE_PROVIDER_FAL_QUEUE,
     ImageRoute.GPT_IMAGE_2: IMAGE_PROVIDER_OPENAI,
     ImageRoute.MUSE_IMAGE: IMAGE_PROVIDER_OPENROUTER,
+    ImageRoute.MINIMAX_H3: IMAGE_PROVIDER_RUNWARE,
     ImageRoute.UNKNOWN: IMAGE_PROVIDER_UNKNOWN,
 }
 

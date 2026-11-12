@@ -482,6 +482,10 @@ class UnifiedCostResolver:
 
 
 def get_balance_credits(db: Client, user_id: str) -> int:
+    from . import card_grant
+
+    # An expired first-chapter grant leaves the balance before it is read.
+    card_grant.expire_due(db, user_id)
     result = (
         db.table("user_credits")
         .select("balance_credits")

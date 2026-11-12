@@ -21,3 +21,9 @@ def test_csp_allows_google_tag_and_ga4_collection_without_inline_scripts():
     # Google's documented GA4 wildcards cover regional collection endpoints.
     assert {"https://*.google-analytics.com", "https://*.analytics.google.com",
             "https://*.googletagmanager.com"} <= _connect_sources()
+
+
+def test_csp_allows_the_signup_bot_check():
+    for name in ("script-src", "frame-src"):
+        directive = next(d for d in CONTENT_SECURITY_POLICY.split("; ") if d.startswith(name + " "))
+        assert "https://challenges.cloudflare.com" in directive.split()

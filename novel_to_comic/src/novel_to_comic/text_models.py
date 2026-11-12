@@ -96,6 +96,17 @@ TEXT_MODELS = (
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               review_window_pages=48, review_window_source_chars=120_000,
               rate_limit_fallback="runware-gemini-4-argon"),
+    # Gemini 4 Hydrogen, the operator's default Gemini 4 route since 2026-11-12.
+    # Verified in Vertex that day: plain generateContent with native Low
+    # thinking, JSON mode and one image read. It takes Carbon's settings and
+    # prompt tuning; Medium/High levels are unprobed. No 429 fallback: the
+    # approved Runware switch covers Carbon only (AGENTS.md).
+    TextModel("gemini-4-hydrogen", "Gemini 4 Hydrogen", "Google Vertex AI", "vertex_ai",
+              temperature=False, streaming=False, effort="low",
+              native_vertex_thinking=True, schema_instructions=True,
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              review_window_pages=48, review_window_source_chars=120_000,
+              tuning="gemini-4-carbon"),
     # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).

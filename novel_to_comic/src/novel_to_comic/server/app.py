@@ -596,6 +596,13 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             "legal_email": b.legal_email,
         }
 
+    @app.get("/api/public-config", tags=["meta"])
+    def public_config():
+        # Public values the sign-in page needs before anyone is signed in.
+        from novel_to_comic import runtime_settings
+
+        return {"turnstile_site_key": runtime_settings.raw("CANARY_TURNSTILE_SITE_KEY")}
+
     @app.get("/api/health/ready", tags=["meta"])
     def health_ready():
         # Fly treats every 2xx response as healthy, so dependency failure must

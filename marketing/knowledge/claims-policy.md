@@ -16,7 +16,7 @@ Use this policy when writing or reviewing public drafts. Canary paths below are 
 |---|---|
 | A full book for $25, a fixed page count per credit pack, or a first purchase that necessarily finishes an excerpt | `docs/proposals/pricing-and-margin.md:11-15,44-49` and `web/src/pages/ProductPage.tsx:28` reject fixed output quantities. Describe prepaid generation capacity and variable costs. |
 | Standard is the most popular pack | `docs/proposals/pricing-and-margin.md:44-45` says there is no evidence. Use the pack's name only. |
-| Free signup credits, free generations, an unbounded free chapter, or a guaranteed free first page | `showcase/marketing/copy-kit.md:8` bans free-generation copy. Cold Open remains unverified in `docs/proposals/cold-open-2026-10-26.md:3-18`. Do not infer a free offer from a test run or operator grant. |
+| Unconditional free credits on signup, unlimited free generations, an unbounded free chapter, a guaranteed free first page, or that every credit never expires | The free offer has conditions; see "Free offer" below and `docs/plans/2026-11-12-free-offer-rollout.md`. State the conditions with the offer. Do not infer any other free offer from a test run or operator grant. |
 | A guaranteed final price, production margin, free failed requests, or that a temporary hold is a final charge | `docs/proposals/pricing-and-margin.md:25-32` distinguishes usage, uncertain runtime configuration, holds, and failure billing. `PRODUCT.md:59-60` distinguishes estimates, usage, and charges. Use approximate action estimates, not cost guarantees. |
 | A refund guarantee or unconditional non-refundability | `web/src/pages/legal/TermsPage.tsx:78-83` makes credits non-refundable except where law requires. Preserve that exception. |
 | Copyright-safe, guaranteed copyright ownership, exclusive rights to generated images, or permission to adapt any purchased book | `web/src/pages/legal/TermsPage.tsx:35-64` limits the service license and disclaims ownership of generated output. Purely generated imagery may not be copyrightable. `web/src/pages/ProductPage.tsx:35` says owning a copy does not grant adaptation rights. |
@@ -40,7 +40,7 @@ Do not use a numerical station count in new public drafts. Keep both observed co
 
 The draft copy kit bans prices and credits in all public copy at `showcase/marketing/copy-kit.md:3-8`. Current owned-web copy publishes pack prices, no subscription, and credit estimates at `web/src/pages/ProductPage.tsx:26-28` and `web/src/locales/en.json:3254-3260,3274`.
 
-Use this conservative workspace rule until the owner reconciles the wording. No prices, credit quantities, free-generation offers, or model names in social, community, outreach, or ad creative. Owned-web drafts may cite current pack facts and explain approximate estimates, no subscription, and that purchased credits do not expire. Confirm prices against `novel_to_comic/src/novel_to_comic/server/routers/billing.py:25-30` and the checkout wording before approval. Pricing facts are marketable only within that owned-web scope. `approved-pricing-line` is an internal historical id, not an approval record.
+Use this conservative workspace rule until the owner reconciles the wording. No prices, credit quantities, or model names in social, community, outreach, or ad creative. The free offer may be named there only as described under "Free offer". Owned-web drafts may cite current pack facts and explain approximate estimates, no subscription, and that purchased credits do not expire. Confirm prices against `novel_to_comic/src/novel_to_comic/server/routers/billing.py:25-30` and the checkout wording before approval. Pricing facts are marketable only within that owned-web scope. `approved-pricing-line` is an internal historical id, not an approval record.
 
 ### Inputs and limits
 
@@ -88,3 +88,16 @@ Dungeon Crawler Carl and The Egg are explicitly out of public use at `docs/propo
 Do not claim that sample-library search results all carry adaptation rights. The curated 21-story shelf and the classic archive differ. `docs/reference/sample-library.md:14-20,22-31` requires readers to verify archive rights for their location and intended publication.
 
 Canary is read-only. Do not run generation, redraws, translation, style proofs, provider checks, or other paid work to substantiate marketing. Record missing paid-provider evidence and request the owner's verification. Do not access credentials or change deployed configuration. Write a draft rather than publishing, purchasing ads, or contacting customers.
+
+## Free offer
+
+Owner decision, 2026-11-12: the pilot free offer may be marketed. Its terms are in `docs/plans/2026-11-12-free-offer-rollout.md` and `web/src/pages/legal/TermsPage.tsx` (section 6). It is built but was off in production when this was written. Before any draft that names it is approved, confirm with the owner that it is switched on and that the checks in section 4 of the rollout plan passed.
+
+What may be said, always with its conditions:
+
+- **A free opening.** A new author's first upload, up to about 3,000 words, is read free and its opening is drawn in three looks. One per person. Say "your opening", not "your book" or "a chapter".
+- **A first chapter on us.** After the free opening, an author who verifies a payment card receives credits for a first chapter. The card is not charged. One per person and per card, a limited number of places, and the credits expire 30 days after they are granted. Say "credits for a first chapter"; do not promise that a chapter of any length finishes on them.
+- **A bonus on the first purchase** for authors who took the first chapter offer, while those credits are unexpired.
+
+Do not state the credit quantity, the number of places, the bonus percentage or the end date in social, community, outreach or ad creative; these are live settings and can change. Owned-web copy may state them only when read from the product at the time of approval. Purchased credits do not expire; promotional credits do. Never write "credits never expire" without "purchased".
+

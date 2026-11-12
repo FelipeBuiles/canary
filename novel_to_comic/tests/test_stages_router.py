@@ -552,3 +552,41 @@ def test_then_approve_is_only_for_cast(tmp_path, monkeypatch):
         "/api/projects/test_project/parts/part_0001/run?stage=cast&rerun=true&then_approve=true")
     assert response.status_code == 400
     assert "Cast run only" in response.json()["detail"]
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("sponsored", [True, False])
+def test_a_free_extract_carries_its_sponsor_to_the_brief_it_chains(tmp_path, monkeypatch, sponsored):
+    """An account without credits must not fail at the Brief its free Extract starts."""
+    import asyncio
+
+    from novel_to_comic.server import cold_open_jobs
+
+    project_dir, state, _bible = _story_project(tmp_path)
+    for name in ("extract", "brief"):
+        state.stages[name] = StageState(status=StageStatus.PENDING)
+    save_state(state, project_dir)
+    ran: list[tuple[str, str | None]] = []
+
+    async def fake_credited_stage(*, stage, state, project_dir, sponsor, **_kwargs):
+        ran.append((stage, sponsor))
+        state.stages[stage].status = StageStatus.COMPLETE
+        save_state(state, project_dir)
+
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", fake_credited_stage)
+    monkeypatch.setattr(pipeline_operations, "_reset_missing_auto_chain_artifact", lambda *a: None)
+    # Only the Extract itself is ever judged; Brief inherits or pays.
+    monkeypatch.setattr(cold_open_jobs, "free_opening_sponsor",
+                        lambda part, state, project, stage, **kw: "cold_open" if sponsored and stage == "extract" else None)
+    asyncio.run(pipeline_operations._run_stage_with_credits(
+        "extract", Config(), project_dir, state, asyncio.Queue(), "user", "test_project"))
+    assert ran == [("extract", "cold_open" if sponsored else None), ("brief", "cold_open" if sponsored else None)]
+    # A Brief the author starts themselves is never sponsored by a stale hint.
+    ran.clear()
+    state.stages["brief"] = StageState(status=StageStatus.PENDING)
+    asyncio.run(pipeline_operations._run_stage_with_credits(
+        "brief", Config(), project_dir, state, asyncio.Queue(), "user", "test_project", rerun=True,
+        chain_sponsor="cold_open"))
+    assert ran[0] == ("brief", None)

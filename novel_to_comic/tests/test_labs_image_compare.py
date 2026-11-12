@@ -426,6 +426,68 @@ def test_runware_page_submits_once_and_settles_on_the_reported_cost(root, tmp_pa
     assert (cell["cost_usd"], cell["cost_source"]) == (pytest.approx(0.05647), "runware_cost")
 
 
+@pytest.mark.parametrize("target,alias,model", [
+    ("minimax-h3-runware", "image-minimax-h3-runware", "runware/minimax-h3-image"),
+    ("minimax-h3-highspeed-runware", "image-minimax-h3-highspeed-runware", "runware/minimax-h3-image-highspeed"),
+])
+def test_minimax_asset_arms_go_to_runware_without_a_quality_control(root, target, alias, model):
+    item = image_compare.AssetItem(root / "story", "new")
+    minimax = image_compare.get_target(target)
+    prepared = item.prepare(None, minimax, "production")
+    wire = item._wire_for(minimax, PROMPT, restructured=False)
+    params, _ = serialize_wire_request(wire)
+
+    assert minimax.provider == "Runware" and not minimax.accepts_quality
+    assert (wire.provider_key, wire.requested_alias, wire.configured_provider_model) == ("runware", alias, model)
+    assert json.loads(params["canary_wire_request"])["controls"] == [] and "quality" not in params
+    assert prepared.quality is None and prepared.estimate_usd(minimax, None) > 0
+
+
+@pytest.mark.parametrize("target,model,gateway", [
+    ("minimax-h3-runware", "minimax-h3-image", "image-minimax-h3-runware"),
+    ("minimax-h3-highspeed-runware", "minimax-h3-image-highspeed", "image-minimax-h3-highspeed-runware"),
+])
+def test_minimax_page_draws_on_runware_without_a_quality(root, tmp_path, monkeypatch, target, model, gateway):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from novel_to_comic.page_drawing import runware_only_page_capability_profile
+
+    profile = runware_only_page_capability_profile(model)
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    seen = []
+    monkeypatch.setattr(image_compare.PageItem, "_compile",
+                        lambda self, config, target=None, quality=None: seen.append(target.id) or (profile, compiled))
+    output = io.BytesIO()
+    Image.new("RGB", (1024, 1536)).save(output, format="PNG")
+    sent = []
+
+    async def post(url, **kwargs):
+        sent.append(kwargs)
+        return httpx.Response(200, request=httpx.Request("POST", url), json={
+            "model": f"runware/{model}",
+            "data": [{"b64_json": base64.b64encode(output.getvalue()).decode()}],
+            "provider_cost_usd": 0.0264, "provider_cost_source": "runware_cost",
+        })
+
+    monkeypatch.setattr(client, "_post_with_retry", post)
+    _, cell = _run(root, "page:1", {"target": target, "prompt": "production"})
+
+    assert cell["status"] == "ok" and seen == [target] and len(sent) == 1
+    fields = sent[0]["data"]
+    assert fields["model"] == gateway and "quality" not in fields
+    assert json.loads(fields["canary_wire_request"]) == {
+        "width": 1024, "height": 1536, "controls": [["output_format", "png"], ["n", 1]],
+    }
+    assert (cell["cost_usd"], cell["cost_source"]) == (pytest.approx(0.0264), "runware_cost")
+    assert page_image_quality(profile.id, profile.provider) is None
+
+
 def test_a_runware_page_rejects_a_different_upstream_model(root, tmp_path, monkeypatch):
     import base64
     import io
@@ -462,6 +524,8 @@ def test_a_runware_page_rejects_a_different_upstream_model(root, tmp_path, monke
     ([PRODUCTION, {"target": "nano-banana-2.1-vertex", "prompt": "production", "quality": "low"}],
      "no quality choice"),
     ([{**PRODUCTION, "quality": "low"}, {**PRODUCTION, "quality": "low"}], "must differ"),
+    ([PRODUCTION, {"target": "minimax-h3-runware", "prompt": "production", "quality": "high"}],
+     "no quality choice"),
 ])
 def test_invalid_arms_are_rejected(arms, message):
     with pytest.raises(ValueError, match=message):

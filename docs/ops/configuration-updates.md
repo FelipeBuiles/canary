@@ -10,6 +10,15 @@ bundles require an independent operator signature. CI, configuration applies
 and package maintenance share the release lock. Previews use short snapshots
 and a background worker, never that release lock.
 
+## Live settings
+
+Settings declared in `runtime_settings.py` (the free-offer pilot's limits and
+switches, and the public Turnstile site key) are not host configuration. They
+are stored in the Supabase `app_settings` table and changed in Backoffice →
+Environment → Live settings, with no plan, drain or restart. They are not in
+the configuration schema, so `./scripts/prod-env` neither shows nor applies
+them. Secrets never go there.
+
 ## Compare a local production file and reconcile selected differences
 
 `./scripts/prod-env` is the local companion for Backoffice → Environment. It

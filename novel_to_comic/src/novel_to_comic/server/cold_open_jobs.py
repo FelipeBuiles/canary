@@ -10,12 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from novel_to_comic import cold_open
+from novel_to_comic import cold_open, runtime_settings, sponsored_budget
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.config import Config
 from novel_to_comic.lettering.proof import LABEL_COPY
@@ -23,6 +22,7 @@ from novel_to_comic.models.cold_open import ColdOpenRecord
 from novel_to_comic.style_contract import style_template_for_suggestion
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import FIRST_PART_ID, is_part_workspace, part_id_for_path, series_root
+from . import free_opening_guard
 from .deps import project_key
 from .generation_jobs import (
     enqueue_generation_job, find_active_generation_job, generation_semaphore_for_config, persist_generation_job,
@@ -41,7 +41,7 @@ def per_account_limit() -> int | None:
     Unset, production grants one per account and every other environment is
     unlimited, so local and staging projects always get their first pages.
     """
-    raw = os.getenv("CANARY_COLD_OPEN_PER_ACCOUNT", "").strip()
+    raw = runtime_settings.raw("CANARY_COLD_OPEN_PER_ACCOUNT")
     if not raw:
         return 1 if app_environment() == "production" else None
     try:
@@ -50,10 +50,11 @@ def per_account_limit() -> int | None:
         return 1
 
 
-def claim_grant(account_dir: Path, project_id: str) -> bool:
+def claim_grant(account_dir: Path, project_id: str, *, claim: bool = True) -> bool:
     """Spend one of the account's Cold Opens on this project, once.
 
     Deleting the project does not return the grant: the marker is account-level.
+    ``claim=False`` only answers whether the grant would be given.
     """
     limit = per_account_limit()
     if limit is None:
@@ -70,8 +71,80 @@ def claim_grant(account_dir: Path, project_id: str) -> bool:
             return True
         if len(projects) >= limit:
             return False
+        if not claim:
+            return True
         path.write_text(json.dumps({"projects": [*projects, project_id]}))
         return True
+
+
+def free_opening_max_chars() -> int:
+    """``CANARY_FREE_OPENING_MAX_CHARS``: the longest first upload Canary reads free.
+
+    Unset or 0, no Extract is Canary-paid and a new account needs credits to
+    reach its Cold Open.
+    """
+    try:
+        return max(0, int(runtime_settings.raw("CANARY_FREE_OPENING_MAX_CHARS") or 0))
+    except ValueError:
+        return 0
+
+
+def _holds_grant(account_dir: Path, project_id: str) -> bool:
+    try:
+        return project_id in json.loads((account_dir / GRANTS_FILE).read_text()).get("projects", [])
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: str, *,
+                         rerun: bool = False, claim: bool = False,
+                         applicant: free_opening_guard.Applicant | None = None) -> str | None:
+    """The sponsor for this Extract run, or None when the author pays.
+
+    Canary pays for the first Extract of an account's free project, so an
+    account with no credits reaches its Cold Open. The grant is the Cold
+    Open's own: one project per account. A failed run may be retried free;
+    once Extract has completed, reading the text again costs credits. Longer
+    uploads, later parts and reruns are never sponsored. Never raises.
+
+    Where accounts are limited, a project that does not hold the grant yet is
+    also checked as a person (``free_opening_guard``), which needs the
+    ``applicant`` of a live request. The job itself runs without one, so it
+    sponsors only a project the run request already admitted.
+    """
+    from novel_to_comic.stages.s1_extract import source_text
+    from novel_to_comic.state import StageStatus
+
+    try:
+        limit = free_opening_max_chars()
+        if (
+            not limit or stage != "extract" or rerun or project_id is None
+            or per_account_limit() == 0
+            or part_id_for_path(part_dir) != FIRST_PART_ID
+            or state.stages["extract"].status == StageStatus.COMPLETE
+        ):
+            return None
+        root = series_root(part_dir)
+        if not sponsored_budget.has_room(root.parent.parent):
+            return None
+        text = source_text(part_dir, state)
+        if not 0 < len(text) <= limit:
+            return None
+        account_dir = root.parent
+        if not claim_grant(account_dir, project_id, claim=False):
+            return None
+        if per_account_limit() is not None and not _holds_grant(account_dir, project_id):
+            if applicant is None:
+                return None
+            refusal = free_opening_guard.claim(
+                account_dir.parent, account_dir.name, applicant, text, commit=claim)
+            if refusal is not None:
+                logger.info("Free opening refused project=%s reason=%s", project_id, refusal)
+                return None
+        return cold_open.SPONSOR if claim_grant(account_dir, project_id, claim=claim) else None
+    except Exception:
+        logger.exception("Free opening admission failed project=%s", project_id)
+        return None
 
 
 def start_cold_open(app, *, user_id: str, project_id: str | None, part_dir: Path, config: Config):
@@ -94,7 +167,8 @@ def start_cold_open(app, *, user_id: str, project_id: str | None, part_dir: Path
         pkey = project_key(user_id, project_id)
         if find_active_generation_job(app, pkey, "cold_open") is not None:
             return None
-        if not claim_grant(root.parent, project_id):
+        # The daily ceiling comes first, so a refused day never spends the grant.
+        if not sponsored_budget.has_room(root.parent.parent) or not claim_grant(root.parent, project_id):
             return None
         snapshot = TargetArtifacts(part_dir).read_opening_snapshot()
         cold_open.begin_record(root, FIRST_PART_ID, snapshot.bible)

@@ -70,7 +70,16 @@ SUPPORTED_MODELS = {
     # Listed in Runware's catalog (modelSearch, 2026-11-10); Labs routes only.
     "gpt-image-2.6-sunburst": "openai:gpt-image@2.6-sunburst",
     "gpt-image-2.6-flare": "openai:gpt-image@2.6-flare",
+    # MiniMax H3 Image (Runware docs, 2026-11-10); Labs routes only.
+    "minimax-h3-image": "minimax:h3@image",
+    "minimax-h3-image-highspeed": "minimax:h3@image-highspeed",
 }
+#: MiniMax H3 models: no quality, background or moderation settings. Runware's
+#: ``safety.checkContent`` is the only content control and stays off.
+MINIMAX_MODELS = frozenset({"minimax-h3-image", "minimax-h3-image-highspeed"})
+#: MiniMax H3 accepts 468-7745 px per side, 0.66-20 MP and 1:3 to 3:1.
+MINIMAX_MIN_SIDE, MINIMAX_MAX_SIDE = 468, 7745
+MINIMAX_MIN_PIXELS, MINIMAX_MAX_PIXELS = 660_000, 20_000_000
 SUBMIT_TIMEOUT_S = 300.0
 CONNECT_TIMEOUT_S = 10.0
 UPLOAD_TIMEOUT_S = 120.0
@@ -92,6 +101,7 @@ PREFETCH_CONCURRENCY = 4
 # Controls the frozen manifest may carry; anything else is rejected, never
 # forwarded or dropped silently.
 _ALLOWED_CONTROLS = frozenset({"quality", "output_format", "n", "background"})
+_MINIMAX_CONTROLS = frozenset({"output_format", "n"})
 # Same provider policy as the direct OpenAI route: "low" is the least
 # restrictive moderation tier GPT Image offers.
 MODERATION = "low"
@@ -439,7 +449,8 @@ def inference_task(model: str, prompt: str, params: dict[str, Any]) -> dict[str,
     except (KeyError, TypeError, ValueError) as exc:
         raise RunwareImageError(status_code=400, phase="request_validation", model=model,
                                 detail=f"invalid frozen wire manifest ({type(exc).__name__})") from None
-    unknown = sorted(set(controls) - _ALLOWED_CONTROLS)
+    allowed = _MINIMAX_CONTROLS if model in MINIMAX_MODELS else _ALLOWED_CONTROLS
+    unknown = sorted(set(controls) - allowed)
     if unknown:
         raise RunwareImageError(status_code=400, phase="request_validation", model=model,
                                 detail=f"unsupported controls {unknown}")
@@ -453,11 +464,17 @@ def inference_task(model: str, prompt: str, params: dict[str, Any]) -> dict[str,
     if int(controls.get("n", 1)) != 1:
         raise RunwareImageError(status_code=400, phase="request_validation", model=model,
                                 detail="exactly one image per request")
-    settings: dict[str, Any] = {"moderation": MODERATION}
-    for key in ("quality", "background"):
-        if key in controls:
-            settings[key] = str(controls[key]).lower()
-    return {
+    if model in MINIMAX_MODELS:
+        _check_minimax_size(model, width, height)
+        # promptOptimizer stays at its default (on): Runware requires it
+        # whenever reference images are sent.
+        settings: dict[str, Any] = {}
+    else:
+        settings = {"moderation": MODERATION}
+        for key in ("quality", "background"):
+            if key in controls:
+                settings[key] = str(controls[key]).lower()
+    task = {
         "taskType": "imageInference",
         "taskUUID": str(uuid.uuid4()),
         "model": SUPPORTED_MODELS[model],
@@ -472,6 +489,17 @@ def inference_task(model: str, prompt: str, params: dict[str, Any]) -> dict[str,
         "deliveryMethod": "sync",
         "safety": {"checkContent": False},
     }
+    if not settings:
+        del task["settings"]
+    return task
+
+
+def _check_minimax_size(model: str, width: int, height: int) -> None:
+    sides_ok = all(MINIMAX_MIN_SIDE <= side <= MINIMAX_MAX_SIDE for side in (width, height))
+    area_ok = MINIMAX_MIN_PIXELS <= width * height <= MINIMAX_MAX_PIXELS
+    if not (sides_ok and area_ok and max(width, height) <= 3 * min(width, height)):
+        raise RunwareImageError(status_code=400, phase="request_validation", model=model,
+                                detail=f"size {width}x{height} is outside MiniMax H3 limits")
 
 
 def reference_bytes(item: Any, index: int, *, model: str) -> bytes:

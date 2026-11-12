@@ -40,6 +40,8 @@ from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FLARE,
     GATEWAY_IMAGE_FLARE_26,
     GATEWAY_IMAGE_FLARE_26_RUNWARE,
+    GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE,
+    GATEWAY_IMAGE_MINIMAX_H3_RUNWARE,
     GATEWAY_IMAGE_FLARE_RUNWARE,
     GATEWAY_IMAGE_NANO_BANANA_21,
     GATEWAY_IMAGE_SUNBURST_26,
@@ -211,6 +213,29 @@ def openai_page_capability_profile(
     )
 
 
+#: Runware-only complete-page models with no quality tier; Labs comparisons only.
+RUNWARE_ONLY_PAGE_MODELS = ("minimax-h3-image", "minimax-h3-image-highspeed")
+
+
+def runware_only_page_capability_profile(model: str) -> PageCapabilityProfile:
+    """A model only Runware serves, drawn at the GPT page size (1024x1536)."""
+    if model not in RUNWARE_ONLY_PAGE_MODELS:
+        raise ValueError("Unsupported Runware-only page model")
+    from novel_to_comic.usage import get_pricing_resolver
+
+    pricing, _ = get_pricing_resolver()._pricing_for(f"runware/{model}")
+    return PageCapabilityProfile(
+        id=f"{model}-runware-complete-page-hybrid-v1", exact_visible_lettering=False,
+        provider="runware", model=model,
+        max_image_references=16, reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=1024, output_height=1536, max_prompt_characters=32_000,
+        retry_semantics="bounded_submission", max_attempts=1,
+        price_per_page_usd=Decimal(str(pricing["estimated_output_cost_per_image"])),
+        price_per_reference_usd=Decimal(str(pricing["estimated_input_cost_per_reference"])),
+    )
+
+
 _FAL_SUNBURST_PAGE_PROFILE_ID = "gpt-image-2.5-sunburst-fal-complete-page-medium-hybrid-v1"
 
 
@@ -346,6 +371,8 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
         profile == openai_page_capability_profile(model, quality=quality)
         for model in OPENAI_PAGE_GATEWAY_MODELS
         for quality in OPENAI_PAGE_QUALITIES
+    ) or any(
+        profile == runware_only_page_capability_profile(model) for model in RUNWARE_ONLY_PAGE_MODELS
     ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile()),
                      sunburst_fallback_page_capability_profile(),
                      _integrated_page_profile(sunburst_fallback_page_capability_profile()),
@@ -1582,7 +1609,9 @@ class GoogleVertexCompletePageTransport:
             }
             quality = page_image_quality(self._profile.id, self._profile.provider)
             if self._route_provider in {"openai", "fal-queue", "runware"}:
-                request_data.update({"quality": quality, "output_format": "png"})
+                # Runware-only models (MiniMax H3) have no quality tier.
+                quality_controls = [] if quality is None else [["quality", quality]]
+                request_data.update({"output_format": "png", **({} if quality is None else {"quality": quality})})
                 # Both routes run through custom gateway handlers, which lose
                 # standard Images fields. Preserve dimensions and controls
                 # through the manifest those handlers consume.
@@ -1590,7 +1619,7 @@ class GoogleVertexCompletePageTransport:
                     "width": request.width,
                     "height": request.height,
                     "controls": [
-                        ["quality", quality],
+                        *quality_controls,
                         ["output_format", "png"],
                         ["n", 1],
                     ],
@@ -1858,14 +1887,16 @@ def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) 
 
 
 def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
-    """The profile's GPT Image model through Runware alone, with no fallback.
+    """The profile's model through Runware alone, with no fallback.
 
-    The 2.6 routes serve Labs comparisons only."""
+    The GPT Image 2.6 and MiniMax H3 routes serve Labs comparisons only."""
     gateway_models = {
         "gpt-image-2.5-sunburst": GATEWAY_IMAGE_SUNBURST_RUNWARE,
         "gpt-image-2.5-flare": GATEWAY_IMAGE_FLARE_RUNWARE,
         "gpt-image-2.6-sunburst": GATEWAY_IMAGE_SUNBURST_26_RUNWARE,
         "gpt-image-2.6-flare": GATEWAY_IMAGE_FLARE_26_RUNWARE,
+        "minimax-h3-image": GATEWAY_IMAGE_MINIMAX_H3_RUNWARE,
+        "minimax-h3-image-highspeed": GATEWAY_IMAGE_MINIMAX_H3_HIGHSPEED_RUNWARE,
     }
     if profile.model not in gateway_models:
         raise ValueError(f"Runware has no route for {profile.model}")
