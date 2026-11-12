@@ -210,3 +210,20 @@ def test_public_config_returns_only_the_site_key(tmp_path, monkeypatch):
     response = TestClient(create_app(tmp_path, dev=False)).get("/api/public-config")
     assert response.status_code == 200
     assert response.json() == {"turnstile_site_key": "0x4AAAAAAA-site"}
+
+
+@pytest.mark.parametrize("method", ["PUT", "DELETE"])
+def test_local_operator_desk_may_change_production_settings(tmp_path, monkeypatch, method):
+    from novel_to_comic.server.app import create_app
+
+    origin = "http://localhost:5173"
+    monkeypatch.setenv("CANARY_BACKOFFICE_ORIGINS", origin)
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    production = TestClient(create_app(tmp_path, dev=False))
+    headers = {"Origin": origin, "Access-Control-Request-Method": method,
+               "Access-Control-Request-Headers": "content-type,x-canary-ops-token"}
+    path = "/api/ops/backoffice/settings/CANARY_FREE_OPENING_MAX_CHARS"
+    preflight = production.options(path, headers=headers)
+    assert preflight.status_code == 200
+    assert method in preflight.headers["access-control-allow-methods"]
+    assert production.options(path, headers={**headers, "Origin": "https://untrusted.example"}).status_code == 400
