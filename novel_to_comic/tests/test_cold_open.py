@@ -549,6 +549,36 @@ def test_one_free_opening_per_person_not_per_account(tmp_path, monkeypatch):
     assert "gmail" not in stored and "198.51" not in stored  # digests only
 
 
+def test_free_opening_decisions_reach_analytics_once(tmp_path, monkeypatch):
+    from novel_to_comic.server import product_events
+
+    events = []
+    monkeypatch.setattr(product_events, "capture_server_event",
+                        lambda name, **kw: events.append((name, kw["user_id"], kw["properties"])))
+    monkeypatch.setattr(cold_open_jobs, "_REPORTED", set())
+    volume, part = _free_opening(tmp_path, monkeypatch)
+    other = create_part_workspace(volume / "second-account" / "series", "part_0001")
+    ask = lambda part_dir, claim=False, **who: cold_open_jobs.free_opening_sponsor(  # noqa: E731
+        part_dir, _extract_state(), "project", "extract", claim=claim, applicant=_applicant(**who))
+
+    assert ask(part, claim=True) == "cold_open"
+    assert ask(part, claim=True) == "cold_open"  # a retry is not a second grant
+    # The same manuscript on a second account, asked about on every estimate refresh.
+    assert ask(other, email="someone@example.org") is None
+    assert ask(other, email="someone@example.org") is None
+    assert events == [
+        ("free_opening_granted", "account", {"characters": 9000, "max_characters": 20000}),
+        ("free_opening_refused", "second-account", {"reason": "opening_already_drawn", "at": "estimate",
+                                                    "characters": 9000, "max_characters": 20000}),
+    ]
+    for name, _, properties in events:  # the analytics allowlist accepts them
+        product_events._clean_properties(name, properties, source="server")
+    events.clear()
+    monkeypatch.setenv("CANARY_FREE_OPENING_MAX_CHARS", "100")
+    assert ask(other, email="someone@example.org") is None
+    assert events[0][2]["reason"] == "too_long"
+
+
 def test_an_address_claims_two_free_openings_a_day(tmp_path, monkeypatch):
     volume, _ = _free_opening(tmp_path, monkeypatch)
     for index, expected in enumerate((None, None, "address_limit")):

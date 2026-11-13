@@ -119,8 +119,15 @@ Use Stripe test mode and a throwaway account. Write down each cost.
 - [ ] Buy a pack on the granted account: the bonus row appears once.
 - [ ] Stop Runware (or use a bad key in staging): an image fails with a clear
       error and nothing is submitted to OpenAI or FAL.
-- [ ] In PostHog, find `cold_open_printed`, `card_grant_started`,
-      `card_grant_claimed` and `first_purchase_bonus_granted`.
+- [ ] In PostHog, find `free_opening_granted`, `cold_open_printed`,
+      `card_grant_started`, `card_grant_claimed` and
+      `first_purchase_bonus_granted`.
+- [ ] When a first upload is quoted a price, `free_opening_refused` says why:
+      `reason` is `too_long`, `no_text`, `daily_budget`, `account_used`,
+      `email_unverified`, `email_disposable`, `email_already_used`,
+      `opening_already_drawn`, `address_limit` or `error`; `at` says whether
+      the estimate or the run was refused. One event per project and reason
+      per server process.
 
 ## 5. Decisions and copy that need the owner
 

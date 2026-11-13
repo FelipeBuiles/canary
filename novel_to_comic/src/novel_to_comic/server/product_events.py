@@ -46,6 +46,9 @@ SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "cold_open_favorite": frozenset({"look_id"}),
     # First pages that opened Look as its proofs, with no generation.
     "cold_open_adopted": frozenset({"pages"}),
+    # Why a first upload's Extract was not Canary-paid; "at" is estimate or run.
+    "free_opening_refused": frozenset({"reason", "at", "characters", "max_characters"}),
+    "free_opening_granted": frozenset({"characters", "max_characters"}),
     "page_outcome": frozenset({"outcome", "page_number", "render_revision", "generation_id", "category", "mode"}),
     "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency", "stripe_mode"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency", "stripe_mode"}),

@@ -115,6 +115,15 @@ def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: s
     from novel_to_comic.stages.s1_extract import source_text
     from novel_to_comic.state import StageStatus
 
+    account_dir: Path | None = None
+    details: dict = {}
+
+    def refuse(reason: str) -> None:
+        logger.info("Free opening refused project=%s reason=%s", project_id, reason)
+        if account_dir is not None:
+            _report_free_opening("free_opening_refused", account_dir.name, project_id,
+                                 {"reason": reason, "at": "run" if claim else "estimate", **details})
+
     try:
         limit = free_opening_max_chars()
         if (
@@ -125,26 +134,52 @@ def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: s
         ):
             return None
         root = series_root(part_dir)
-        if not sponsored_budget.has_room(root.parent.parent):
-            return None
-        text = source_text(part_dir, state)
-        if not 0 < len(text) <= limit:
-            return None
         account_dir = root.parent
+        if not sponsored_budget.has_room(root.parent.parent):
+            return refuse("daily_budget")
+        text = source_text(part_dir, state)
+        details.update(characters=len(text), max_characters=limit)
+        if not 0 < len(text) <= limit:
+            return refuse("too_long" if text else "no_text")
         if not claim_grant(account_dir, project_id, claim=False):
-            return None
-        if per_account_limit() is not None and not _holds_grant(account_dir, project_id):
+            return refuse("account_used")
+        held = _holds_grant(account_dir, project_id)
+        if per_account_limit() is not None and not held:
             if applicant is None:
-                return None
+                return None  # the job honors only what its run request admitted
             refusal = free_opening_guard.claim(
                 account_dir.parent, account_dir.name, applicant, text, commit=claim)
             if refusal is not None:
-                logger.info("Free opening refused project=%s reason=%s", project_id, refusal)
-                return None
-        return cold_open.SPONSOR if claim_grant(account_dir, project_id, claim=claim) else None
+                return refuse(refusal)
+        if not claim_grant(account_dir, project_id, claim=claim):
+            return refuse("account_used")
+        if claim and not held:
+            _report_free_opening("free_opening_granted", account_dir.name, project_id, details)
+        return cold_open.SPONSOR
     except Exception:
         logger.exception("Free opening admission failed project=%s", project_id)
+        refuse("error")
         return None
+
+
+_REPORTED: set[tuple[str, str | None, str]] = set()
+
+
+def _report_free_opening(event: str, user_id: str, project_id: str | None, properties: dict) -> None:
+    """Send a free-opening decision to product analytics, once per project and outcome per process.
+
+    The estimate is fetched again and again while the author looks at the
+    page; one event per outcome is enough to see why an author paid.
+    """
+    key = (event, project_id, str(properties.get("reason", "")))
+    if key in _REPORTED:
+        return
+    if len(_REPORTED) > 10_000:
+        _REPORTED.clear()
+    _REPORTED.add(key)
+    from .product_events import capture_server_event
+
+    capture_server_event(event, user_id=user_id, project_id=project_id, properties=properties)
 
 
 def start_cold_open(app, *, user_id: str, project_id: str | None, part_dir: Path, config: Config):
