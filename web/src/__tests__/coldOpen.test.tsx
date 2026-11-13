@@ -15,6 +15,11 @@ vi.mock("../api/queries", () => ({
   },
   useSetColdOpenFavorite: () => favorite,
 }));
+const offer = vi.hoisted(() => ({ available: false }));
+vi.mock("../api/cardGrant", () => ({
+  useAccountOffer: () => ({ data: { free_opening: { status: "used" }, first_purchase_bonus_percent: 0,
+    card_grant: { enabled: true, available: offer.available, claimed: false, credits: 1200 } } }),
+}));
 
 function look(id: string, label: string, status: ColdOpenLook["status"]): ColdOpenLook {
   return {
@@ -41,6 +46,7 @@ beforeEach(() => {
   state.coldOpen = null;
   state.watching = [];
   favorite.mutate.mockReset();
+  offer.available = false;
   localStorage.clear();
 });
 
@@ -108,5 +114,16 @@ describe("ColdOpen", () => {
     view();
     expect(screen.getByRole("heading", { name: "The press jammed on your first pages" })).toBeTruthy();
     expect(screen.getByText(/Nothing was charged/)).toBeTruthy();
+  });
+
+  it("points printed pages to the first-chapter credits only where the account can claim them", () => {
+    state.coldOpen = coldOpen();
+    const { unmount } = view();
+    expect(screen.queryByRole("link", { name: /verify a card/ })).toBeNull();
+    unmount();
+    offer.available = true;
+    view();
+    const link = screen.getByRole("link", { name: /verify a card for 1,200 credits for a first chapter/ });
+    expect(link.getAttribute("href")).toBe("/credits");
   });
 });

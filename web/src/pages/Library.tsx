@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useDeleteProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { ProjectCard } from "../components/ProjectCard";
+import { FreeOpeningBanner } from "../components/FreeOpeningBanner";
 import { projectCoverColor, projectShelfState, projectStation, type ProjectShelfState } from "../lib/projectShelf";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { useBackdropDismiss } from "../hooks/useBackdropDismiss";
@@ -26,6 +27,7 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
         <span className="inline-flex h-[26px] items-center bg-narrator-gold px-2.5 font-meta text-[0.6875rem] font-bold uppercase tracking-[0.1em] text-ink-black">{t("Your library")}</span>
         <h1 className="mt-4 font-display text-[2.75rem] font-black uppercase leading-[0.86] tracking-[-0.035em] sm:text-[4rem]">{t("Your first comic starts here")}</h1>
         <p className="mt-5 font-body text-[1.0625rem] leading-7 text-pulp-paper/75">{t("Bring a chapter, a short story or a whole book.")}</p>
+        <div className="mt-5"><FreeOpeningBanner tone="ink" /></div>
         <div className="mt-7 flex flex-wrap items-center gap-5">
           <Button size="lg" className="border-pulp-paper shadow-[3px_3px_0_var(--color-pulp-paper)]" onClick={onStart}>
             <Icon name="plus" size={15} />
@@ -266,6 +268,8 @@ export function Library() {
               </Button>
             </div>
           </div>
+
+          <FreeOpeningBanner />
 
           {desk && <DeskPanel project={desk} />}
 

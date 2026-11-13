@@ -30,7 +30,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `DELETE` | `/api/ops/backoffice/settings/{key}` | `clear_runtime_setting` | `backoffice.py` |
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
-| `GET` | `/api/billing/card-grant` | `card_grant_status` | `billing.py` |
+| `GET` | `/api/billing/offer` | `account_offer` | `billing.py` |
 | `POST` | `/api/billing/card-grant/checkout` | `create_card_grant_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
 | `GET` | `/api/projects/{project}/cast/review` | `cast_review` | `cast_assets.py` |

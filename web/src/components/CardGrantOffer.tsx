@@ -1,15 +1,16 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCardGrant, useStartCardGrant } from "../api/cardGrant";
+import { OFFER_QUERY_KEY, useAccountOffer, useStartCardGrant } from "../api/cardGrant";
 import { useI18n } from "../i18n";
 import { Button } from "./ui/Button";
 import { Surface } from "./ui/Surface";
 
-/** The first-chapter grant on the credits page. Renders nothing where the offer is off. */
+/** The first-chapter grant on the credits page. Renders nothing where the offer is off or cannot be earned. */
 export function CardGrantOffer({ outcome }: { outcome: string | null }) {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const { data } = useCardGrant();
+  const { data: offer } = useAccountOffer();
+  const data = offer?.card_grant;
   const start = useStartCardGrant();
   const refreshed = useRef(false);
 
@@ -19,7 +20,7 @@ export function CardGrantOffer({ outcome }: { outcome: string | null }) {
     // The grant arrives by webhook, a moment after Stripe returns the author.
     const ids = [500, 2000, 4000].map((delay) => setTimeout(() => {
       void qc.invalidateQueries({ queryKey: ["credits"] });
-      void qc.invalidateQueries({ queryKey: ["billing", "card-grant"] });
+      void qc.invalidateQueries({ queryKey: OFFER_QUERY_KEY });
     }, delay));
     return () => ids.forEach(clearTimeout);
   }, [outcome, qc]);
@@ -50,7 +51,22 @@ export function CardGrantOffer({ outcome }: { outcome: string | null }) {
     );
   }
 
-  if (!data.available) return null;
+  if (!data.available) {
+    // Not yet earned: say what earns it, while the free opening can still be had.
+    if (data.reason !== "opening_first" || !offer || offer.free_opening.status === "off") return null;
+    return (
+      <Surface tone="pulp" shadow="none" padding="md" className="mb-8">
+        <h2 className="font-display text-xl font-black tracking-tight text-ink-black">
+          {t("Credits for a first chapter, after your opening")}
+        </h2>
+        <p className="mt-2 max-w-[44rem] font-body text-sm leading-6 text-ink-muted">
+          {t("Once your free first pages are printed, verify a card here to get {credits} credits for a first chapter. The card is not charged. One per person and card; unused credits expire after {days} days.", {
+            credits, days: data.expiry_days ?? 30,
+          })}
+        </p>
+      </Surface>
+    );
+  }
   return (
     <Surface tone="pulp" shadow="paper" padding="md" className="mb-8">
       <h2 className="font-display text-xl font-black tracking-tight text-ink-black">

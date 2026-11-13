@@ -248,7 +248,15 @@ export interface CostEstimate {
   funding?: ModelFunding;
 }
 
+/** Whether Canary pays for a first upload's Extract; the reason is only what the author may be told. */
+export interface FreeOpeningDecision {
+  status: "free" | "refused";
+  reason?: "too_long" | "daily_budget" | "account_used" | "not_eligible";
+  max_characters?: number;
+}
+
 export interface StageCostEstimate extends CostEstimate {
+  free_opening?: FreeOpeningDecision;
   archived_page_count?: number;
   stage: string;
   reserved_credits: number;

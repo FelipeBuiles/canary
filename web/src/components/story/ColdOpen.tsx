@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useColdOpen, useSetColdOpenFavorite } from "../../api/queries";
+import { useAccountOffer } from "../../api/cardGrant";
 import type { ColdOpen as ColdOpenData, ColdOpenLook } from "../../api/styles";
 import { ImageGenerationPreview } from "../composites/ImageGenerationPreview";
 import { useImageViewer } from "../../hooks/useImageViewer";
@@ -84,6 +85,7 @@ function ColdOpenPress({ project, coldOpen, className }: { project: string; cold
         </div>
         <SheetRow project={project} coldOpen={coldOpen} className="mt-7" />
         <p role="status" aria-live="polite" className="mt-6 max-w-[44rem] font-body text-[0.9375rem] leading-6 text-pulp-paper/80">{status}</p>
+        {printed && !printing && <ChapterOffer onInk />}
       </div>
     </section>
   );
@@ -147,8 +149,25 @@ function ColdOpenRail({ project, coldOpen, lookReady, className }: {
           {t("Make the whole book look like this")}<ArrowRight size={14} aria-hidden="true" />
         </Link>
       )}
+      {done > 0 && coldOpen.status !== "printing" && <ChapterOffer />}
       {viewer}
     </section>
+  );
+}
+
+/** After the first pages: the card-verified credits for a first chapter, where this account can claim them. */
+function ChapterOffer({ onInk = false }: { onInk?: boolean }) {
+  const { t } = useI18n();
+  const { data } = useAccountOffer();
+  const grant = data?.card_grant;
+  if (!grant?.available) return null;
+  return (
+    <Link to="/credits"
+      className={cn("inline-flex min-h-11 items-center gap-1.5 font-meta font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red",
+        onInk ? "mt-4 text-[0.9375rem] text-narrator-gold" : "mt-1 text-[0.8125rem] text-hero-red")}>
+      {t("Keep going: verify a card for {credits} credits for a first chapter. The card is not charged.", { credits: (grant.credits ?? 0).toLocaleString() })}
+      <ArrowRight size={14} aria-hidden="true" />
+    </Link>
   );
 }
 

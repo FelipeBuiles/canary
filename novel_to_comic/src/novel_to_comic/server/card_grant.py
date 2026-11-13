@@ -130,6 +130,45 @@ def first_purchase_bonus_percent() -> int:
     return min(100, _int("CANARY_FIRST_PURCHASE_BONUS_PERCENT", 0))
 
 
+def _bonus_marker(user_id: str) -> str:
+    return f"first-purchase-bonus:{user_id}"
+
+
+def _grant_active(grant: dict | None) -> bool:
+    if grant is None or grant.get("expired_at"):
+        return False
+    try:
+        return datetime.fromisoformat(str(grant["expires_at"])) > datetime.now(UTC)
+    except (KeyError, ValueError):
+        return False
+
+
+def offer(db, user_id: str, account_dir: Path) -> dict:
+    """Everything the free offer holds for this account, for the author's screens.
+
+    ``free_opening`` is the account's free first pages; ``card_grant`` is
+    ``status``; ``first_purchase_bonus_percent`` is set only while the next
+    purchase would earn the bonus. Every part is off when its setting is.
+    """
+    from .cold_open_jobs import account_free_opening
+
+    grant = status(db, user_id, account_dir)
+    percent = 0
+    if first_purchase_bonus_percent() > 0 and grant.get("claimed") and not grant.get("expired"):
+        try:
+            active = _grant_active(claimed(db, user_id))
+            used = bool(db.table("credit_ledger").select("id").eq("usage_call_id", _bonus_marker(user_id))
+                        .limit(1).execute().data)
+            percent = first_purchase_bonus_percent() if active and not used else 0
+        except Exception:
+            logger.warning("First purchase bonus status unavailable user=%s", user_id, exc_info=True)
+    return {
+        "free_opening": account_free_opening(account_dir),
+        "card_grant": grant,
+        "first_purchase_bonus_percent": percent,
+    }
+
+
 def grant_first_purchase_bonus(db, *, user_id: str, purchased_credits: int) -> int:
     """Add bonus credits to a grant holder's first purchase; returns what was added.
 
@@ -143,17 +182,14 @@ def grant_first_purchase_bonus(db, *, user_id: str, purchased_credits: int) -> i
     if bonus <= 0:
         return 0
     try:
-        grant = claimed(db, user_id)
-        if grant is None or grant.get("expired_at"):
-            return 0
-        if datetime.fromisoformat(str(grant["expires_at"])) <= datetime.now(UTC):
+        if not _grant_active(claimed(db, user_id)):
             return 0
         inserted = db.table("credit_ledger").upsert(
             {
                 "user_id": user_id, "amount_credits": bonus, "status": "settled",
                 "description": f"First purchase bonus — {bonus:,} credits",
                 "operation": "first_purchase_bonus",
-                "usage_call_id": f"first-purchase-bonus:{user_id}",
+                "usage_call_id": _bonus_marker(user_id),
             },
             on_conflict="usage_call_id", ignore_duplicates=True,
         ).execute().data

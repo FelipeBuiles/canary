@@ -4,7 +4,8 @@ import { Button } from "../ui/Button";
 import { useCreditBalance, useStageEstimate } from "../../api/queries";
 import { useRecommendedPackage, useBuyCredits, packageMeetsShortfall } from "../../lib/creditsPurchase";
 import { useRunAction } from "../../hooks/useRunAction";
-import type { StageName } from "../../types/api";
+import type { FreeOpeningDecision, StageName } from "../../types/api";
+import { approximateWords } from "../../api/cardGrant";
 import { CreditAmount } from "../ui/CreditAmount";
 import { CostBreakdown } from "../cost/CostBreakdown";
 import { ConfirmDrawer } from "./ConfirmDrawer";
@@ -61,6 +62,7 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
         <p className="mt-4 font-body text-base leading-6 text-ink-muted">
           {t("Adding credits does not start work. Review the estimate and confirm when you are ready.")}
         </p>
+        <FreeOpeningRefusal decision={estimate.data?.free_opening} />
         <dl className="mt-5 grid gap-4 bg-surface-container p-4 sm:grid-cols-3">
           <div>
             <dt className="font-meta text-xs uppercase text-ink-muted">{t("Balance")}</dt>
@@ -124,5 +126,24 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
         />
       </div>
     </div>
+  );
+}
+
+/** Why this first upload is not on the house, said only as far as it helps the author. */
+function FreeOpeningRefusal({ decision }: { decision?: FreeOpeningDecision }) {
+  const { t } = useI18n();
+  if (decision?.status !== "refused") return null;
+  const words = approximateWords(decision.max_characters ?? 0).toLocaleString();
+  const message = decision.reason === "too_long"
+    ? t("Your free opening covers a first upload of up to about {words} words, and this one is longer. Start a new production with just your opening to have it read and drawn free.", { words })
+    : decision.reason === "daily_budget"
+      ? t("Today's free openings have all been given. Come back tomorrow for yours, or add credits to start now.")
+      : decision.reason === "account_used"
+        ? t("This account has already used its free opening.")
+        : t("This upload can't use the free opening. Free openings are one per person.");
+  return (
+    <p role="note" className="mt-4 border-l-[3px] border-narrator-gold pl-3 font-body text-sm leading-6 text-ink-black">
+      {message}
+    </p>
   );
 }

@@ -226,3 +226,35 @@ def test_a_grant_holder_s_first_purchase_gets_bonus_credits_once(monkeypatch):
     broken = MagicMock()
     broken.table.side_effect = RuntimeError("database unavailable")
     assert bonus(broken) == 0  # the settled purchase is never failed by its bonus
+
+
+def test_the_offer_tells_an_account_what_it_still_has(tmp_path, monkeypatch, offer):
+    from novel_to_comic.server import cold_open_jobs
+
+    monkeypatch.setenv("CANARY_ENV", "production")
+    monkeypatch.delenv("CANARY_COLD_OPEN_PER_ACCOUNT", raising=False)
+    monkeypatch.setenv("CANARY_FREE_OPENING_MAX_CHARS", "20000")
+    monkeypatch.setenv("CANARY_FIRST_PURCHASE_BONUS_PERCENT", "50")
+    monkeypatch.setattr(cold_open, "read_record", lambda root: None)
+    account = tmp_path / "account"
+    live = {"amount_credits": 1200, "expired_at": None,
+            "expires_at": (datetime.now(UTC) + timedelta(days=3)).isoformat()}
+
+    def ask(grant=None, bonus_used=False):
+        db, ledger = _bonus_db(grant=grant)
+        ledger.select.return_value.eq.return_value.limit.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "bonus"}] if bonus_used else [])
+        return card_grant.offer(db, "account", account)
+
+    fresh = ask()
+    assert fresh["free_opening"] == {"status": "available", "max_characters": 20000}  # before any project
+    assert fresh["card_grant"]["reason"] == "opening_first" and fresh["first_purchase_bonus_percent"] == 0
+    account.mkdir()
+    assert cold_open_jobs.claim_grant(account, "book")
+    assert ask()["free_opening"]["status"] == "used"
+    assert ask(grant=live)["first_purchase_bonus_percent"] == 50
+    assert ask(grant=live, bonus_used=True)["first_purchase_bonus_percent"] == 0
+    lapsed = {**live, "expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()}
+    assert ask(grant=lapsed)["first_purchase_bonus_percent"] == 0
+    monkeypatch.setenv("CANARY_FREE_OPENING_MAX_CHARS", "0")
+    assert ask()["free_opening"] == {"status": "off"}

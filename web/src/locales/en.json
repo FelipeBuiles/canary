@@ -3917,5 +3917,17 @@
   "Undone. The script and pages are as they were.": "Undone. The script and pages are as they were.",
   "{count, plural, one {Changed page {pages}.} other {Changed pages {pages}.}}": "{count, plural, one {Changed page {pages}.} other {Changed pages {pages}.}}",
   "{count, plural, one {Shows on page {pages}.} other {Shows on {count} pages: {pages}.}}": "{count, plural, one {Shows on page {pages}.} other {Shows on {count} pages: {pages}.}}",
-  "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}": "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}"
+  "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}": "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}",
+  "+{credits} bonus credits": "+{credits} bonus credits",
+  "Credits for a first chapter, after your opening": "Credits for a first chapter, after your opening",
+  "Free: your opening is on us. No credits are used.": "Free: your opening is on us. No credits are used.",
+  "Keep going: verify a card for {credits} credits for a first chapter. The card is not charged.": "Keep going: verify a card for {credits} credits for a first chapter. The card is not charged.",
+  "Once your free first pages are printed, verify a card here to get {credits} credits for a first chapter. The card is not charged. One per person and card; unused credits expire after {days} days.": "Once your free first pages are printed, verify a card here to get {credits} credits for a first chapter. The card is not charged. One per person and card; unused credits expire after {days} days.",
+  "This account has already used its free opening.": "This account has already used its free opening.",
+  "This upload can't use the free opening. Free openings are one per person.": "This upload can't use the free opening. Free openings are one per person.",
+  "Today's free openings have all been given. Come back tomorrow for yours, or add credits to start now.": "Today's free openings have all been given. Come back tomorrow for yours, or add credits to start now.",
+  "Upload your first story, up to about {words} words, and we read it free and draw your opening page in three looks. No credits needed. One per person.": "Upload your first story, up to about {words} words, and we read it free and draw your opening page in three looks. No credits needed. One per person.",
+  "Your first purchase adds {percent}% bonus credits while your first-chapter credits are unexpired. Bonus credits don't expire.": "Your first purchase adds {percent}% bonus credits while your first-chapter credits are unexpired. Bonus credits don't expire.",
+  "Your free opening covers a first upload of up to about {words} words, and this one is longer. Start a new production with just your opening to have it read and drawn free.": "Your free opening covers a first upload of up to about {words} words, and this one is longer. Start a new production with just your opening to have it read and drawn free.",
+  "Your opening is on us": "Your opening is on us"
 }

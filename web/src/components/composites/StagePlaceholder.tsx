@@ -332,7 +332,9 @@ export function StageStartAction({
             </Button>
           </div>
         ) : estimate.data ? (
-          estimate.data.estimate_credits === 0 && estimate.data.funding && estimate.data.funding !== "api" ? (
+          estimate.data.free_opening?.status === "free" ? (
+            <p className="font-body text-sm font-semibold">{t("Free: your opening is on us. No credits are used.")}</p>
+          ) : estimate.data.estimate_credits === 0 && estimate.data.funding && estimate.data.funding !== "api" ? (
             <p className="font-body text-sm">{t("Included in your {plan}", { plan: t(fundingLabel(estimate.data.funding)) })}</p>
           ) : (
             <p className="font-body text-sm">

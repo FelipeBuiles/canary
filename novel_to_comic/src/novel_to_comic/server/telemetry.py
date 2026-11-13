@@ -42,6 +42,8 @@ _FIELDS = frozenset({
     "experiment_id", "variant", "fixture_id", "prompt_sha", "schema_sha", "request_sha", "wire_schema_version", "attempt_number", "surface",
     "admission_ms", "execution_ms", "validation_error_count", "generation_id",
     "fallback_reason", "attempts",
+    # Free offer and Cold Open events (product_events allowlist).
+    "reason", "at", "characters", "max_characters", "pages", "ranking", "story_copy", "look_id",
 })
 # Person properties: account lifecycle and first-touch attribution only.
 _PERSON_FIELDS = frozenset({"$internal_or_test_user", "signed_up_at", "acquisition_source",

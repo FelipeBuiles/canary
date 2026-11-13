@@ -240,11 +240,11 @@ def _card_grant_limit() -> str:
     return runtime_settings.raw("CANARY_RATE_LIMIT_CARD_GRANT") or "3/hour"
 
 
-@router.get("/card-grant")
-async def card_grant_status(request: Request, user_id: str = Depends(get_current_user)):
-    """Whether this account may verify a card for its first-chapter grant."""
+@router.get("/offer")
+async def account_offer(request: Request, user_id: str = Depends(get_current_user)):
+    """The free offer as it stands for this account: free opening, card grant, purchase bonus."""
     account_dir = request.app.state.projects_dir / user_id
-    return await run_in_threadpool(card_grant.status, get_db(), user_id, account_dir)
+    return await run_in_threadpool(card_grant.offer, get_db(), user_id, account_dir)
 
 
 @router.post("/card-grant/checkout")

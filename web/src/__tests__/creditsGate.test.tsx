@@ -140,4 +140,25 @@ describe("Credit gate consent", () => {
     fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
     expect(run).toHaveBeenCalledOnce();
   });
+
+  it("says why a first upload is not free, without naming anti-abuse checks", () => {
+    stageInfo = { status: "pending" };
+    for (const [decision, text] of [
+      [{ status: "refused", reason: "too_long", max_characters: 20000 }, /up to about 3,000 words, and this one is longer/],
+      [{ status: "refused", reason: "not_eligible", max_characters: 20000 }, /can't use the free opening/],
+    ] as const) {
+      estimate = { ...estimate!, free_opening: decision };
+      const { unmount } = render(tree());
+      expect(screen.getByRole("note").textContent).toMatch(text);
+      unmount();
+    }
+  });
+
+  it("tells the author a free first upload uses no credits", () => {
+    stageInfo = { status: "pending" };
+    estimate = { ...estimate!, estimate_credits: 0, reserved_credits: 0, free_opening: { status: "free" } };
+    render(tree());
+    expect(screen.getByText("Free: your opening is on us. No credits are used.")).toBeTruthy();
+  });
 });
+

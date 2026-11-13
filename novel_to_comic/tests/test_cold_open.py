@@ -579,6 +579,20 @@ def test_free_opening_decisions_reach_analytics_once(tmp_path, monkeypatch):
     assert events[0][2]["reason"] == "too_long"
 
 
+def test_the_author_is_told_why_only_where_it_helps(tmp_path, monkeypatch):
+    volume, part = _free_opening(tmp_path, monkeypatch, length=25000)
+    decide = lambda **who: cold_open_jobs.free_opening_decision(  # noqa: E731
+        part, _extract_state(), "project", "extract", applicant=_applicant(**who))
+    assert decide() == {"status": "refused", "reason": "too_long", "max_characters": 20000}
+    monkeypatch.setattr("novel_to_comic.stages.s1_extract.source_text", lambda *_: "A short opening.")
+    assert decide() == {"status": "free"}
+    # Which anti-abuse check refused is for the operator, not the visitor.
+    assert decide(email="mara@mailinator.com")["reason"] == "not_eligible"
+    sponsored_budget.record_spend(volume, 10.0)
+    assert decide()["reason"] == "daily_budget"
+    assert cold_open_jobs.free_opening_decision(part, _extract_state(), "project", "brief") is None
+
+
 def test_an_address_claims_two_free_openings_a_day(tmp_path, monkeypatch):
     volume, _ = _free_opening(tmp_path, monkeypatch)
     for index, expected in enumerate((None, None, "address_limit")):

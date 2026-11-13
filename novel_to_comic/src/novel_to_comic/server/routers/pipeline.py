@@ -186,11 +186,13 @@ async def estimate_stage_cost(
         ]
     except MissingVisualAnchor as exc:
         raise HTTPException(409, str(exc)) from exc
-    if _free_opening(request, project_dir, state, project_id, stage, rerun, claim=False) is not None:
+    free_opening = _free_opening_decision(request, project_dir, state, project_id, stage, rerun)
+    if free_opening and free_opening["status"] == "free":
         # Canary pays for this Extract and the Brief it chains: quote the author nothing.
         parts = [{**part, "estimate_credits": 0, "reserved_credits": 0} for part in parts]
     return {
         "stage": stage,
+        **({"free_opening": free_opening} if free_opening else {}),
         **({"archived_page_count": TargetArtifacts(project_dir).drawn_page_count()}
            if stage == "plan" and rerun else {}),
         **CreditEstimate(
@@ -205,9 +207,9 @@ async def estimate_stage_cost(
     }
 
 
-def _free_opening(request: Request, project_dir, state, project_id: str, stage: str, rerun: bool,
-                  *, claim: bool = True) -> str | None:
-    from ..cold_open_jobs import free_opening_max_chars, free_opening_sponsor
+def _free_opening_decision(request: Request, project_dir, state, project_id: str, stage: str, rerun: bool,
+                           *, claim: bool = False) -> dict | None:
+    from ..cold_open_jobs import free_opening_decision, free_opening_max_chars
 
     if stage != "extract" or rerun or not free_opening_max_chars():
         return None
@@ -216,7 +218,15 @@ def _free_opening(request: Request, project_dir, state, project_id: str, stage: 
     from ..ratelimit import client_ip
 
     applicant = Applicant(*token_identity(request), client_ip(request))
-    return free_opening_sponsor(project_dir, state, project_id, stage, claim=claim, applicant=applicant)
+    return free_opening_decision(project_dir, state, project_id, stage, claim=claim, applicant=applicant)
+
+
+def _free_opening(request: Request, project_dir, state, project_id: str, stage: str, rerun: bool,
+                  *, claim: bool = True) -> str | None:
+    from novel_to_comic import cold_open
+
+    decision = _free_opening_decision(request, project_dir, state, project_id, stage, rerun, claim=claim)
+    return cold_open.SPONSOR if decision and decision["status"] == "free" else None
 
 
 async def _start_stage(

@@ -5,9 +5,15 @@ import { I18nProvider } from "../i18n";
 import { CardGrantOffer } from "../components/CardGrantOffer";
 import type { CardGrantStatus } from "../api/cardGrant";
 
-const grant = vi.hoisted(() => ({ data: undefined as CardGrantStatus | undefined, start: vi.fn(), isError: false }));
+const grant = vi.hoisted(() => ({
+  data: undefined as CardGrantStatus | undefined, opening: "available" as "available" | "used" | "off",
+  start: vi.fn(), isError: false,
+}));
 vi.mock("../api/cardGrant", () => ({
-  useCardGrant: () => ({ data: grant.data }),
+  OFFER_QUERY_KEY: ["billing", "offer"],
+  useAccountOffer: () => ({ data: grant.data && {
+    card_grant: grant.data, free_opening: { status: grant.opening, max_characters: 20000 }, first_purchase_bonus_percent: 0,
+  } }),
   useStartCardGrant: () => ({ mutate: grant.start, isPending: false, isError: grant.isError }),
 }));
 
@@ -18,17 +24,25 @@ function setup(outcome: string | null = null) {
 }
 const open: CardGrantStatus = { enabled: true, available: true, claimed: false, credits: 1200, expiry_days: 30 };
 
-beforeEach(() => { grant.data = undefined; grant.start.mockReset(); grant.isError = false; });
+beforeEach(() => { grant.data = undefined; grant.opening = "available"; grant.start.mockReset(); grant.isError = false; });
 
 describe("Card grant offer", () => {
-  it("shows nothing while the offer is off, unknown, or not yet earned", () => {
+  it("shows nothing while the offer is off, unknown, or cannot be earned", () => {
+    grant.opening = "off";
     for (const data of [undefined, { enabled: false, available: false, claimed: false },
-      { ...open, available: false, reason: "opening_first" as const }]) {
+      { ...open, available: false, reason: "opening_first" as const }, { ...open, available: false, reason: "ended" as const }]) {
       grant.data = data;
       const { container, unmount } = setup();
       expect(container.textContent).toBe("");
       unmount();
     }
+  });
+
+  it("says what earns the grant before the free opening is printed", () => {
+    grant.data = { ...open, available: false, reason: "opening_first" };
+    setup();
+    expect(screen.getByText(/Once your free first pages are printed, verify a card here to get 1,200 credits/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Verify a card" })).toBeNull();
   });
 
   it("states the terms and starts the card check", () => {

@@ -96,10 +96,29 @@ def _holds_grant(account_dir: Path, project_id: str) -> bool:
         return False
 
 
+#: What an author may be told about a refusal. The anti-abuse reasons stay vague.
+_AUTHOR_REASONS = {"too_long", "daily_budget", "account_used"}
+
+
 def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: str, *,
                          rerun: bool = False, claim: bool = False,
                          applicant: free_opening_guard.Applicant | None = None) -> str | None:
-    """The sponsor for this Extract run, or None when the author pays.
+    """The sponsor for this Extract run, or None when the author pays."""
+    decision = free_opening_decision(part_dir, state, project_id, stage, rerun=rerun, claim=claim,
+                                     applicant=applicant)
+    return cold_open.SPONSOR if decision and decision["status"] == "free" else None
+
+
+def free_opening_decision(part_dir: Path, state, project_id: str | None, stage: str, *,
+                          rerun: bool = False, claim: bool = False,
+                          applicant: free_opening_guard.Applicant | None = None) -> dict | None:
+    """Whether Canary pays for this Extract, as the author may be told it.
+
+    None when the free opening does not apply at all (it is off, or this is
+    not an account's first upload). Otherwise ``{"status": "free"}`` or
+    ``{"status": "refused", "reason": ..., "max_characters": ...}``, where the
+    reason is ``too_long``, ``daily_budget``, ``account_used`` or
+    ``not_eligible`` for every anti-abuse refusal.
 
     Canary pays for the first Extract of an account's free project, so an
     account with no credits reaches its Cold Open. The grant is the Cold
@@ -118,11 +137,13 @@ def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: s
     account_dir: Path | None = None
     details: dict = {}
 
-    def refuse(reason: str) -> None:
+    def refuse(reason: str) -> dict:
         logger.info("Free opening refused project=%s reason=%s", project_id, reason)
         if account_dir is not None:
             _report_free_opening("free_opening_refused", account_dir.name, project_id,
                                  {"reason": reason, "at": "run" if claim else "estimate", **details})
+        return {"status": "refused", "reason": reason if reason in _AUTHOR_REASONS else "not_eligible",
+                "max_characters": free_opening_max_chars()}
 
     try:
         limit = free_opening_max_chars()
@@ -155,11 +176,32 @@ def free_opening_sponsor(part_dir: Path, state, project_id: str | None, stage: s
             return refuse("account_used")
         if claim and not held:
             _report_free_opening("free_opening_granted", account_dir.name, project_id, details)
-        return cold_open.SPONSOR
+        return {"status": "free"}
     except Exception:
         logger.exception("Free opening admission failed project=%s", project_id)
-        refuse("error")
-        return None
+        return refuse("error")
+
+
+def account_free_opening(account_dir: Path) -> dict:
+    """This account's free opening, before any upload: ``available``, ``used`` or ``off``.
+
+    ``available`` is a promise only about the account; the upload itself can
+    still be refused (length, the daily budget, the anti-abuse checks).
+    """
+    limit = free_opening_max_chars()
+    if not limit or per_account_limit() == 0:
+        return {"status": "off"}
+    if not account_dir.is_dir():
+        return {"status": "available", "max_characters": limit}  # no project yet
+    try:
+        from .card_grant import saw_free_opening
+
+        # A project ID no account can have: true only while a grant is left.
+        left = claim_grant(account_dir, "\0", claim=False) and not saw_free_opening(account_dir)
+    except Exception:
+        logger.warning("Free opening status unavailable account=%s", account_dir.name, exc_info=True)
+        return {"status": "off"}
+    return {"status": "available" if left else "used", "max_characters": limit}
 
 
 _REPORTED: set[tuple[str, str | None, str]] = set()

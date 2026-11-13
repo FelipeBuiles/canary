@@ -3917,5 +3917,17 @@
   "Undone. The script and pages are as they were.": "Deshecho. El guion y las páginas están como antes.",
   "{count, plural, one {Changed page {pages}.} other {Changed pages {pages}.}}": "{count, plural, one {Se cambió la página {pages}.} other {Se cambiaron las páginas {pages}.}}",
   "{count, plural, one {Shows on page {pages}.} other {Shows on {count} pages: {pages}.}}": "{count, plural, one {Aparece en la página {pages}.} other {Aparece en {count} páginas: {pages}.}}",
-  "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}": "{count, plural, one {Afecta a la página {pages}.} other {Afecta a las páginas {pages}.}}"
+  "{count, plural, one {Touches page {pages}.} other {Touches pages {pages}.}}": "{count, plural, one {Afecta a la página {pages}.} other {Afecta a las páginas {pages}.}}",
+  "+{credits} bonus credits": "+{credits} créditos de bonificación",
+  "Credits for a first chapter, after your opening": "Créditos para un primer capítulo, después de tu apertura",
+  "Free: your opening is on us. No credits are used.": "Gratis: tu apertura corre por nuestra cuenta. No se usan créditos.",
+  "Keep going: verify a card for {credits} credits for a first chapter. The card is not charged.": "Sigue adelante: verifica una tarjeta y recibe {credits} créditos para un primer capítulo. No se cobra nada a la tarjeta.",
+  "Once your free first pages are printed, verify a card here to get {credits} credits for a first chapter. The card is not charged. One per person and card; unused credits expire after {days} days.": "Cuando tus primeras páginas gratuitas estén impresas, verifica aquí una tarjeta para recibir {credits} créditos para un primer capítulo. No se cobra nada a la tarjeta. Uno por persona y tarjeta; los créditos sin usar caducan a los {days} días.",
+  "This account has already used its free opening.": "Esta cuenta ya usó su apertura gratuita.",
+  "This upload can't use the free opening. Free openings are one per person.": "Esta subida no puede usar la apertura gratuita. Hay una apertura gratuita por persona.",
+  "Today's free openings have all been given. Come back tomorrow for yours, or add credits to start now.": "Ya se entregaron todas las aperturas gratuitas de hoy. Vuelve mañana por la tuya o añade créditos para empezar ahora.",
+  "Upload your first story, up to about {words} words, and we read it free and draw your opening page in three looks. No credits needed. One per person.": "Sube tu primera historia, de hasta unas {words} palabras, y la leemos gratis y dibujamos tu página de apertura en tres estilos. No necesitas créditos. Una por persona.",
+  "Your first purchase adds {percent}% bonus credits while your first-chapter credits are unexpired. Bonus credits don't expire.": "Tu primera compra añade un {percent}% de créditos de bonificación mientras tus créditos del primer capítulo no hayan caducado. Los créditos de bonificación no caducan.",
+  "Your free opening covers a first upload of up to about {words} words, and this one is longer. Start a new production with just your opening to have it read and drawn free.": "Tu apertura gratuita cubre una primera subida de hasta unas {words} palabras, y esta es más larga. Empieza una nueva producción solo con tu apertura para que la leamos y dibujemos gratis.",
+  "Your opening is on us": "Tu apertura corre por nuestra cuenta"
 }

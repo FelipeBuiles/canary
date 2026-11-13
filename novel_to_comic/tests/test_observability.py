@@ -348,3 +348,12 @@ def test_ga4_signup_claim_failure_is_nonblocking_and_not_a_conversion(tmp_path):
         response = TestClient(app).post("/api/events/ga4-signup")
     assert response.status_code == 200
     assert response.json() == {"signup": False}
+
+
+def test_every_product_event_property_reaches_posthog():
+    """The forwarder has its own allowlist; a property missing there arrives empty."""
+    from novel_to_comic.server import product_events, telemetry
+
+    declared = set().union(*product_events.SERVER_EVENT_PROPERTIES.values(),
+                           *product_events.WEB_EVENT_PROPERTIES.values())
+    assert declared <= telemetry._FIELDS, sorted(declared - telemetry._FIELDS)

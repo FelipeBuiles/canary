@@ -11,6 +11,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
 import { Surface } from "../components/ui/Surface";
 import { CardGrantOffer } from "../components/CardGrantOffer";
+import { useAccountOffer } from "../api/cardGrant";
 import { EntityCard, SectionHeader } from "../components/composites";
 import { CreditHistoryLedger } from "../components/credits/CreditHistoryLedger";
 import { groupRunsByDay, matchesLedgerFilter, type LedgerFilter } from "../lib/creditsHistory";
@@ -53,6 +54,8 @@ export function CreditsPage() {
   const { data: pricingRef } = usePricingReference();
   const { data: projects } = useProjects();
   const checkout = useCreateCheckout();
+  const { data: offer } = useAccountOffer();
+  const bonusPercent = offer?.first_purchase_bonus_percent ?? 0;
 
   const didRefresh = useRef(false);
   const didTrackCancellation = useRef(false);
@@ -161,6 +164,11 @@ export function CreditsPage() {
 
       <section tabIndex={-1} id="credit-packs" className="mt-10 scroll-mt-6">
         <SectionHeader variant="underline" title="Add credits" description="One-time packs. No subscription, and purchased credits do not expire." />
+        {bonusPercent > 0 && (
+          <p role="note" className="mb-4 border-l-[3px] border-hero-red pl-3 font-body text-sm font-semibold leading-6 text-ink-black">
+            {t("Your first purchase adds {percent}% bonus credits while your first-chapter credits are unexpired. Bonus credits don't expire.", { percent: bonusPercent })}
+          </p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {packagesLoading
             ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-60" />)
@@ -180,6 +188,11 @@ export function CreditsPage() {
                     <div className="mt-5 font-body text-[0.9rem] font-bold text-ink-muted">
                       {perThousand(pkg)}
                     </div>
+                    {bonusPercent > 0 && (
+                      <div className="mt-1 font-body text-[0.9rem] font-bold text-hero-red">
+                        {t("+{credits} bonus credits", { credits: Math.floor(pkg.credits * bonusPercent / 100).toLocaleString() })}
+                      </div>
+                    )}
                     <Button
                       variant="primary"
                       size="sm"
