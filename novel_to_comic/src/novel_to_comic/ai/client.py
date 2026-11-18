@@ -730,6 +730,14 @@ def _provider_from_model(model: str | None) -> str:
     return "litellm"
 
 
+def _reported_provider_model(reported: Any, model_alias: str, operation: str) -> str:
+    """The reported model; for an image response that omits it or echoes the
+    gateway alias, the provider model the alias is configured to route to."""
+    if operation != "image" or (reported and reported != model_alias):
+        return str(reported or model_alias)
+    return get_pricing_resolver().resolve_model(model_alias)
+
+
 def _extract_response_cost(
     data: dict[str, Any],
     headers: httpx.Headers | None = None,
@@ -778,7 +786,7 @@ def _extract_usage(
     total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
     if not input_tokens and total_tokens and output_tokens:
         input_tokens = max(0, total_tokens - output_tokens)
-    provider_model = str(data.get("model") or model_alias)
+    provider_model = _reported_provider_model(data.get("model"), model_alias, operation)
     image_count = 1 if operation == "image" else 0
     response_cost, response_cost_source = _extract_response_cost(data, headers)
     if provider_model == "canary-mock":
@@ -1114,10 +1122,9 @@ def _finalize_event(
             operation=operation, cost_usd=None, cost_source=funding,
             funding=funding,
         )
-    provider_model = str(
-        (response_data or {}).get("model")
-        or (usage.provider_model if usage else None)
-        or model_alias
+    provider_model = _reported_provider_model(
+        (response_data or {}).get("model") or (usage.provider_model if usage else None),
+        model_alias, operation,
     )
     if funding == "codex_subscription" and operation == "image":
         provider_model = usage.provider_model if usage else None

@@ -99,6 +99,24 @@ def test_telemetry_failure_cannot_break_finalization(monkeypatch):
     db.table.return_value.update.assert_called_once()
 
 
+def test_image_event_reports_provider_model_when_gateway_echoes_alias(monkeypatch):
+    sdk = MagicMock()
+    monkeypatch.setattr(t, "_client", sdk)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", MagicMock())
+    monkeypatch.setattr(client, "_settle_event_usage", MagicMock())
+    response = {"model": "image-sunburst-runware", "_hidden_params": {"response_cost": 0.02}}
+    usage = client._extract_usage(response, USER, "image-sunburst-runware", "image")
+    client._finalize_event(event_id=USER, status="succeeded", feature="cast.character_ref",
+                           model_alias="image-sunburst-runware", latency_ms=50, usage=usage,
+                           response_data=response, metadata={}, operation="image")
+    p = sdk.capture.call_args.kwargs["properties"]
+    assert p["$ai_model"] == p["provider_model"] == "runware/gpt-image-2.5-sunburst"
+    assert p["$ai_provider"] == "runware"
+    assert p["model_alias"] == "image-sunburst-runware"
+    text = client._extract_usage({"model": "gemini-4-carbon"}, USER, "gemini-4-carbon", "text")
+    assert text.provider_model == "gemini-4-carbon"
+
+
 def test_delivery_retries_same_insert_id_after_ack_failure(monkeypatch):
     row = {"id": USER, "event_name": "project_created", "user_id": USER,
            "occurred_at": "2026-09-26T00:00:00Z", "source": "server",
