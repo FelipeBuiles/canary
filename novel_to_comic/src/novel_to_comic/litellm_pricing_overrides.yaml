@@ -11,6 +11,7 @@ aliases:
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   gemini-4-carbon: vertex_ai/gemini-4-carbon
   gemini-4-hydrogen: vertex_ai/gemini-4-hydrogen
+  gemini-4-neon: vertex_ai/gemini-4-neon
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
   claude-haiku-5-5: anthropic/claude-haiku-5-5
@@ -78,6 +79,14 @@ model_overrides:
     input_cost_per_token: 1.5e-06
     cache_read_input_token_cost: 7.5e-08
     output_cost_per_token: 7.5e-06
+    mode: chat
+  # Google launch rates (2026-11-18), flat across the 1M context; no intro
+  # expiry stated. Cache storage charges unconfirmed.
+  # https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/
+  gemini-4-neon:
+    input_cost_per_token: 3.0e-06
+    cache_read_input_token_cost: 1.5e-07
+    output_cost_per_token: 1.5e-05
     mode: chat
   # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
   # Shared by the production API route and Labs Codex subscription usage.

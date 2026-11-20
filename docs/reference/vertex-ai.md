@@ -91,6 +91,26 @@ context window. The Vertex pricing page had no Hydrogen entry when checked.
 The approved Runware 429 fallback covers Carbon only, so a rate-limited
 Hydrogen call fails as other Vertex calls do.
 
+## Gemini 4 Neon (optional text route)
+
+As of November 19, 2026, `gemini-4-neon` is a selectable Vertex text route,
+added to compare against Hydrogen in Labs. It selects the exact gateway target
+`vertex_ai/gemini-4-neon` and takes Carbon's settings and prompt tuning as
+Hydrogen does. Google's default thinking level for Neon is high; the route pins
+Low like Carbon and Hydrogen.
+
+Verified in `global` on November 19, 2026: one free `countTokens` returned token
+counts (`gemini-4-neon-preview` and `gemini-4.0-neon` returned 404), and the
+publisher catalog lists `publishers/google/models/gemini-4-neon`. No
+`generateContent` call has run yet, so thinking levels, JSON mode, image input,
+native schemas, caching and limits are unverified.
+
+Pricing uses Google's
+[launch rates](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/)
+from November 18, 2026: $3/M input, $15/M output and $0.15/M cached input,
+flat across the 1M context window, twice Hydrogen's rates. No introductory
+expiry is stated. No Runware 429 fallback applies.
+
 ## Gemini 4 Carbon (optional text route)
 
 As of November 10, 2026, `gemini-4-carbon` replaces `gemini-4-argon` as the

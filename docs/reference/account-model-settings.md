@@ -235,11 +235,11 @@ approve action would (the Brief as drafted) and marks that stage `auto_approved`
 copy has its own settings; **Remove** deletes just that arm. Changing one stage's
 model makes a mixed arm, such as one model's Adapt feeding another's Plan within
 the same phase; that stage's reasoning resets to the new model's default. GPT and Claude API and
-subscription routes, Gemini 3.8 Flash and Gemini 4 Hydrogen and Carbon on Vertex
-offer Low, Medium and High. MiMo and DeepSeek offer Off and On. Labs defaults to
+subscription routes, Gemini 3.8 Flash and Gemini 4 Hydrogen, Neon and Carbon on
+Vertex offer Low, Medium and High. MiMo and DeepSeek offer Off and On. Labs defaults to
 Low for Gemini 3.8 Flash and Gemini 4, Medium for GPT/Claude and Off for the
 open-model routes. These are run-specific
-settings, independent of backoffice defaults. Hydrogen and Carbon send native
+settings, independent of backoffice defaults. Hydrogen, Neon and Carbon send native
 thinking levels; see [Hydrogen](vertex-ai.md#gemini-4-hydrogen-default-gemini-4-route)
 and [verified Vertex controls](vertex-ai.md#gemini-4-carbon-optional-text-route).
 

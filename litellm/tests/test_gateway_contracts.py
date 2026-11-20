@@ -168,7 +168,7 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
         "image-sunburst-openai", "image-flare", "image-sunburst-runware", "image-flare-runware", "image-sunburst-2.6", "image-flare-2.6",
         "image-sunburst-2.6-runware", "image-flare-2.6-runware",
         "image-minimax-h3-runware", "image-minimax-h3-highspeed-runware",
-        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-carbon", "gemini-4-hydrogen",
+        "image-nano-banana-2.1", "gemini-3.8-flash", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-4-neon",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract", "runware-gemini-4-argon", "runware-deepseek-v4.1-flash-1017", "runware-gpt-6.1-terra",
     }
@@ -756,7 +756,7 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
 @pytest.mark.parametrize("output_mode", ["plain", "json_object", "json_schema"])
 @pytest.mark.parametrize("effort", [None, "low", "medium", "high"])
 # 1000 input + 150 output (thinking bills as output) at each route's rates.
-@pytest.mark.parametrize(("alias", "cost"), [("gemini-4-carbon", 0.0035), ("gemini-4-hydrogen", 0.002625)])
+@pytest.mark.parametrize(("alias", "cost"), [("gemini-4-carbon", 0.0035), ("gemini-4-hydrogen", 0.002625), ("gemini-4-neon", 0.00525)])
 def test_gemini_4_routes_serialize_verified_output_with_adc_without_inferred_controls(monkeypatch, output_mode, effort, alias, cost):
     import json
     import litellm

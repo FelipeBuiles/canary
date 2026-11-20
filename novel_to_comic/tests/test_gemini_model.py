@@ -88,42 +88,47 @@ def test_argon_provisional_pricing_registration(model):
     assert _route("gemini-4-carbon")["model_info"]["cache_read_input_token_cost"] == 1e-7
 
 
-def test_hydrogen_takes_carbon_settings_and_tuning_without_its_fallback():
+@pytest.mark.parametrize("alias", ["gemini-4-hydrogen", "gemini-4-neon"])
+def test_gemini_4_routes_take_carbon_settings_and_tuning_without_its_fallback(alias):
     from novel_to_comic.gemini_tuning import tuned_request
     from novel_to_comic.model_catalog import default_selections
     from novel_to_comic.text_models import is_gemini_model, tuning_model
 
-    route = _route("gemini-4-hydrogen")
+    route = _route(alias)
     assert route["litellm_params"] == {
-        "model": "vertex_ai/gemini-4-hydrogen",
+        "model": f"vertex_ai/{alias}",
         "vertex_project": "os.environ/VERTEXAI_PROJECT",
         "vertex_location": "os.environ/VERTEXAI_LOCATION",
         "thinkingConfig": {"thinkingLevel": "low", "includeThoughts": True},
     }
-    def capabilities(alias):
-        return {key: value for key, value in _route(alias)["model_info"].items() if "cost" not in key}
+    def capabilities(name):
+        return {key: value for key, value in _route(name)["model_info"].items() if "cost" not in key}
 
-    assert capabilities("gemini-4-hydrogen") == capabilities("gemini-4-carbon")
-    assert provider_for_model("gemini-4-hydrogen") == "vertex_ai"
-    hydrogen, carbon = text_wire("gemini-4-hydrogen"), text_wire("gemini-4-carbon")
-    differing = {name for name in hydrogen.__dataclass_fields__ if getattr(hydrogen, name) != getattr(carbon, name)}
+    assert capabilities(alias) == capabilities("gemini-4-carbon")
+    assert provider_for_model(alias) == "vertex_ai"
+    wire, carbon = text_wire(alias), text_wire("gemini-4-carbon")
+    differing = {name for name in wire.__dataclass_fields__ if getattr(wire, name) != getattr(carbon, name)}
     assert differing == {"id", "label", "tuning", "rate_limit_fallback"}
     # The approved Runware 429 switch covers Carbon only.
-    assert hydrogen.rate_limit_fallback == ""
-    assert tuning_model(hydrogen.id) == carbon.id and is_gemini_model(hydrogen.id)
+    assert wire.rate_limit_fallback == ""
+    assert tuning_model(wire.id) == carbon.id and is_gemini_model(wire.id)
     request = {"feature": "plan.map", "user_content": "Story.", "system_prompt": "Plan.",
                "json_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}
-    assert tuned_request(hydrogen.id, request) == tuned_request(carbon.id, request)
+    assert tuned_request(wire.id, request) == tuned_request(carbon.id, request)
     for stage in ("extract", "brief", "adapt", "plan", "prompt", "ocr", "visual_review", "correction"):
-        assert hydrogen.id in allowed_models(stage)
+        assert wire.id in allowed_models(stage)
     for stage in ("image", "draw"):
-        assert hydrogen.id not in allowed_models(stage)
-    assert hydrogen.id not in default_selections().values()
+        assert wire.id not in allowed_models(stage)
+    assert wire.id not in default_selections().values()
 
 
-@pytest.mark.parametrize("model", ["gemini-4-hydrogen", "vertex_ai/gemini-4-hydrogen"])
-def test_hydrogen_launch_pricing_registration(model):
+@pytest.mark.parametrize(("alias", "million_each", "cached"), [
+    ("gemini-4-hydrogen", 9, 7.5e-8), ("gemini-4-neon", 18, 1.5e-7),
+])
+@pytest.mark.parametrize("prefixed", [False, True])
+def test_gemini_4_launch_pricing_registration(alias, million_each, cached, prefixed):
     resolver = get_pricing_resolver()
-    assert resolver.resolve_model("gemini-4-hydrogen") == "vertex_ai/gemini-4-hydrogen"
-    assert resolver.estimate_text_cost(model, 1_000_000, 1_000_000).cost_usd == pytest.approx(9)
-    assert _route("gemini-4-hydrogen")["model_info"]["cache_read_input_token_cost"] == 7.5e-8
+    model = f"vertex_ai/{alias}" if prefixed else alias
+    assert resolver.resolve_model(alias) == f"vertex_ai/{alias}"
+    assert resolver.estimate_text_cost(model, 1_000_000, 1_000_000).cost_usd == pytest.approx(million_each)
+    assert _route(alias)["model_info"]["cache_read_input_token_cost"] == cached

@@ -107,6 +107,15 @@ TEXT_MODELS = (
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               review_window_pages=48, review_window_source_chars=120_000,
               tuning="gemini-4-carbon"),
+    # Gemini 4 Neon, added 2026-11-19 to compare against Hydrogen. Only a
+    # Vertex countTokens call is verified; it takes Carbon's settings and
+    # prompt tuning as Hydrogen does, with no 429 fallback.
+    TextModel("gemini-4-neon", "Gemini 4 Neon", "Google Vertex AI", "vertex_ai",
+              temperature=False, streaming=False, effort="low",
+              native_vertex_thinking=True, schema_instructions=True,
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              review_window_pages=48, review_window_source_chars=120_000,
+              tuning="gemini-4-carbon"),
     # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).
