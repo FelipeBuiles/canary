@@ -20,11 +20,12 @@ from fastapi import HTTPException
 from supabase import Client
 from postgrest.exceptions import APIError
 
+from novel_to_comic.cast_target import CastTarget
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
 from novel_to_comic.codex_dev import Funding, classify_operations, is_subscription
 from .codex_admission import (
-    cast_asset_operations, image_operations, is_canonical_sheet_regen, prompt_image_operations,
+    cast_asset_operations, image_operations, prompt_image_operations,
     stage_operations, visual_review_operations,
 )
 from novel_to_comic.usage import (
@@ -406,14 +407,13 @@ class UnifiedCostResolver:
     def estimate_asset_regen_cost(
         config: Config,
         project_dir: Path,
-        asset_type: str,
-        asset_id: str,
+        target: CastTarget,
         additional_reference_count: int | None = None,
     ) -> CreditEstimate:
         """Estimate one cast asset redraw, plus the Character Check a sheet redraw re-runs."""
         image = UnifiedCostResolver._estimate_asset_image_cost(
-            config, project_dir, asset_type, asset_id, additional_reference_count)
-        if not is_canonical_sheet_regen(asset_type, asset_id) or mock_mode_active(config):
+            config, project_dir, target, additional_reference_count)
+        if not target.is_canonical or mock_mode_active(config):
             return image
         from novel_to_comic.cast_design import estimate_review_cost
         from novel_to_comic.cast_roster import read_cast_story_bible
@@ -426,15 +426,14 @@ class UnifiedCostResolver:
             reserved_credits=None,
             reservation_multiplier=reservation_buffer(),
             confidence="variable",
-            funding=classify_operations(cast_asset_operations(config, asset_type, asset_id)),
+            funding=classify_operations(cast_asset_operations(config, target)),
         )
 
     @staticmethod
     def _estimate_asset_image_cost(
         config: Config,
         project_dir: Path,
-        asset_type: str,
-        asset_id: str,
+        target: CastTarget,
         additional_reference_count: int | None = None,
     ) -> CreditEstimate:
         """Estimate the image call that regenerates a single cast asset."""
@@ -444,30 +443,20 @@ class UnifiedCostResolver:
         if mock_mode_active(config):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False)
         from novel_to_comic.cast_reference_inputs import saved_reference_inputs
-        entity_id, _, state_id = asset_id.partition(":")
-        kind_for_asset = {"character_ref_regen": "character", "location_plate_regen": "location", "prop_ref_regen": "prop"}
         if additional_reference_count is None:
-            kind = kind_for_asset[asset_type]
-            additional_reference_count = len(saved_reference_inputs(project_dir, kind, entity_id, state_id or None))
+            additional_reference_count = len(saved_reference_inputs(
+                project_dir, target.asset_type, target.entity_id, target.state_id))
         ref_count = 1  # selected style authority
-        if asset_type in {"character_ref_regen", "location_plate_regen"} and ":" in asset_id:
-            entity_id, state_id = asset_id.split(":", 1)
+        if target.state_id and target.asset_type != "prop":
             from novel_to_comic.stages.s3_cast import estimate_state_reference_count
 
             ref_count = estimate_state_reference_count(
-                config,
-                project_dir,
-                "character" if asset_type == "character_ref_regen" else "location",
-                entity_id,
-                state_id,
+                config, project_dir, target.asset_type, target.entity_id, target.state_id,
             )
         from novel_to_comic.state_assets import state_reference_dimensions
 
         # Canonical sheets and plates share their state references' sizes.
-        width, height = (
-            state_reference_dimensions(config, kind_for_asset[asset_type])
-            if asset_type in kind_for_asset else (None, None)
-        )
+        width, height = state_reference_dimensions(config, target.asset_type)
         cost_usd = estimate_image_cost(
             config.effective_image_model(),
             1,

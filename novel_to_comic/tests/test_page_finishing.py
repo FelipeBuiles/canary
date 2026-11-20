@@ -44,7 +44,7 @@ from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_finishing import _appearance_diagnostics, finish_book
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import UsageRecord
-from .page_draw_support import execute_draw
+from .page_draw_support import ScriptedPageAdapter, execute_draw
 
 
 def _png_bytes(
@@ -384,7 +384,7 @@ def test_stale_render_blocks_export_and_emits_complete_page_draw_request(
     )
 
     with patch(
-        "novel_to_comic.page_drawing.GoogleVertexCompletePageTransport.generate",
+        "novel_to_comic.page_drawing.submit_page_image",
         side_effect=AssertionError("Finish must not call an image provider"),
     ):
         result = finish_book(
@@ -903,7 +903,6 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     from novel_to_comic.models.page import ApprovedVisualReferenceInventory
     from novel_to_comic.usage import ApiResult
     from novel_to_comic.page_drawing import (
-        VertexCompletePageAdapter,
         compile_page_generation_request,
         production_page_capability_profile,
         select_book_edition,
@@ -983,7 +982,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     asyncio.run(
         execute_draw(
             compiled,
-            adapter=VertexCompletePageAdapter(_Transport()),
+            adapter=ScriptedPageAdapter(_Transport()),
             artifacts=artifacts,
             page=page,
             ocr=_OCR(),

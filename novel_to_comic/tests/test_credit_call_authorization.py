@@ -79,27 +79,31 @@ def test_denied_authorization_never_reaches_text_provider(monkeypatch):
 
 
 def test_denied_authorization_never_reaches_image_provider(monkeypatch, tmp_path):
-    from novel_to_comic.ai.providers import selector
-    from novel_to_comic import provider_wire
+    from dataclasses import replace
+
+    from novel_to_comic.ai import finalisation
+    from novel_to_comic.provider_wire import (
+        PROVIDER_WIRE_DISCRIMINATOR,
+        PROVIDER_WIRE_SCHEMA_VERSION,
+        ProviderWireRequest,
+    )
 
     submit = AsyncMock()
-    provider = SimpleNamespace(wire_request_params=lambda _wire: {}, generate_wire=submit)
-    monkeypatch.setattr(selector, "pick", lambda *args, **kwargs: provider)
-    monkeypatch.setattr(provider_wire, "materialize_wire_references", lambda _wire: ())
-    monkeypatch.setattr(client, "begin_image_call", AsyncMock(return_value=SimpleNamespace(
+    monkeypatch.setattr(client, "_post_with_retry", submit)
+    monkeypatch.setattr(finalisation, "begin_image_call", AsyncMock(return_value=SimpleNamespace(
         event_id="00000000-0000-0000-0000-000000000003",
         metadata={"funding": "api"}, estimated_cost_usd=0.02,
     )))
-    monkeypatch.setattr(client, "finalise_image_failure", AsyncMock())
+    monkeypatch.setattr(finalisation, "finalise_image_failure", AsyncMock())
     monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: _FakeDB(False))
-    wire = SimpleNamespace(
-        schema_version=provider_wire.PROVIDER_WIRE_SCHEMA_VERSION,
-        execution_fingerprint="frozen",
-        recompute_execution_fingerprint=lambda: "frozen",
-        references=(), requested_alias="image-sunburst",
-        configured_provider_model="image-sunburst", provider_key="litellm",
-        prompt_parts=("draw",),
+    wire = ProviderWireRequest(
+        discriminator=PROVIDER_WIRE_DISCRIMINATOR, schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
+        requested_alias="image-flare", expected_route="gpt_image_2", provider_key="openai",
+        configured_provider_model="openai/gpt-image-2.5-flare", prompt_parts=("draw",),
+        references=(), width=1024, height=1280, structured_aspect=None,
+        controls=(("quality", "high"),), compiled_request_sha256="c" * 64, execution_fingerprint="",
     )
+    wire = replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
     with ai_request_context(user_id="00000000-0000-0000-0000-000000000001",
                             job_id="00000000-0000-0000-0000-000000000002"):

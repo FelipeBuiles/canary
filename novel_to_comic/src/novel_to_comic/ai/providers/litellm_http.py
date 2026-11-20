@@ -1,11 +1,9 @@
-"""LiteLLM OpenAI-compatible HTTP image provider."""
+"""Gateway wire serializers and redacted wire errors for Style and Cast images."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,9 +11,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from novel_to_comic.ai.errors import AIRefusalError, AITransportError
-from novel_to_comic.ai.providers.base import ProviderRawResult
-from novel_to_comic.config import Config, is_gpt_image_2
+from novel_to_comic.ai.errors import AITransportError
+from novel_to_comic.config import is_gpt_image_2
 from novel_to_comic.image_geometry import aspect_for_dimensions
 from novel_to_comic.image_models import (
     IMAGE_PROVIDER_FAL_QUEUE,
@@ -36,101 +33,6 @@ from novel_to_comic.provider_wire import (
     ProviderWireRequest,
     materialize_wire_references,
 )
-
-
-class LitellmHttpProvider:
-    name = "litellm_http"
-
-    def wire_request_params(self, wire: ProviderWireRequest) -> dict[str, Any]:
-        serializer = _PROVIDER_SERIALIZERS.get(wire.provider_key)
-        if serializer is None:
-            raise ProviderWireError(f"unsupported image provider key: {wire.provider_key!r}")
-        return serializer(wire)
-
-    def prepare_wire_request(
-        self, wire: ProviderWireRequest,
-    ) -> tuple[dict[str, Any], list[tuple[str, tuple[str, bytes, str]]]]:
-        """Consume the schema-discriminated exact path.
-
-        Prompt text, reference order, and controls are already final here.
-        """
-        return serialize_wire_request(wire)
-
-    async def generate_wire(
-        self,
-        *,
-        wire: ProviderWireRequest,
-        config: Config,
-        event_id: str,
-        metadata: dict[str, Any],
-    ) -> ProviderRawResult:
-        """Submit the exact frozen wire payload."""
-        from novel_to_comic.ai import client as ai_client
-        from novel_to_comic.ai.image_previews import post_image_request
-
-        params, files = self.prepare_wire_request(wire)
-        prompt = str(params.pop("prompt"))
-        endpoint = "/v1/images/edits" if files else "/v1/images/generations"
-        url = f"{ai_client._base_url(config)}{endpoint}"
-        headers = ai_client._headers(config, event_id)
-        started = time.perf_counter()
-        try:
-            if files:
-                response = await post_image_request(
-                    url, headers=headers,
-                    data={"prompt": prompt, "metadata": ai_client._json_dumps(metadata), **{
-                        key: str(value) for key, value in params.items() if value is not None
-                    }},
-                    files=files,
-                )
-            else:
-                response = await post_image_request(
-                    url, headers=headers,
-                    json={"prompt": prompt, "metadata": metadata, **{
-                        key: value for key, value in params.items() if value is not None
-                    }},
-                )
-            if response.status_code >= 400:
-                response.raise_for_status()
-        except Exception as exc:
-            _raise_safe_wire_phase_error("gateway_request", exc)
-        try:
-            data = response.json()
-            if not isinstance(data, dict):
-                raise ValueError("image response must be an object")
-            refused = ai_client._is_refusal(data)
-        except Exception as exc:
-            _retain_ambiguous_hold()
-            _raise_safe_wire_phase_error("response_json", exc)
-        if refused:
-            raise AIRefusalError(
-                "AI image request was refused by gateway/provider",
-                response_data=data, response_headers=response.headers, response=response,
-            )
-        try:
-            image_bytes = await ai_client._decode_image_response(data)
-        except asyncio.CancelledError:
-            _retain_ambiguous_hold()
-            raise
-        except Exception as exc:
-            _retain_ambiguous_hold()
-            _raise_safe_decode_error(data, exc)
-        return ProviderRawResult(
-            image_bytes=image_bytes,
-            mime="image/png",
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            provider_request_id=data.get("provider_request_id") or data.get("id"), raw_response=data,
-            response_headers=response.headers, request_params=params,
-            actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
-        )
-
-
-
-def _retain_ambiguous_hold() -> None:
-    # A successful HTTP submission without a usable result still may be paid.
-    from novel_to_comic.ai.context import current_ai_request_context
-    from novel_to_comic.server.credits import retain_ambiguous_job
-    retain_ambiguous_job(current_ai_request_context().job_id)
 
 
 def serialize_wire_request(

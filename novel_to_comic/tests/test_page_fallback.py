@@ -13,10 +13,13 @@ from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import BookEdition, RetryProvenance
 from novel_to_comic import image_route_fallback
-from novel_to_comic.image_route_fallback import classify_openai_image_failure
+from novel_to_comic.image_route_fallback import (
+    GatewayRoute,
+    SingleRoute,
+    classify_openai_image_failure,
+    sunburst_route_plan,
+)
 from novel_to_comic.page_drawing import (
-    OpenAICompletePageAdapter,
-    SunburstFallbackPageAdapter,
     compile_page_generation_request,
     complete_page_adapter,
     current_page_capability_profile,
@@ -148,9 +151,9 @@ def test_lettering_variant_of_the_retained_edition_must_match_the_project():
 def test_adapter_follows_the_frozen_request_not_mutable_settings(tmp_path):
     config = Config(draw_model="image-sunburst")
     fal_request = _compiled(tmp_path, fal_sunburst_page_capability_profile()).request
-    assert isinstance(complete_page_adapter(config, request=fal_request), OpenAICompletePageAdapter)
+    assert complete_page_adapter(config, request=fal_request).routes == SingleRoute(GatewayRoute("fal-queue", FAL))
     new_request = _compiled(tmp_path).request
-    assert isinstance(complete_page_adapter(config, request=new_request), SunburstFallbackPageAdapter)
+    assert complete_page_adapter(config, request=new_request).routes == sunburst_route_plan("openai-fal")
     foreign = new_request.model_copy(update={"profile_sha256": "0" * 64})
     with pytest.raises(ValueError, match="can no longer draw"):
         complete_page_adapter(config, request=foreign)

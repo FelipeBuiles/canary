@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from novel_to_comic import image_route_fallback
-from novel_to_comic.ai import client
+from novel_to_comic.ai import client, finalisation
 from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.providers import litellm_http
@@ -91,9 +91,9 @@ def _run(tmp_path, wire, outcomes):
 
     with (
         patch.object(client, "_http", FakeHttp()),
-        patch.object(client, "begin_image_call", begin),
-        patch.object(client, "finalise_image_success", success),
-        patch.object(client, "finalise_image_failure", AsyncMock()),
+        patch.object(finalisation, "begin_image_call", begin),
+        patch.object(finalisation, "finalise_image_success", success),
+        patch.object(finalisation, "finalise_image_failure", AsyncMock()),
         patch.object(client, "_decode_image_response", AsyncMock(return_value=b"png")),
         patch("novel_to_comic.server.db.get_db", return_value=db),
         patch.object(image_route_fallback, "increment_metric") as metric,

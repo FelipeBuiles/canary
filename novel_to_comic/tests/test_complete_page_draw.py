@@ -37,12 +37,13 @@ from novel_to_comic.models.page import (
     LetteringReservation,
     PageContent,
 )
-from novel_to_comic.page_drawing import ApprovedReferenceFile, analyze_complete_page, GoogleVertexCompletePageTransport, VertexCompletePageAdapter, compile_page_generation_request, estimate_draw_api_cost, ensure_current_page_edition, current_page_capability_profile, fal_sunburst_page_capability_profile, production_page_capability_profile, select_book_edition
+from novel_to_comic.page_drawing import ApprovedReferenceFile, analyze_complete_page, complete_page_adapter, compile_page_generation_request, estimate_draw_api_cost, ensure_current_page_edition, current_page_capability_profile, fal_sunburst_page_capability_profile, production_page_capability_profile, select_book_edition
 from novel_to_comic.server.draw_submission import correction_retry as _aggregated_correction_retry
 from novel_to_comic.server.draw_submission import generation_retry as _generation_retry
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
-from .page_draw_support import execute_draw
+from novel_to_comic.image_route_fallback import GatewayRoute, SingleRoute
+from .page_draw_support import ScriptedPageAdapter, execute_draw
 
 
 
@@ -60,9 +61,9 @@ def _edition(profile: PageCapabilityProfile | None = None) -> BookEdition:
     )
 
 
-def _vertex_adapter(transport) -> VertexCompletePageAdapter:
+def _vertex_adapter(transport) -> ScriptedPageAdapter:
     """The validating adapter for this module's FAL-edition fixture profile."""
-    return VertexCompletePageAdapter(transport, _profile())
+    return ScriptedPageAdapter(transport, _profile())
 
 
 def _page(*, revision: int = 2, visual_intent: str = "Ward sees the idol.") -> ComicPage:
@@ -459,8 +460,7 @@ def test_selecting_nano_banana_compiles_a_native_page_and_advances_only_new_work
     assert bool(compiled.request.lettering) == (lettering_mode == "integrated")
     assert (compiled.request.output_width, compiled.request.output_height) == (848, 1264)
     adapter = complete_page_adapter(config, request=compiled.request)
-    assert isinstance(adapter, VertexCompletePageAdapter)
-    assert adapter._transport._gateway_model == "image-nano-banana-2.1"
+    assert adapter.routes == SingleRoute(GatewayRoute("vertex-multimodal", "image-nano-banana-2.1"))
     assert adapter.prepare(compiled).model == "gemini-nano-banana-2.1"
 
     artifacts = TargetArtifacts(tmp_path)
@@ -1876,7 +1876,7 @@ def test_complete_page_accepted_response_retains_incomplete_hold(tmp_path, monke
     async def run():
         with ai_request_context(job_id="job"):
             with pytest.raises((ValueError, asyncio.CancelledError)):
-                await GoogleVertexCompletePageTransport(Config(), _profile()).generate(prepared)
+                await complete_page_adapter(Config(), _profile()).generate(prepared)
     with (
         patch("novel_to_comic.ai.client._post_with_retry", post),
         patch("novel_to_comic.ai.client._decode_image_response", decode),

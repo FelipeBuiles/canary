@@ -21,13 +21,10 @@ from novel_to_comic.uploaded_images import (
 )
 from novel_to_comic.target_artifacts import TargetArtifacts, ArtifactMissing
 from novel_to_comic.lettering.service import style_from_template, project_lettering_mode
-from novel_to_comic.config import Config, mock_mode_active, save_config
-from novel_to_comic.codex_dev import CodexRoutingError, classify_operations, is_subscription
-from ..codex_admission import image_operations, prompt_image_operations, style_sample_operations
-from novel_to_comic.image_models import image_model_profile_for_config
-from novel_to_comic.image_geometry import style_proof_dimensions
+from novel_to_comic.config import Config, save_config
+from novel_to_comic.codex_dev import classify_operations
+from ..codex_admission import image_operations, prompt_image_operations
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.asset_generation import asset_matches_request
 from novel_to_comic.style_contract import (
     page_style_template,
     style_template_for_suggestion,
@@ -40,33 +37,22 @@ from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
     SAMPLE_COUNT,
     NEIGHBOR_COUNT,
-    STYLE_VALIDATION_ACTION,
-    STYLE_VALIDATION_COMPOSITION,
     proof_copy_for_sample,
     style_proof_copy,
     custom_direction_candidate,
-    estimate_custom_direction_naming_cost_usd,
     update_suggestion_fields,
     DISPLAY_LABEL_MAX_CHARS,
-    build_style_sample_request,
     load_style_direction,
     load_suggestions,
     missing_sample_indices,
     sample_takes_software_lettering,
     save_suggestions,
     style_direction_image,
-    estimate_style_proof_cost_usd,
-    style_validation_brief,
-    estimate_style_batch_cost_usd,
     suggestion_index_by_id,
 )
-from novel_to_comic.usage import estimate_image_cost
 
 from ..auth import get_current_user
-from ..credits import (
-    assert_sufficient_credits,
-    credit_estimate_for_provider_cost,
-)
+from ..credits import assert_sufficient_credits
 from ..credited_job import enqueue_reserved_generation_job
 from ..event_channel import EventChannel
 from ..db import get_db
@@ -74,13 +60,23 @@ from ..async_credits import ledger_call
 from ..deps import get_project, project_key
 from ..job_commands import command
 from ..generation_jobs import (
-    find_active_generation_job,
     generation_job_payload,
     generation_jobs_snapshot,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
 from ..product_events import capture_server_event
+from ..style_proofs import (
+    StyleProof,
+    direction_operations,
+    direction_quotes,
+    read_story_bible,
+    sample_quote,
+    submit_samples,
+    submit_validation,
+    suggest_batch_quote,
+    supports_style_reference,
+)
 
 router = APIRouter()
 logger = logging.getLogger("canary.styles")
@@ -160,134 +156,6 @@ def clear_style_failures_after_selection(state) -> bool:
     return changed
 
 
-def _get_bible(project_dir):
-    path = artifacts.story_bible_path(project_dir)
-    if not path.exists():
-        return None
-    return StoryBible.model_validate_json(path.read_text())
-
-
-def _suggest_batch_credit_estimate(
-    config: Config,
-    project_dir,
-    sample_count: int = SAMPLE_COUNT,
-    *,
-    has_style_reference: bool = False,
-    reference_size: tuple[int, int] | None = None,
-) -> dict:
-    funding = classify_operations(prompt_image_operations(config))
-    if is_subscription(funding):
-        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True, funding=funding))
-    if mock_mode_active(config):
-        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
-    cost_usd = estimate_style_batch_cost_usd(
-        config, project_dir, sample_count,
-        has_style_reference=has_style_reference,
-        reference_size=reference_size,
-    )
-    return dict(credit_estimate_for_provider_cost(cost_usd, "style", reserve=True))
-
-
-def _style_sample_credit_estimate(
-    config: Config,
-    *,
-    reserve: bool = False,
-    has_style_reference: bool = False,
-    exact_cost_usd: float | None = None,
-    validation: bool = False,
-) -> dict:
-    """Keep one-sample preflight and generation credit checks in lockstep."""
-    funding = classify_operations(style_sample_operations(config, validation=validation))
-    if is_subscription(funding):
-        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve, funding=funding))
-    if mock_mode_active(config):
-        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve))
-    if exact_cost_usd is None:
-        width, height = style_proof_dimensions()
-        cost_kwargs = {
-            "quality": getattr(config, "image_quality", None),
-            "width": width, "height": height,
-        }
-        if has_style_reference and _supports_style_reference(config):
-            cost_kwargs["ref_count"] = 1
-        exact_cost_usd = estimate_image_cost(
-            config.effective_image_model(), 1,
-            **cost_kwargs,
-        )
-    return dict(credit_estimate_for_provider_cost(
-        exact_cost_usd, "style", reserve=reserve, zero_cost_estimate=1,
-    ))
-
-
-def _direction_operations(config: Config, *, with_neighbors: bool = False):
-    """A faithful direction proof is followed by one vision call that names it."""
-    base = prompt_image_operations(config) if with_neighbors else style_sample_operations(config)
-    return (*base, ("text", config.effective_visual_review_model()))
-
-
-def _direction_credit_estimates(
-    config: Config,
-    project_dir,
-    *,
-    has_style_reference: bool = False,
-    template: str | None = None,
-    candidate_id: str = "direction_estimate",
-    reference_size: tuple[int, int] | None = None,
-) -> dict:
-    def quote(operations, cost, *, zero_cost_estimate=1):
-        try:
-            funding = classify_operations(operations)
-        except CodexRoutingError as exc:
-            return {"supported": False, "error": str(exc)}
-        return dict(credit_estimate_for_provider_cost(
-            0.0 if is_subscription(funding) or mock_mode_active(config) else cost(),
-            "style", reserve=True,
-            zero_cost_estimate=0 if mock_mode_active(config) else zero_cost_estimate,
-            funding=funding,
-        ))
-
-    reference_count = 1 if has_style_reference and _supports_style_reference(config) else 0
-    bible = _get_bible(project_dir)
-
-    def faithful_cost():
-        width, height = style_proof_dimensions()
-        naming = estimate_custom_direction_naming_cost_usd(
-            config, bible.title if bible is not None else "", template or "",
-        )
-        return naming + (
-            estimate_style_proof_cost_usd(
-                config, project_dir, bible, template or config.style_template, candidate_id,
-                reference_size=(reference_size or (1024, 1024)) if reference_count else None,
-            )
-            if bible is not None
-            else estimate_image_cost(
-                config.effective_image_model(), 1,
-                quality=getattr(config, "image_quality", None),
-                width=width, height=height,
-                ref_count=reference_count,
-                ref_image_sizes=[reference_size or (1024, 1024)] if reference_count else None,
-            )
-        )
-
-    def neighbor_cost():
-        return estimate_style_batch_cost_usd(
-            config, project_dir, NEIGHBOR_COUNT, has_style_reference=bool(reference_count),
-            reference_size=reference_size,
-        )
-
-    return {
-        "faithful": quote(_direction_operations(config), faithful_cost),
-        "neighbors": quote(prompt_image_operations(config), neighbor_cost, zero_cost_estimate=0),
-        "faithful_with_neighbors": quote(
-            _direction_operations(config, with_neighbors=True), lambda: faithful_cost() + neighbor_cost(),
-        ),
-    }
-
-
-def _supports_style_reference(config: Config) -> bool:
-    return "style" in image_model_profile_for_config(config).supported_roles
-
-
 def _reference_image_size(path: Path | None) -> tuple[int, int] | None:
     if path is None:
         return None
@@ -301,7 +169,7 @@ def _reference_image_size(path: Path | None) -> tuple[int, int] | None:
 
 
 def _assert_usable_style_direction(config: Config, text: str, has_image: bool) -> None:
-    if has_image and not text and not _supports_style_reference(config):
+    if has_image and not text and not supports_style_reference(config):
         raise HTTPException(
             400,
             "This image model cannot use a style reference. Add a text direction or choose "
@@ -317,7 +185,7 @@ def _assert_usable_style_direction(config: Config, text: str, has_image: bool) -
 def get_styles(project_id: str, project=Depends(get_project), request: Request = None, user_id: str = Depends(get_current_user)):
     project_dir, config, _state = project
     suggestions = load_suggestions(project_dir)
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     stale_indices = set(missing_sample_indices(
         project_dir, suggestions, config=config, bible=bible,
     )) if bible else set()
@@ -356,26 +224,8 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
         sample_path = artifacts.style_sample_path(project_dir, i)
         sample_exists = sample_path.exists()
         validation_path = artifacts.style_validation_path(project_dir, s["id"])
-        direction = (
-            load_style_direction(project_dir, s.get("direction_id"))
-            if s.get("direction_id") else None
-        )
-        style_reference = style_direction_image(project_dir, direction)
-        validation_fresh = False
-        if validation_path.exists() and bible:
-            validation_config = config.model_copy(
-                update={"style_template": style_template_for_suggestion(s)}
-            )
-            validation_request = build_style_sample_request(
-                validation_config, bible, style_validation_brief(bible),
-                candidate_id=f"{s['id']}:validation",
-                project_dir=project_dir,
-                style_reference=style_reference,
-                style_reference_mode=s["style_reference_mode"],
-                subject_action=STYLE_VALIDATION_ACTION,
-                composition=STYLE_VALIDATION_COMPOSITION,
-            )
-            validation_fresh = asset_matches_request(validation_path, validation_request)
+        proof = StyleProof.derive(config, project_dir, s, validation=True)
+        validation_fresh = bool(bible) and proof.is_fresh(bible, i)
         lettering_style = _proof_style(project_dir, s, active=i == active_index)
         proof_base = f"/api/projects/{project_id}/styles/{s['id']}/proof"
         proof_revision = lettering_style.content_sha256
@@ -407,7 +257,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
             "sample_stale": sample_exists and i in stale_indices,
             "has_validation": validation_fresh,
             "has_style_reference": bool(
-                style_reference is not None and _supports_style_reference(config)
+                proof.reference is not None and supports_style_reference(config)
             ),
             "validation_url": (
                 proof_url("validation", validation_path)
@@ -454,7 +304,7 @@ def get_style_lettering_proof(
             )
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         art = source.read_bytes()
-        copy = proof_copy_for_sample(style_proof_copy(project[1], _get_bible(project[0]), project[0]), source)
+        copy = proof_copy_for_sample(style_proof_copy(project[1], read_story_bible(project[0]), project[0]), source)
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
     data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
@@ -477,7 +327,7 @@ def suggest_estimate(
 ):
     """Return the credit cost for one 'Suggest More Styles' batch (text + samples)."""
     project_dir, config, _state = project
-    return _suggest_batch_credit_estimate(config, project_dir)
+    return suggest_batch_quote(config, project_dir)
 
 
 @router.get("/styles/sample-estimate")
@@ -488,7 +338,7 @@ def style_sample_estimate(
 ):
     """Return the credit cost to regenerate one style sample image."""
     _project_dir, config, _state = project
-    return _style_sample_credit_estimate(config)
+    return sample_quote(config)
 
 
 @router.get("/styles/direction-estimate")
@@ -499,17 +349,17 @@ def style_direction_estimate(
 ):
     """Estimate one faithful custom-direction proof."""
     _project_dir, config, _state = project
-    estimates_without_reference = _direction_credit_estimates(config, _project_dir)
-    estimates_with_reference = _direction_credit_estimates(
+    estimates_without_reference = direction_quotes(config, _project_dir)
+    estimates_with_reference = direction_quotes(
         config, _project_dir, has_style_reference=True,
     )
     return {
-        **_style_sample_credit_estimate(config),
+        **sample_quote(config),
         # `estimates` remains the text-only alias for existing clients.
         "estimates": estimates_without_reference,
         "estimates_without_reference": estimates_without_reference,
         "estimates_with_reference": estimates_with_reference,
-        "image_reference_supported": _supports_style_reference(config),
+        "image_reference_supported": supports_style_reference(config),
         "max_upload_bytes": _MAX_STYLE_REFERENCE_BYTES,
         "accepted_image_types": sorted(_STYLE_IMAGE_TYPES),
     }
@@ -537,7 +387,7 @@ async def _prepare_style_direction(
         except UploadedImageError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    image_reference_supported = _supports_style_reference(config)
+    image_reference_supported = supports_style_reference(config)
     _assert_usable_style_direction(config, text, bool(image_bytes))
     identity_material = text.encode() + b"\0" + image_bytes
     direction_id = f"direction_{hashlib.sha256(identity_material).hexdigest()[:16]}"
@@ -603,10 +453,10 @@ async def create_style_direction(
 ):
     """Persist an author direction and queue one faithful story-specific proof."""
     project_dir, config, state = project
-    operations = _direction_operations(config, with_neighbors=with_neighbors)
+    operations = direction_operations(config, with_neighbors=with_neighbors)
     classify_operations(operations)
     pkey = project_key(user_id, project_id)
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
     text = (direction_text or "").strip()
@@ -628,7 +478,7 @@ async def create_style_direction(
         project_dir=project_dir, config=config, bible=bible,
         text=text, label=label, image=image, persist=False,
     )
-    estimates = _direction_credit_estimates(
+    estimates = direction_quotes(
         config,
         project_dir,
         has_style_reference=prepared["reference_supported"],
@@ -707,7 +557,7 @@ async def suggest_styles(
     pkey = project_key(user_id, project_id)
 
 
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
     direction = None
@@ -718,7 +568,7 @@ async def suggest_styles(
             raise HTTPException(404, "Style direction not found")
 
     style_reference = style_direction_image(project_dir, direction) if direction else None
-    estimate = _suggest_batch_credit_estimate(
+    estimate = suggest_batch_quote(
         config, project_dir, NEIGHBOR_COUNT if direction else SAMPLE_COUNT,
         has_style_reference=style_reference is not None,
         reference_size=_reference_image_size(style_reference),
@@ -799,54 +649,15 @@ async def generate_style_samples(
         if idx < 1 or idx > len(suggestions):
             raise HTTPException(400, f"Index {idx} out of range (1-{len(suggestions)})")
 
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    operations = style_sample_operations(config)
-    classify_operations(operations)
-    jobs = []
-    prune_finished_generation_jobs(request.app)
-    for idx in indices:
-        existing = find_active_generation_job(
-            request.app, project_name=pkey, kind="style_sample", payload={"index": idx},
-        )
-        if existing:
-            jobs.append(generation_job_payload(request.app, existing))
-            continue
-
-        s = suggestions[idx - 1]
-        template = style_template_for_suggestion(s)
-        candidate_id = s.get("id")
-        direction = load_style_direction(project_dir, s.get("direction_id")) if s.get("direction_id") else None
-        style_reference = style_direction_image(project_dir, direction)
-        sample_config = config.model_copy(update={"style_template": template})
-        estimate = _style_sample_credit_estimate(
-            sample_config, reserve=True, has_style_reference=style_reference is not None,
-            exact_cost_usd=estimate_style_proof_cost_usd(
-                sample_config, project_dir, bible, template, candidate_id,
-                style_reference=style_reference,
-                style_reference_mode=s["style_reference_mode"],
-            ),
-        )
-
-
-        job, _created = await enqueue_reserved_generation_job(
-            request.app,
-            project_name=pkey,
-            kind="style_sample",
-            label=f"style {idx}",
-            payload={"index": idx},
-             user_id=user_id, project_id=project_id,
-            project_dir=project_dir, stage="style",
-            debit_description=f"Style sample {idx}",
-            reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
-            operations=operations,
-            command=command("style_sample", project_dir, config,
-                bible=bible.model_dump(mode="json"), candidate=s, index=idx),
-            semaphore=generation_semaphore_for_config(request.app, sample_config),
-        )
-        jobs.append(generation_job_payload(request.app, job))
+    jobs = await submit_samples(
+        request.app, project_name=pkey, user_id=user_id, project_id=project_id,
+        project_dir=project_dir, config=config, bible=bible,
+        suggestions=suggestions, indices=indices,
+    )
 
     return {
         "status": "queued", "ids": [suggestions[index - 1].get("id") for index in indices],
@@ -872,65 +683,18 @@ async def generate_style_validation(
     index = suggestion_index_by_id(suggestions, suggestion_id)
     if index is None:
         raise HTTPException(404, "Style suggestion not found")
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
-    prune_finished_generation_jobs(request.app)
-    payload = {"id": suggestion_id, "index": index}
-    existing = find_active_generation_job(
-        request.app, project_name=pkey, kind="style_validation", payload=payload,
-    )
-    if existing:
-        return {
-            "status": "queued", "id": suggestion_id,
-            "url": f"/api/projects/{project_id}/files/samples/validations/{suggestion_id}.png",
-            "job": generation_job_payload(request.app, existing),
-        }
-    suggestion = suggestions[index - 1]
-    direction = (
-        load_style_direction(project_dir, suggestion.get("direction_id"))
-        if suggestion.get("direction_id") else None
-    )
-    style_reference = style_direction_image(project_dir, direction)
-    exact_cost = estimate_style_proof_cost_usd(
-        config,
-        project_dir,
-        bible,
-        style_template_for_suggestion(suggestion),
-        f"{suggestion_id}:validation",
-        style_reference=style_reference,
-        style_reference_mode=suggestion["style_reference_mode"],
-        subject_action=STYLE_VALIDATION_ACTION,
-        composition=STYLE_VALIDATION_COMPOSITION,
-    )
-    estimate = _style_sample_credit_estimate(
-        config,
-        reserve=True,
-        has_style_reference=style_reference is not None,
-        exact_cost_usd=exact_cost,
-        validation=True,
-    )
-    sample_config = config.model_copy(
-        update={"style_template": style_template_for_suggestion(suggestion)}
-    )
-
-
-    job, _created = await enqueue_reserved_generation_job(
-        request.app, project_name=pkey, kind="style_validation",
-        label=f"{suggestion['label']} validation",
-        payload=payload,  user_id=user_id,
-        project_id=project_id, project_dir=project_dir, stage="style",
-        debit_description="Style validation",
-        reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
-        operations=operations,
-        command=command("style_validation", project_dir, config,
-            bible=bible.model_dump(mode="json"), candidate=suggestion, index=index),
-        semaphore=generation_semaphore_for_config(request.app, sample_config),
+    job = await submit_validation(
+        request.app, project_name=pkey, user_id=user_id, project_id=project_id,
+        project_dir=project_dir, config=config, bible=bible,
+        suggestion=suggestions[index - 1], index=index,
     )
     return {
         "status": "queued", "id": suggestion_id,
         "url": f"/api/projects/{project_id}/files/samples/validations/{suggestion_id}.png",
-        "job": generation_job_payload(request.app, job),
+        "job": job,
     }
 
 
@@ -1027,7 +791,7 @@ def update_style_presentation(
         raise HTTPException(404, "Style direction not found.")
     if fields.get("hidden") and _active_suggestion(suggestions, config)[1] == suggestion_id:
         raise HTTPException(409, "The selected style cannot be hidden")
-    bible = _get_bible(project_dir)
+    bible = read_story_bible(project_dir)
     updated = update_suggestion_fields(
         project_dir, suggestion_id, fields, bible.title if bible else "",
     )

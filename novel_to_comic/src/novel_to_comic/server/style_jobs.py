@@ -12,6 +12,7 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import s2_style as style
 from .event_channel import EventChannel
 from .generation_jobs import persist_generation_job
+from .style_proofs import StyleProof
 
 
 def _runtime(directory, channel=None):
@@ -112,27 +113,19 @@ async def execute_style(app, job, directory, config):
 
     async def one(candidate, index, validation=False):
         identity = candidate["id"]
-        proof = {"index": index, "id": identity, "status": "running"}
-        job.payload["proofs"][str(index)] = proof
+        record = {"index": index, "id": identity, "status": "running"}
+        job.payload["proofs"][str(index)] = record
         persist_generation_job(app, job)
         try:
-            cfg = config.model_copy(update={"style_template": style.style_template_for_suggestion(candidate)})
-            direction = style.load_style_direction(directory, candidate.get("direction_id")) if candidate.get("direction_id") else None
-            reference = style.style_direction_image(directory, direction) if direction else None
+            proof = StyleProof.derive(config, directory, candidate, validation=validation)
             brief = style.style_validation_brief(bible) if validation else await shared_brief()
-            output = artifacts.style_validation_path(directory, identity) if validation else artifacts.style_sample_path(directory, index)
-            kwargs = dict(candidate_id=f"{identity}:validation" if validation else identity,
-                          style_reference=reference, style_reference_mode=candidate["style_reference_mode"])
-            if validation:
-                kwargs.update(project_dir=directory, subject_action=style.STYLE_VALIDATION_ACTION,
-                              composition=style.STYLE_VALIDATION_COMPOSITION)
-            result = await style.generate_sample_image(cfg, bible, output, brief=brief, **kwargs)
+            result = await proof.execute(bible, index, brief)
             if result is not None:
                 for usage in ((result.usage,) if result.usage else ()) + result.additional_usage:
                     record_usage(usage)
-            proof["status"] = "complete"
+            record["status"] = "complete"
         except BaseException as exc:
-            proof.update(status="failed", error=str(exc) or type(exc).__name__)
+            record.update(status="failed", error=str(exc) or type(exc).__name__)
             raise
         finally:
             persist_generation_job(app, job)

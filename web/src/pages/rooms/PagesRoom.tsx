@@ -1,5 +1,8 @@
 import { useGenerationTracking } from "../../hooks/useGenerationTracking";
 import { pageState, pageDisplayImage } from "../../lib/pageState";
+import {
+  initialPagesDrawSession, isDrawStarting, pageActionErrorFor, pageDrawInput, pagesDrawReducer,
+} from "../../lib/pagesDrawSession";
 import { isGenerationActive, isGenerationTerminal } from "../../lib/generationTracking";
 import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { trackProductEvent } from "../../api/events";
@@ -11,7 +14,7 @@ import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
 import { gallerySpreads } from "../../lib/pageSpreads";
 import { accountIdentity } from "../../lib/accountEpoch";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useAnalyzeCompletePage,
@@ -49,7 +52,6 @@ import { cn } from "../../lib/cn";
 import { getImageFailureCopy } from "../../lib/imageFailure";
 import type {
   CompletePageSummary,
-  GenerationJob,
 } from "../../types/api";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { StaleRenderRedraw } from "../../components/pages/StaleRenderRedraw";
@@ -480,13 +482,9 @@ export function PagesRoom() {
     } catch { /* Private browsing must not block review. */ }
   }
 
-  const [pageJobs, setPageJobs] = useState<Record<string, number>>({});
-  const [startingPages, setStartingPages] = useState<number[]>([]);
-  const [batchPages, setBatchPages] = useState<number[]>([]);
-  const [pageFailures, setPageFailures] = useState<Partial<Record<number, GenerationJob>>>({});
+  const [drawSession, drawEvent] = useReducer(pagesDrawReducer, initialPagesDrawSession);
   const [paidIntent, setPaidIntent] = useState<PaidPageIntent | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
-  const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, Error>>>({});
   const [approvalError, setApprovalError] = useState<Error | null>(null);
   const cancelQueued = useCancelQueuedPageJobs();
   const tracking = useGenerationTracking(id);
@@ -515,31 +513,17 @@ export function PagesRoom() {
   useEffect(() => {
     const terminal = (generationJobs?.jobs ?? []).filter((job) =>
       job.is_current_page !== false
-      && (job.kind === "complete_page_draw" || pageJobs[job.id] != null)
+      && (job.kind === "complete_page_draw" || drawSession.jobs[job.id] != null)
       && (isGenerationTerminal(job))
       && !observedTerminalJobs.current.has(job.id),
     );
     if (terminal.length === 0) return;
     terminal.forEach((job) => observedTerminalJobs.current.add(job.id));
-    void refetch().then(() => {
-      const donePages = terminal.map((job) => Number(job.payload?.page_number ?? pageJobs[job.id]));
-      setBatchPages((current) => current.filter((page) => !donePages.includes(page)));
-      setPageFailures((current) => {
-        const next = { ...current };
-        terminal.forEach((job) => {
-          const pageNumber = Number(job.payload?.page_number ?? pageJobs[job.id]);
-          if (job.status === "failed") next[pageNumber] = job;
-          else delete next[pageNumber];
-        });
-        return next;
-      });
-      setPageJobs((current) => {
-        const next = { ...current };
-        terminal.forEach((job) => delete next[job.id]);
-        return next;
-      });
-    });
-  }, [generationJobs?.jobs, pageJobs, refetch]);
+    const settled = terminal.map((job) => ({
+      jobId: job.id, job, pageNumber: Number(job.payload?.page_number ?? drawSession.jobs[job.id]),
+    }));
+    void refetch().then(() => drawEvent({ type: "jobs_settled", settled }));
+  }, [generationJobs?.jobs, drawSession.jobs, refetch]);
 
   useEffect(() => {
     if (!data) return;
@@ -655,9 +639,8 @@ export function PagesRoom() {
   const projectId = id;
   const pages = data.pages;
   const states = new Map(pages.map(item => [item.page.page_number, pageState(item, {
-    starting: startingPages.includes(item.page.page_number), batch: batchPages.includes(item.page.page_number),
-    drawFailed: drawStatus === "failed", submitted: Object.values(pageJobs).includes(item.page.page_number),
-    job: latestPageJobs.get(item.page.page_number), failure: pageFailures[item.page.page_number],
+    ...pageDrawInput(drawSession, item.page.page_number),
+    drawFailed: drawStatus === "failed", job: latestPageJobs.get(item.page.page_number),
   })]));
   const drawingPages = new Set(pages.filter(item => states.get(item.page.page_number)!.drawing).map(item => item.page.page_number));
   const failedPages = new Set(pages.filter(item => states.get(item.page.page_number)!.failed).map(item => item.page.page_number));
@@ -728,29 +711,19 @@ export function PagesRoom() {
     pageNumber: number,
     depiction: "canonical" | "less_graphic" = "canonical",
   ) {
-    if (!status?.style_selected || startingPages.includes(pageNumber)) return;
+    if (!status?.style_selected || isDrawStarting(drawSession, pageNumber)) return;
     setActionError(null);
-    setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
-    setStartingPages((current) => (
-      current.includes(pageNumber) ? current : [...current, pageNumber]
-    ));
-    setPageFailures((current) => {
-      const next = { ...current };
-      delete next[pageNumber];
-      return next;
-    });
+    drawEvent({ type: "draw_requested", pageNumber });
     void tracking.start({ kind: "complete_page_draw", identity: "page_number", value: pageNumber },
       () => generate.mutateAsync({ project: projectId, pageNumber, depiction }), {
         actionLabel: `${t("Draw page")} ${pageNumber}`,
         onRetry: () => requestSpend({ kind: "page", pageNumber, depiction }),
       }).then(({ job }) => {
         setPaidIntent(null);
-        setStartingPages(current => current.filter(page => page !== pageNumber));
-        setPageJobs(current => ({ ...current, [job.id]: pageNumber }));
+        drawEvent({ type: "draw_accepted", pageNumber, jobId: job.id });
       }).catch((error: Error) => {
         setActionError(error);
-        setPageActionErrors(current => ({ ...current, [pageNumber]: error }));
-        setStartingPages(current => current.filter(page => page !== pageNumber));
+        drawEvent({ type: "draw_rejected", pageNumber, error });
       });
   }
 
@@ -762,11 +735,11 @@ export function PagesRoom() {
       actionLabel: t(retry ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE ALL PAGES"),
       onRetry: () => requestSpend({ kind: "batch", retry }),
     }).then(() => {
-      if (queuePages) setBatchPages(undrawnPages);
+      if (queuePages) drawEvent({ type: "batch_started", pageNumbers: undrawnPages });
       setPaidIntent(null);
     }).catch((error: Error) => {
       setActionError(error);
-      if (queuePages) setBatchPages([]);
+      if (queuePages) drawEvent({ type: "batch_rejected" });
     });
   }
 
@@ -777,11 +750,10 @@ export function PagesRoom() {
       onRetry: () => requestSpend({ kind: "analysis", pageNumber }),
     }).then(() => {
       setPaidIntent(null);
-      setPageFailures(current => ({ ...current, [pageNumber]: undefined }));
-      setPageActionErrors(current => ({ ...current, [pageNumber]: undefined }));
+      drawEvent({ type: "analysis_succeeded", pageNumber });
     }).catch((error: Error) => {
       setActionError(error);
-      setPageActionErrors(current => ({ ...current, [pageNumber]: error }));
+      drawEvent({ type: "analysis_rejected", pageNumber, error });
     });
   }
 
@@ -795,7 +767,7 @@ export function PagesRoom() {
           failurePhase === "analysis" ? undefined : pageFailure.error,
         )
       : null;
-    const pageActionError = pageActionErrors[item.page.page_number];
+    const pageActionError = pageActionErrorFor(drawSession, item.page.page_number);
     return (
       <article key={item.page.page_number} aria-label={`${t("Page")} ${item.page.page_number}`} className="relative flex min-w-0 flex-col">
         <div className="relative shadow-[0_1px_2px_rgb(27_28_21/0.18),0_18px_34px_-18px_rgb(27_28_21/0.45)]">
@@ -1071,9 +1043,9 @@ export function PagesRoom() {
           <div>
             <OutOfDatePages project={id} redraws={(data?.redraws ?? []).filter((page) => !drawingPages.has(page.page_number))}
               disabled={drawingPages.size > 0 || !!status?.is_running}
-              onQueued={(jobs) => setPageJobs((current) => ({
-                ...current, ...Object.fromEntries(jobs.map(({ page_number, job }) => [job.id, page_number])),
-              }))} />
+              onQueued={(jobs) => drawEvent({
+                type: "jobs_accepted", jobs: jobs.map(({ page_number, job }) => ({ jobId: job.id, pageNumber: page_number })),
+              })} />
           </div>
         )}
         {drawingPages.size > 0 && (
@@ -1140,18 +1112,8 @@ export function PagesRoom() {
             ? requestSpend({ kind: "analysis", pageNumber: pages[reviewIndex].page.page_number })
             : retryAnalysis(pages[reviewIndex].page.page_number)}
           checkingText={analyze.isPending}
-          checkError={pageActionErrors[pages[reviewIndex].page.page_number]}
-          onJobQueued={(jobId, pageNumber) => {
-            setPageFailures((current) => {
-              const next = { ...current };
-              delete next[pageNumber];
-              return next;
-            });
-            setPageJobs((current) => ({
-              ...current,
-              [jobId]: pageNumber,
-            }));
-          }}
+          checkError={pageActionErrorFor(drawSession, pages[reviewIndex].page.page_number)}
+          onJobQueued={(jobId, pageNumber) => drawEvent({ type: "job_accepted_for_review", jobId, pageNumber })}
           pageIsDrawing={drawingPages.has(selectedItem.page.page_number)}
         />
       )}

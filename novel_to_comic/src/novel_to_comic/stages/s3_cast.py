@@ -6,6 +6,7 @@ Part B: Generate location background plates
 
 import asyncio
 import hashlib
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from novel_to_comic import artifacts, reference_forms
 from novel_to_comic.models.appearance import ReferenceForm
 from novel_to_comic.style_contract import figure_free_style_template
 from novel_to_comic.cast_roster import read_cast_story_bible
+from novel_to_comic.cast_target import CastTarget, scoped_id, split_scoped_id
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
@@ -51,6 +53,7 @@ from novel_to_comic.cast_design import (
 )
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 _CAST_RENDERING_CONSISTENCY = (
     "Keep one artistic hand across the entire cast, matching the shared style reference's "
@@ -791,8 +794,6 @@ async def redraw_looks(
     Cast's freshness check; it is never retried here. Returns ``main`` with
     the looks' usage attached, so the job bills every call exactly once.
     """
-    from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
-
     usage = list(main.additional_usage)
     for look_id in entity_look_ids(project_dir, kind, entity_id):
         try:
@@ -803,8 +804,50 @@ async def redraw_looks(
             console.print(f"[yellow]Could not redraw look {entity_id}/{look_id}: {exc}[/yellow]")
             continue
         usage.extend(item for item in (look.usage, *look.additional_usage) if item is not None)
-        _clear_repaired_cast_failure(project_dir, f"{entity_id}:{look_id}")
+        clear_repaired_cast_failure(project_dir, CastTarget(kind, entity_id, look_id))
     return replace(main, additional_usage=tuple(usage))
+
+
+def clear_repaired_cast_failure(project_dir: Path, target: CastTarget) -> None:
+    """Drop a repaired asset from the Cast stage's failure list.
+
+    Plain and instructed regeneration both call this after persisting the
+    reference, so a repaired asset no longer blocks the stage.
+    """
+    from novel_to_comic.state import load_state, save_state
+
+    try:
+        state = load_state(project_dir)
+    except Exception:
+        logger.exception("Could not load state to clear a repaired cast failure")
+        return
+    cast_state = state.stages.get("cast")
+    if cast_state is None or target.job_asset_id not in cast_state.items_failed:
+        return
+    cast_state.items_failed.remove(target.job_asset_id)
+    cast_state.items_done = min(cast_state.items_total, cast_state.items_done + 1)
+    save_state(state, project_dir)
+
+
+async def regenerate_cast_target(
+    config: Config, project_dir: Path, target: CastTarget, *, with_looks: bool = False,
+) -> ApiResult[Path]:
+    """Redraw one Cast reference, clear its failure, and optionally redraw its looks."""
+    if target.asset_type == "character":
+        result = (
+            await regenerate_character_state_ref(config, project_dir, target.entity_id, target.state_id)
+            if target.state_id
+            else await regenerate_character_ref(config, project_dir, target.entity_id)
+        )
+    elif target.asset_type == "location":
+        result = await regenerate_location_plate(
+            config, project_dir, target.entity_id, state_id=target.state_id)
+    else:
+        result = await regenerate_prop_ref(config, project_dir, target.entity_id)
+    clear_repaired_cast_failure(project_dir, target)
+    if with_looks and target.state_id is None and target.asset_type != "prop":
+        result = await redraw_looks(config, project_dir, target.asset_type, target.entity_id, result)
+    return result
 
 
 def _record_design(output_path: Path, plan: CastDesignPlan, char_id: str) -> None:
@@ -932,7 +975,7 @@ async def _generate_character_state_refs(
             output_path = out_dir / "sheet.png"
             parent_path = artifacts.character_ref_sheet_path(project_dir, char.id)
             if not parent_path.exists() or char.id in ctx.stage_state.items_failed:
-                ctx.record_item_failed(f"{char.id}:{state_id}")
+                ctx.record_item_failed(scoped_id(char.id, state_id))
                 ctx.log(
                     f"Skipped {state_id} ref for {char.name}: canonical ref is unavailable",
                     level="error",
@@ -951,7 +994,7 @@ async def _generate_character_state_refs(
             wire = _compile_state_asset_wire(config, spec, project_dir)
 
             outcome = await produce_stage_look_asset(
-                ctx=ctx, item_id=f"{char.id}:{state_id}", label=f"{state_id} ref for {char.name}",
+                ctx=ctx, item_id=scoped_id(char.id, state_id), label=f"{state_id} ref for {char.name}",
                 config=config, project_dir=project_dir, request=wire,
                 output_path=output_path, feature="cast.character_state_ref", semaphore=semaphore,
                 on_generated=_crop_generated_sheet,
@@ -1089,12 +1132,12 @@ async def _generate_prop_refs(
                     spec = build_prop_state_spec(config, project_dir, prop, state, style_path=style_ref)
                     wire = _compile_state_asset_wire(config, spec, project_dir)
                     await produce_stage_look_asset(
-                        ctx=ctx, item_id=f"{prop.id}:{state.id}", label=f"prop state {prop.name}/{state.label}",
+                        ctx=ctx, item_id=scoped_id(prop.id, state.id), label=f"prop state {prop.name}/{state.label}",
                         config=config, project_dir=project_dir, request=wire,
                         output_path=output_path, feature="cast.prop_state_ref", semaphore=semaphore,
                     )
                 except Exception as exc:
-                    ctx.record_item_failed(f"{prop.id}:{state.id}")
+                    ctx.record_item_failed(scoped_id(prop.id, state.id))
                     ctx.log(f"Failed prop state {prop.name}/{state.label}: {exc}", level="error")
                 ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
@@ -1304,10 +1347,7 @@ def _failed_cast_asset(bible: StoryBible | None, project_dir: Path, item_id: str
     characters = {c.id: c for c in bible.characters} if bible else {}
     locations = {loc.id: loc for loc in bible.locations} if bible else {}
     props = {prop.id: prop for prop in bible.props} if bible else {}
-    entity_id, _, state_id = item_id.partition(":")
-    if "/states/" in item_id:
-        entity_id, _, state_id = item_id.partition("/states/")
-    state_id = state_id or None
+    entity_id, state_id = split_scoped_id(item_id)
 
     def _state_label(entity) -> str:
         state = next((s for s in entity.appearance_states or [] if s.id == state_id), None)

@@ -10,7 +10,8 @@ whole stage again.
 from __future__ import annotations
 from novel_to_comic import look_assets
 from novel_to_comic.asset_generation import NonPanelSubmission
-from novel_to_comic.server.cast_admission import apply_asset_instruction
+from novel_to_comic.cast_target import CastTarget
+from novel_to_comic.server.cast_admission import submit_instructed_regen
 
 import asyncio
 import json
@@ -187,16 +188,15 @@ def _apply(project_dir: Path, app, *, run_job=True, **kwargs):
     defaults = dict(
         config=Config(),
         project_dir=project_dir,
-        db=db,
         user_id="u1",
         project_id="p1",
-        asset_type="character",
-        asset_id="char_001",
         instruction="Singe her left sleeve.",
         app=app,
     )
+    target = CastTarget(kwargs.pop("asset_type", "character"), kwargs.pop("asset_id", "char_001"),
+                        kwargs.pop("state_id", None))
     async def submit():
-        result = await apply_asset_instruction(**{**defaults, **kwargs})
+        result = await submit_instructed_regen(target=target, **{**defaults, **kwargs})
         job = app.state.generation_jobs[result["job"]["id"]]
         async def execute():
             from novel_to_comic.server.generation_jobs import run_generation_job
@@ -275,7 +275,6 @@ def test_http_cast_change_is_durable_and_unstarted_during_cast_generation(tmp_pa
         app.state.durable_queue_required = True
         app.state.durable_queue = SimpleNamespace(healthy=True, publish=admitted.append)
         with (
-            patch("novel_to_comic.server.routers.cast_assets.get_db", return_value=object()),
             patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
             patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
             patch("novel_to_comic.server.credited_job.reserve_credits") as hold,
@@ -626,7 +625,8 @@ def test_a_second_edit_is_refused_while_one_is_still_running(tmp_path: Path):
 
 
 def test_a_repaired_asset_stops_being_listed_as_a_cast_failure(tmp_path: Path):
-    from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
+    from novel_to_comic.cast_target import CastTarget
+    from novel_to_comic.stages.s3_cast import clear_repaired_cast_failure
     from novel_to_comic.state import PipelineState, load_state, save_state
 
     project_dir = _project(tmp_path)
@@ -641,7 +641,7 @@ def test_a_repaired_asset_stops_being_listed_as_a_cast_failure(tmp_path: Path):
     cast.items_failed = ["char_001"]
     save_state(state, project_dir)
 
-    _clear_repaired_cast_failure(project_dir, "char_001")
+    clear_repaired_cast_failure(project_dir, CastTarget("character", "char_001"))
 
     reloaded = load_state(project_dir).stages["cast"]
     assert reloaded.items_failed == []
@@ -649,7 +649,8 @@ def test_a_repaired_asset_stops_being_listed_as_a_cast_failure(tmp_path: Path):
 
 
 def test_a_repaired_appearance_state_stops_being_listed_as_a_cast_failure(tmp_path: Path):
-    from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
+    from novel_to_comic.cast_target import CastTarget
+    from novel_to_comic.stages.s3_cast import clear_repaired_cast_failure
     from novel_to_comic.state import PipelineState, load_state, save_state
 
     project_dir = _project(tmp_path)
@@ -664,7 +665,7 @@ def test_a_repaired_appearance_state_stops_being_listed_as_a_cast_failure(tmp_pa
     cast.items_failed = ["char_001:burned"]
     save_state(state, project_dir)
 
-    _clear_repaired_cast_failure(project_dir, "char_001:burned")
+    clear_repaired_cast_failure(project_dir, CastTarget("character", "char_001", "burned"))
 
     reloaded = load_state(project_dir).stages["cast"]
     assert reloaded.items_failed == []

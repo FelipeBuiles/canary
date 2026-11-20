@@ -262,11 +262,13 @@ class AssetItem:
         wire = self._wire_for(target, prompt, restructured=variant == "restructured", quality=quality)
 
         async def submit(output_path: Path) -> UsageRecord:
-            from novel_to_comic.ai.client import generate_wire_image_on_route
+            from novel_to_comic.ai.client import generate_wire_image
+            from novel_to_comic.image_route_fallback import GatewayRoute, SingleRoute
 
-            result = await generate_wire_image_on_route(
-                config=config, wire=wire, gateway_model=wire.requested_alias or "",
-                output_path=output_path, feature="labs.image_compare",
+            # One route, no fallback: Labs compares routes, so a wire never runs its frozen chain.
+            result = await generate_wire_image(
+                config=config, wire=wire, output_path=output_path, feature="labs.image_compare",
+                routes=SingleRoute(GatewayRoute(wire.provider_key, wire.requested_alias or "")),
             )
             if result.usage is None:
                 raise RuntimeError("The image route returned no usage")

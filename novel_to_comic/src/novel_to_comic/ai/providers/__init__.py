@@ -1,12 +1,9 @@
 """Image provider implementations."""
 
-from .base import ImageProvider, ProviderRawResult, RefImage, RefRole
-from .selector import pick
+from .base import ProviderRawResult, RefImage, RefRole
 
 __all__ = [
-    "ImageProvider",
     "ProviderRawResult",
     "RefImage",
     "RefRole",
-    "pick",
 ]

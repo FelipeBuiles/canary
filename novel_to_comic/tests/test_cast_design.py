@@ -440,11 +440,12 @@ def test_incompatible_artifact_requires_rerun(tmp_path):
 
 def test_missing_design_rejected_before_correction_rewrite(tmp_path):
     from fastapi import HTTPException
-    from novel_to_comic.server.cast_admission import apply_asset_instruction
+    from novel_to_comic.cast_target import CastTarget
+    from novel_to_comic.server.cast_admission import submit_instructed_regen
     config, _, _ = _project(tmp_path, "image-gemini-pro")
     with patch.object(design.text, "generate_json", new_callable=AsyncMock) as generate:
         with pytest.raises(HTTPException) as error:
-            asyncio.run(apply_asset_instruction(config, tmp_path, MagicMock(), "u", "p", "character", "sailor", "Different face"))
+            asyncio.run(submit_instructed_regen(None, config, tmp_path, "u", "p", CastTarget("character", "sailor"), "Different face"))
     assert error.value.status_code == 409
     generate.assert_not_awaited()
 
@@ -745,13 +746,14 @@ def test_dismiss_route_returns_the_filtered_check_and_maps_errors(tmp_path):
 
 
 def test_only_main_sheet_redraws_carry_the_character_check():
+    from novel_to_comic.cast_target import CastTarget
     from novel_to_comic.server.codex_admission import cast_asset_operations, visual_review_operations
     config = MagicMock()
     config.effective_image_model.return_value = "img"
     config.effective_visual_review_model.return_value = "vision"
-    assert cast_asset_operations(config, "character_ref_regen", "doctor")[-1] == visual_review_operations(config)[0]
-    assert cast_asset_operations(config, "character_ref_regen", "doctor:burned") == (("image", "img"),)
-    assert cast_asset_operations(config, "prop_ref_regen", "key") == (("image", "img"),)
+    assert cast_asset_operations(config, CastTarget("character", "doctor"))[-1] == visual_review_operations(config)[0]
+    assert cast_asset_operations(config, CastTarget("character", "doctor", "burned")) == (("image", "img"),)
+    assert cast_asset_operations(config, CastTarget("prop", "key")) == (("image", "img"),)
     # Canonical plates are compared with the proof too; state plates are not.
-    assert cast_asset_operations(config, "location_plate_regen", "parlour")[-1] == visual_review_operations(config)[0]
-    assert cast_asset_operations(config, "location_plate_regen", "parlour:flooded") == (("image", "img"),)
+    assert cast_asset_operations(config, CastTarget("location", "parlour"))[-1] == visual_review_operations(config)[0]
+    assert cast_asset_operations(config, CastTarget("location", "parlour", "flooded")) == (("image", "img"),)

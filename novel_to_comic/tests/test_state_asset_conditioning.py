@@ -1013,8 +1013,10 @@ def test_single_state_estimate_uses_final_state_reference_count(monkeypatch, tmp
         return 0.01
 
     monkeypatch.setattr("novel_to_comic.server.credits.estimate_image_cost", fake_estimate)
+    from novel_to_comic.cast_target import CastTarget
+
     UnifiedCostResolver.estimate_asset_regen_cost(
-        Config(), tmp_path, "character_ref_regen", "char_001:silver",
+        Config(), tmp_path, CastTarget("character", "char_001", "silver"),
     )
 
     assert captured["ref_count"] == 2

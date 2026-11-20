@@ -8,9 +8,8 @@ from fastapi import HTTPException
 from PIL import Image
 
 from novel_to_comic.config import Config
+from novel_to_comic.server.style_proofs import direction_operations, direction_quotes
 from novel_to_comic.server.routers.styles import (
-    _direction_credit_estimates,
-    _direction_operations,
     create_style_direction,
     update_style_presentation,
 )
@@ -104,20 +103,20 @@ def test_naming_failure_keeps_the_proof_and_placeholder_text(tmp_path, style_led
 
 def test_direction_admission_prices_and_routes_the_naming_call(tmp_path):
     project_dir, config, _state = _project(tmp_path)
-    assert _direction_operations(config)[-1] == ("text", config.effective_visual_review_model())
-    assert _direction_operations(config, with_neighbors=True)[-1] == (
+    assert direction_operations(config)[-1] == ("text", config.effective_visual_review_model())
+    assert direction_operations(config, with_neighbors=True)[-1] == (
         "text", config.effective_visual_review_model(),
     )
     with patch(
-        "novel_to_comic.server.routers.styles.estimate_custom_direction_naming_cost_usd",
+        "novel_to_comic.stages.s2_style.estimate_custom_direction_naming_cost_usd",
         return_value=0.0,
     ):
-        without = _direction_credit_estimates(config, project_dir)["faithful"]["estimate_credits"]
+        without = direction_quotes(config, project_dir)["faithful"]["estimate_credits"]
     with patch(
-        "novel_to_comic.server.routers.styles.estimate_custom_direction_naming_cost_usd",
+        "novel_to_comic.stages.s2_style.estimate_custom_direction_naming_cost_usd",
         return_value=1.0,
     ):
-        priced = _direction_credit_estimates(config, project_dir)["faithful"]["estimate_credits"]
+        priced = direction_quotes(config, project_dir)["faithful"]["estimate_credits"]
     assert priced > without
 
 

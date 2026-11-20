@@ -20,27 +20,19 @@ from novel_to_comic import artifacts
 from novel_to_comic.cast_reference_inputs import CastReferenceInput, store_reference_upload
 from novel_to_comic.asset_versions import list_asset_versions, restore_asset_version
 from novel_to_comic.cast_instructions import (
-    ASSET_REGEN_KINDS,
     MAX_INSTRUCTION_CHARS,
-    asset_regen_label,
     resolve_cast_asset,
     restore_asset_instruction_direction,
 )
+from novel_to_comic.cast_target import ASSET_TYPES, AssetType, CastTarget
 
 from ..auth import get_current_user
-from ..credited_job import enqueue_credited_job
 from ..credits import UnifiedCostResolver
-from ..codex_admission import cast_asset_operations
 from novel_to_comic.codex_dev import CodexRoutingError
-from ..db import get_db
-from ..deps import get_project, project_key
-from ..generation_jobs import (
-    generation_job_payload,
-    generation_semaphore_for_config,
-)
+from ..deps import get_project
 from ..ratelimit import cost_limit, limiter
 
-from ..cast_admission import apply_asset_instruction, looks_admission
+from ..cast_admission import quote_cast_regen, submit_cast_regen, submit_instructed_regen
 
 router = APIRouter()
 
@@ -218,67 +210,14 @@ def _require_cast_asset(project_dir, asset_type: str, asset_id: str, state_id=No
     resolve_cast_asset(project_dir, asset_type, asset_id, state_id)
 
 
-async def _enqueue_cast_asset_regen(
-    request: Request,
-    project_id: str,
-    user_id: str,
-    project,
-    *,
-    kind: str,
-    asset_id_key: str,
-    asset_id: str,
-    label: str,
-    work,
-    debit_description: str,
-    with_looks: bool = False,
-) -> dict:
-    """One intake for cast asset regens — the ref, plate, and prop handlers
-    differ only in kind, payload key, and work callable."""
-    project_dir, config, _state = project
-    pkey = project_key(user_id, project_id)
-    if kind == "character_ref_regen":
-        from novel_to_comic.stages.s3_cast import require_character_inputs
-        from novel_to_comic.target_artifacts import ArtifactInvalid
-        entity_id, _, state_id = asset_id.partition(":")
-        try:
-            require_character_inputs(config, project_dir, entity_id, state=bool(state_id))
-        except (ValueError, ArtifactInvalid) as exc:
-            raise HTTPException(409, str(exc)) from exc
-
-    # Credit pre-check: each cast regen calls the image model for real and is
-    # debited on success. estimate_credits>0 also makes enqueue_credited_job
-    # run assert_sufficient_credits, blocking zero-balance users up front.
-    asset_estimate = UnifiedCostResolver.estimate_asset_regen_cost(
-        config, project_dir, kind, asset_id
-    )
-    looks = looks_admission(config, project_dir, kind, asset_id) if with_looks and ":" not in asset_id else None
-    if looks is not None and not looks["look_ids"]:
-        looks = None
-
-    from ..job_commands import command
-    job, _created = await enqueue_credited_job(
-        request.app,
-        project_name=pkey,
-        user_id=user_id,
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="cast",
-        kind=kind,
-        label=label,
-        payload={asset_id_key: asset_id, **({"with_looks": looks["look_ids"]} if looks else {})},
-
-        command=command("cast_asset", project_dir, config, kind=kind, asset_id=asset_id,
-                        with_looks=looks is not None),
-        debit_description=debit_description,
-        semaphore=generation_semaphore_for_config(request.app, config),
-        estimate_credits=asset_estimate["estimate_credits"] + (looks["estimate_credits"] if looks else 0),
-        operations=(*cast_asset_operations(config, kind, asset_id), *(looks["operations"] if looks else ())),
-    )
-    return {
-        "status": "queued",
-        "job": generation_job_payload(request.app, job),
-        asset_id_key: asset_id,
-    }
+def _cast_target(
+    asset_type: AssetType, entity_id: str, entity_field: str, state_id: str | None = None
+) -> CastTarget:
+    """The HTTP edge: ids that would escape the project never become a target."""
+    _require_path_safe_id(entity_id, entity_field)
+    if state_id is not None:
+        _require_path_safe_id(state_id, "state_id")
+    return CastTarget(asset_type, entity_id, state_id)
 
 
 @router.get("/asset-regen-estimate")
@@ -292,42 +231,49 @@ async def asset_regen_estimate(
     user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
 ):
     """Return the estimated credit cost to regenerate one cast asset."""
-    regen_kind = ASSET_REGEN_KINDS.get(asset_type)
-    if regen_kind is None:
-        valid = ", ".join(ASSET_REGEN_KINDS)
-        raise HTTPException(400, f"Unknown asset_type: {asset_type}. Valid: {valid}")
+    if asset_type not in ASSET_TYPES:
+        raise HTTPException(
+            400, f"Unknown asset_type: {asset_type}. Valid: {', '.join(ASSET_TYPES)}")
     _require_path_safe_id(asset_id, "asset_id")
-    if state_id is not None:
-        if asset_type == "prop":
-            raise HTTPException(400, "state_id is not supported for prop assets")
-        _require_path_safe_id(state_id, "state_id")
+    if state_id is not None and asset_type == "prop":
+        raise HTTPException(400, "state_id is not supported for prop assets")
+    target = _cast_target(asset_type, asset_id, "asset_id", state_id)
 
     project_dir, config, _state = project
     _require_cast_asset(project_dir, asset_type, asset_id, state_id)
-    resolver_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
-    breakdown = UnifiedCostResolver.estimate_asset_regen_cost(
-        config, project_dir, regen_kind, resolver_asset_id, additional_reference_count=reference_count
-    )
+    quote = quote_cast_regen(
+        config, project_dir, target, reference_count=reference_count, with_looks=True)
     try:
         instruction_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
-            config, breakdown, "cast"
+            config, quote.asset_estimate, "cast"
         )
     except CodexRoutingError as exc:
         instruction_estimate = {"supported": False, "error": str(exc)}
     looks = None
-    if state_id is None and asset_type in {"character", "location"}:
-        admission = looks_admission(config, project_dir, regen_kind, asset_id)
-        if admission["look_ids"]:
-            looks = {"count": len(admission["look_ids"]), "estimate_credits": admission["estimate_credits"]}
+    if quote.looks:
+        looks = {"count": len(quote.looks["look_ids"]), "estimate_credits": quote.looks["estimate_credits"]}
     return {
         "asset_type": asset_type,
         "asset_id": asset_id,
         "state_id": state_id,
         "looks": looks,
         "reference_assets_supported": True,
-        **breakdown,
+        **quote.asset_estimate,
         "instruction_estimate": instruction_estimate,
     }
+
+
+async def _regen(request, project, user_id, project_id, target, **kwargs):
+    project_dir, config, _state = project
+    return await submit_cast_regen(
+        request.app, config, project_dir, user_id, project_id, target, **kwargs)
+
+
+async def _regen_instructed(request, project, user_id, project_id, target, body, **kwargs):
+    project_dir, config, _state = project
+    return await submit_instructed_regen(
+        request.app, config, project_dir, user_id, project_id, target,
+        body.instruction, body.reference_assets, **kwargs)
 
 
 @router.post("/regen-ref", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -340,24 +286,8 @@ async def regen_ref(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s3_cast
-
-    project_dir, config, _state = project
-    _require_path_safe_id(char_id, "char_id")
-    _require_cast_asset(project_dir, "character", char_id)
-    return await _enqueue_cast_asset_regen(
-        request,
-        project_id,
-        user_id,
-        project,
-        kind="character_ref_regen",
-        asset_id_key="char_id",
-        asset_id=char_id,
-        label=asset_regen_label("character", char_id),
-        work=lambda: s3_cast.regenerate_character_ref(config, project_dir, char_id),
-        debit_description=f"Model call: regenerate character ref {char_id}",
-        with_looks=with_looks,
-    )
+    target = _cast_target("character", char_id, "char_id")
+    return await _regen(request, project, user_id, project_id, target, with_looks=with_looks)
 
 
 @router.post("/regen-state-ref", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -370,28 +300,8 @@ async def regen_state_ref(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s3_cast
-
-    project_dir, config, _state = project
-    _require_path_safe_id(char_id, "char_id")
-    _require_path_safe_id(state_id, "state_id")
-    _require_cast_asset(project_dir, "character", char_id, state_id)
-    return await _enqueue_cast_asset_regen(
-        request,
-        project_id,
-        user_id,
-        project,
-        kind="character_ref_regen",
-        asset_id_key="char_id",
-        asset_id=f"{char_id}:{state_id}",
-        label=asset_regen_label("character", char_id, state_id),
-        work=lambda: s3_cast.regenerate_character_state_ref(
-            config, project_dir, char_id, state_id
-        ),
-        debit_description=(
-            f"Model call: regenerate appearance state {char_id}/{state_id}"
-        ),
-    )
+    target = _cast_target("character", char_id, "char_id", state_id)
+    return await _regen(request, project, user_id, project_id, target)
 
 
 @router.post("/regen-plate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -404,24 +314,8 @@ async def regen_plate(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s3_cast
-
-    project_dir, config, _state = project
-    _require_path_safe_id(loc_id, "loc_id")
-    _require_cast_asset(project_dir, "location", loc_id)
-    return await _enqueue_cast_asset_regen(
-        request,
-        project_id,
-        user_id,
-        project,
-        kind="location_plate_regen",
-        asset_id_key="loc_id",
-        asset_id=loc_id,
-        label=asset_regen_label("location", loc_id),
-        work=lambda: s3_cast.regenerate_location_plate(config, project_dir, loc_id),
-        debit_description=f"Model call: regenerate location plate {loc_id}",
-        with_looks=with_looks,
-    )
+    target = _cast_target("location", loc_id, "loc_id")
+    return await _regen(request, project, user_id, project_id, target, with_looks=with_looks)
 
 
 @router.post("/locations/{loc_id}/states/{state_id}/regenerate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -434,26 +328,8 @@ async def regenerate_location_state(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s3_cast
-
-    project_dir, config, _state = project
-    _require_path_safe_id(loc_id, "loc_id")
-    _require_path_safe_id(state_id, "state_id")
-    _require_cast_asset(project_dir, "location", loc_id, state_id)
-    return await _enqueue_cast_asset_regen(
-        request,
-        project_id,
-        user_id,
-        project,
-        kind="location_plate_regen",
-        asset_id_key="loc_id",
-        asset_id=f"{loc_id}:{state_id}",
-        label=asset_regen_label("location", loc_id, state_id),
-        work=lambda: s3_cast.regenerate_location_plate(
-            config, project_dir, loc_id, state_id=state_id
-        ),
-        debit_description=f"Model call: regenerate location state {loc_id}/{state_id}",
-    )
+    target = _cast_target("location", loc_id, "loc_id", state_id)
+    return await _regen(request, project, user_id, project_id, target)
 
 
 @router.post("/regen-prop", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -465,23 +341,8 @@ async def regen_prop(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    from novel_to_comic.stages import s3_cast
-
-    project_dir, config, _state = project
-    _require_path_safe_id(prop_id, "prop_id")
-    _require_cast_asset(project_dir, "prop", prop_id)
-    return await _enqueue_cast_asset_regen(
-        request,
-        project_id,
-        user_id,
-        project,
-        kind="prop_ref_regen",
-        asset_id_key="prop_id",
-        asset_id=prop_id,
-        label=asset_regen_label("prop", prop_id),
-        work=lambda: s3_cast.regenerate_prop_ref(config, project_dir, prop_id),
-        debit_description=f"Model call: regenerate prop ref {prop_id}",
-    )
+    target = _cast_target("prop", prop_id, "prop_id")
+    return await _regen(request, project, user_id, project_id, target)
 
 
 @router.post("/regen-ref-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -493,21 +354,9 @@ async def regen_ref_with_instruction(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, _state = project
-    _require_path_safe_id(body.char_id, "char_id")
-    return await apply_asset_instruction(
-        config=config,
-        project_dir=project_dir,
-        db=get_db(),
-        user_id=user_id,
-        project_id=project_id,
-        asset_type="character",
-        asset_id=body.char_id,
-        instruction=body.instruction,
-        reference_assets=body.reference_assets,
-        app=request.app,
-        with_looks=body.with_looks,
-    )
+    target = _cast_target("character", body.char_id, "char_id")
+    return await _regen_instructed(
+        request, project, user_id, project_id, target, body, with_looks=body.with_looks)
 
 
 @router.post("/regen-plate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -519,21 +368,9 @@ async def regen_plate_with_instruction(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, _state = project
-    _require_path_safe_id(body.loc_id, "loc_id")
-    return await apply_asset_instruction(
-        config=config,
-        project_dir=project_dir,
-        db=get_db(),
-        user_id=user_id,
-        project_id=project_id,
-        asset_type="location",
-        asset_id=body.loc_id,
-        instruction=body.instruction,
-        reference_assets=body.reference_assets,
-        app=request.app,
-        with_looks=body.with_looks,
-    )
+    target = _cast_target("location", body.loc_id, "loc_id")
+    return await _regen_instructed(
+        request, project, user_id, project_id, target, body, with_looks=body.with_looks)
 
 
 @router.post("/regen-prop-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -545,20 +382,8 @@ async def regen_prop_with_instruction(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, _state = project
-    _require_path_safe_id(body.prop_id, "prop_id")
-    return await apply_asset_instruction(
-        config=config,
-        project_dir=project_dir,
-        db=get_db(),
-        user_id=user_id,
-        project_id=project_id,
-        asset_type="prop",
-        asset_id=body.prop_id,
-        instruction=body.instruction,
-        reference_assets=body.reference_assets,
-        app=request.app,
-    )
+    target = _cast_target("prop", body.prop_id, "prop_id")
+    return await _regen_instructed(request, project, user_id, project_id, target, body)
 
 
 @router.post("/characters/{char_id}/states/{state_id}/regenerate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -572,22 +397,8 @@ async def regenerate_character_state_instructed(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, _state = project
-    _require_path_safe_id(char_id, "char_id")
-    _require_path_safe_id(state_id, "state_id")
-    return await apply_asset_instruction(
-        config=config,
-        project_dir=project_dir,
-        db=get_db(),
-        user_id=user_id,
-        project_id=project_id,
-        asset_type="character",
-        asset_id=char_id,
-        state_id=state_id,
-        instruction=body.instruction,
-        reference_assets=body.reference_assets,
-        app=request.app,
-    )
+    target = _cast_target("character", char_id, "char_id", state_id)
+    return await _regen_instructed(request, project, user_id, project_id, target, body)
 
 
 @router.post("/locations/{loc_id}/states/{state_id}/regenerate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
@@ -601,22 +412,8 @@ async def regenerate_location_state_instructed(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, _state = project
-    _require_path_safe_id(loc_id, "loc_id")
-    _require_path_safe_id(state_id, "state_id")
-    return await apply_asset_instruction(
-        config=config,
-        project_dir=project_dir,
-        db=get_db(),
-        user_id=user_id,
-        project_id=project_id,
-        asset_type="location",
-        asset_id=loc_id,
-        state_id=state_id,
-        instruction=body.instruction,
-        reference_assets=body.reference_assets,
-        app=request.app,
-    )
+    target = _cast_target("location", loc_id, "loc_id", state_id)
+    return await _regen_instructed(request, project, user_id, project_id, target, body)
 
 
 def _character_ref_sheet_path(

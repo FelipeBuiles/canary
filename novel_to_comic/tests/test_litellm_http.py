@@ -132,7 +132,10 @@ def test_accepted_wire_result_retains_hold_unless_known_refusal(monkeypatch, fai
     from unittest.mock import AsyncMock, MagicMock
     from novel_to_comic.ai import client
     from novel_to_comic.ai.context import ai_request_context
-    from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
+    from dataclasses import replace
+    from pathlib import Path
+    from types import SimpleNamespace
+    from novel_to_comic.ai import finalisation
     from novel_to_comic.config import Config
     from novel_to_comic.server import credits
 
@@ -140,6 +143,12 @@ def test_accepted_wire_result_retains_hold_unless_known_refusal(monkeypatch, fai
     monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
     wire = _wire(alias="image-gpt-2", route=ImageRoute.GPT_IMAGE_2,
                  provider_key="openai", provider_model="openai/gpt-image-2")
+    wire = replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
+    monkeypatch.setattr(finalisation, "begin_image_call", AsyncMock(return_value=SimpleNamespace(
+        event_id="event", metadata={}, estimated_cost_usd=None,
+    )))
+    monkeypatch.setattr(finalisation, "finalise_image_failure", AsyncMock())
+    monkeypatch.setattr(finalisation, "finalise_image_cancelled", AsyncMock())
     response = httpx.Response(200, content=b"bad" if failure == "json" else b"{}")
     if failure == "shape":
         response = httpx.Response(200, json=[])
@@ -151,7 +160,7 @@ def test_accepted_wire_result_retains_hold_unless_known_refusal(monkeypatch, fai
     async def run():
         with ai_request_context(job_id="job"):
             with pytest.raises((ValueError, asyncio.CancelledError, client.AIRefusalError)):
-                await LitellmHttpProvider().generate_wire(wire=wire, config=Config(), event_id="event", metadata={})
+                await client.generate_wire_image(config=Config(), wire=wire, output_path=Path("unwritten.png"))
     asyncio.run(run())
     assert post.await_count == 1
     assert post.call_args.kwargs["retry_ambiguous"] is False

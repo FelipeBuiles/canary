@@ -11,12 +11,10 @@ from novel_to_comic import image_route_fallback
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.image_models import image_model_profile
-from novel_to_comic.image_route_fallback import classify_runware_image_failure
+from novel_to_comic.image_route_fallback import classify_runware_image_failure, sunburst_route_plan
 from novel_to_comic.model_catalog import models
 from novel_to_comic.models.draw import BookEdition
 from novel_to_comic.page_drawing import (
-    RunwareFirstPageAdapter,
-    SunburstFallbackPageAdapter,
     complete_page_adapter,
     current_page_capability_profile,
     ensure_current_page_edition,
@@ -74,7 +72,7 @@ def test_new_sunburst_work_starts_on_runware_when_enabled(enabled):
     config = Config(draw_model="image-sunburst")
     profile = runware_first_page_capability_profile()
     assert current_page_capability_profile(config) == profile
-    assert isinstance(complete_page_adapter(config), RunwareFirstPageAdapter)
+    assert complete_page_adapter(config).routes == sunburst_route_plan("runware-openai-fal")
     assert page_image_quality(profile.id, profile.provider) == "medium"
     assert (profile.provider, profile.model, profile.max_attempts) == ("runware-openai-fal", "gpt-image-2.5-sunburst", 3)
     asset_profile = image_model_profile("image-sunburst")
@@ -89,10 +87,9 @@ def test_frozen_requests_keep_their_route_whatever_the_switch(tmp_path, monkeypa
     config = Config(draw_model="image-sunburst")
     runware_request = _compiled(tmp_path, runware_first_page_capability_profile()).request
     openai_request = _compiled(tmp_path).request
-    assert isinstance(complete_page_adapter(config, request=runware_request), RunwareFirstPageAdapter)
+    assert complete_page_adapter(config, request=runware_request).routes == sunburst_route_plan("runware-openai-fal")
     monkeypatch.setenv("CANARY_RUNWARE_FIRST_ENABLED", "true")
-    adapter = complete_page_adapter(config, request=openai_request)
-    assert isinstance(adapter, SunburstFallbackPageAdapter) and not isinstance(adapter, RunwareFirstPageAdapter)
+    assert complete_page_adapter(config, request=openai_request).routes == sunburst_route_plan("openai-fal")
 
 
 def test_existing_editions_keep_their_route_whichever_way_the_switch_is_set(monkeypatch):

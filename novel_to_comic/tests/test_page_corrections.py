@@ -46,8 +46,8 @@ from novel_to_comic.models.page import (
     PageContent,
 )
 from novel_to_comic.models.source import SourceDocument, SourceScene, SourceUnit
+from .page_draw_support import ScriptedPageAdapter
 from novel_to_comic.page_drawing import (
-    VertexCompletePageAdapter,
     compile_page_generation_request,
     correct_complete_page,
     correction_credit_estimate,
@@ -193,9 +193,9 @@ def _edition(profile: PageCapabilityProfile | None = None) -> BookEdition:
     return BookEdition(revision=1, id="edition-1", capability_profile=profile or _profile())
 
 
-def _vertex_adapter(transport) -> VertexCompletePageAdapter:
+def _vertex_adapter(transport) -> ScriptedPageAdapter:
     """The validating adapter for this module's FAL-edition fixture profile."""
-    return VertexCompletePageAdapter(transport, _profile())
+    return ScriptedPageAdapter(transport, _profile())
 
 
 def _issue(issue_id: str, **updates: object) -> PageIssue:

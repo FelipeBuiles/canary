@@ -127,11 +127,11 @@ def test_get_styles_discloses_usable_reference_per_suggestion(tmp_path):
     reference.write_bytes(b"reference")
     with (
         patch(
-            "novel_to_comic.server.routers.styles.load_style_direction",
+            "novel_to_comic.stages.s2_style.load_style_direction",
             side_effect=lambda _project_dir, value: {"id": value} if value else None,
         ),
         patch(
-            "novel_to_comic.server.routers.styles.style_direction_image",
+            "novel_to_comic.stages.s2_style.style_direction_image",
             side_effect=lambda _project_dir, direction: reference if direction else None,
         ),
     ):
@@ -181,7 +181,7 @@ def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
     request = _request(tmp_path)
     patches = [
         patch(
-            "novel_to_comic.server.routers.styles._direction_credit_estimates",
+            "novel_to_comic.server.routers.styles.direction_quotes",
             side_effect=RuntimeError("estimate failed") if failure_point == "estimate" else None,
         ),
         patch(
@@ -191,7 +191,7 @@ def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
     ]
     if failure_point == "db":
         patches[0] = patch(
-            "novel_to_comic.server.routers.styles._direction_credit_estimates",
+            "novel_to_comic.server.routers.styles.direction_quotes",
             return_value={"faithful": {"reserved_credits": 2, "estimate_credits": 1}},
         )
     with patches[0], patches[1]:
@@ -280,10 +280,10 @@ def test_style_batch_estimates_structured_text_output_and_story_context(tmp_path
 
 
 def test_generic_style_quote_uses_proof_geometry():
-    from novel_to_comic.server.routers.styles import _style_sample_credit_estimate
+    from novel_to_comic.server.style_proofs import sample_quote
 
-    with patch("novel_to_comic.server.routers.styles.estimate_image_cost", return_value=.03) as estimate:
-        _style_sample_credit_estimate(Config(image_model="image-sunburst"), has_style_reference=True)
+    with patch("novel_to_comic.server.style_proofs.estimate_image_cost", return_value=.03) as estimate:
+        sample_quote(Config(image_model="image-sunburst"), has_style_reference=True)
     assert (estimate.call_args.kwargs["width"], estimate.call_args.kwargs["height"]) == (1024, 1280)
     assert estimate.call_args.kwargs["ref_count"] == 1
 
@@ -386,7 +386,7 @@ def test_style_queue_cancellation_needs_no_hold_or_paid_work(tmp_path, style_led
 def test_queue_admission_leaves_credits_available_until_execution(tmp_path, style_ledger):
     async def scenario():
         request, project = _request(tmp_path), _project(tmp_path,StageStatus.AWAITING_REVIEW)
-        with patch("novel_to_comic.server.routers.styles._style_sample_credit_estimate",
+        with patch("novel_to_comic.server.style_proofs.sample_quote",
                    return_value={"reserved_credits":10,"estimate_credits":8}):
             style_ledger.balance = 10
             await _queue_style_operation(request,project,"samples")
@@ -570,20 +570,18 @@ def test_author_direction_queues_without_restarting_a_running_style_stage(tmp_pa
 
 
 def test_default_and_directed_quotes_price_six_and_five_images(tmp_path):
-    from novel_to_comic.server.routers.styles import (
-        _direction_credit_estimates, _suggest_batch_credit_estimate,
-    )
+    from novel_to_comic.server.style_proofs import direction_quotes, suggest_batch_quote
     from novel_to_comic.stages.s2_style import SAMPLE_COUNT, NEIGHBOR_COUNT
 
     project = _project(tmp_path)
     with (
-        patch("novel_to_comic.server.routers.styles.estimate_style_batch_cost_usd", return_value=.5) as batch,
-        patch("novel_to_comic.server.routers.styles.estimate_style_proof_cost_usd", return_value=.1),
+        patch("novel_to_comic.stages.s2_style.estimate_style_batch_cost_usd", return_value=.5) as batch,
+        patch("novel_to_comic.stages.s2_style.estimate_style_proof_cost_usd", return_value=.1),
     ):
-        _suggest_batch_credit_estimate(project[1], tmp_path)
+        suggest_batch_quote(project[1], tmp_path)
         assert batch.call_args.args[2] == SAMPLE_COUNT == 6
         batch.reset_mock()
-        _direction_credit_estimates(project[1], tmp_path)
+        direction_quotes(project[1], tmp_path)
         assert batch.call_count == 2  # neighbors alone and faithful + neighbors
         assert all(call.args[2] == NEIGHBOR_COUNT == 5 for call in batch.call_args_list)
 

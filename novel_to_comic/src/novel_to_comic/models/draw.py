@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -288,6 +289,24 @@ class CompletePageProviderResult(BaseModel):
     actual_provider_model: str | None = Field(min_length=1)
     usage: UsageRecord
     response_metadata: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCompletePageRequest:
+    """The exact immutable complete-page request handed to a selected adapter."""
+
+    request_sha256: str
+    model: str
+    prompt: str
+    references: tuple[PageReference, ...]
+    reference_bytes: tuple[bytes, ...]
+    edit_source_bytes: bytes | None
+    width: int
+    height: int
+    media_type: str
+    idempotency_key: str
+    estimated_cost_usd: Decimal
+    frozen_request_json: str
 
 
 class PageGenerationProvenance(BaseModel):

@@ -5,6 +5,7 @@ lives in codex_dev; the returned label describes whether API spend is present.
 """
 from __future__ import annotations
 
+from novel_to_comic.cast_target import CastTarget
 from novel_to_comic.codex_dev import Funding, classify_operations
 from novel_to_comic.config import Config
 
@@ -39,15 +40,11 @@ def correction_interpret_operations(config: Config) -> Operations:
     return (("text", config.effective_correction_model()),)
 
 
-def is_canonical_sheet_regen(kind: str, asset_id: str) -> bool:
-    """A character's main sheet or a canonical location plate: redrawing it
-    re-runs the Cast check, which compares both with the selected proof."""
-    return kind in {"character_ref_regen", "location_plate_regen"} and ":" not in asset_id
-
-
-def cast_asset_operations(config: Config, kind: str, asset_id: str) -> Operations:
+def cast_asset_operations(config: Config, target: CastTarget) -> Operations:
+    """A canonical sheet or plate redraw re-runs the Cast check, which compares
+    both with the selected proof."""
     image = image_operations(config)
-    return (*image, *visual_review_operations(config)) if is_canonical_sheet_regen(kind, asset_id) else image
+    return (*image, *visual_review_operations(config)) if target.is_canonical else image
 
 
 def draw_operations(config: Config, *, checks: bool = True) -> Operations:

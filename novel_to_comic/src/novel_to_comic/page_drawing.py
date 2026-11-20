@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import json
 import logging
 import re
-import time
 from datetime import UTC, datetime
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from math import gcd
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from novel_to_comic.ai.image_submission import submit_page_image
 from novel_to_comic.config import (
     COMPLETE_PAGE_BASE_COST_USD,
     COMPLETE_PAGE_GATEWAY_MODEL,
@@ -51,12 +49,14 @@ from novel_to_comic.image_models import (
     runware_first_enabled,
 )
 from novel_to_comic.image_route_fallback import (
-    FAL_SUNBURST_GATEWAY_MODEL,
-    OPENAI_SUNBURST_GATEWAY_MODEL,
     RUNWARE_FIRST_PROVIDER,
+    SUNBURST_FAL_ROUTE,
     SUNBURST_FALLBACK_PROVIDER,
-    run_openai_first,
-    run_runware_first,
+    SUNBURST_OPENAI_ROUTE,
+    GatewayRoute,
+    RoutePlan,
+    SingleRoute,
+    sunburst_route_plan,
 )
 from novel_to_comic.models.draw import (
     BookEdition,
@@ -71,6 +71,7 @@ from novel_to_comic.models.draw import (
     PageRenderRevision,
     check_render_lineage,
     PageRenderCorrection,
+    PreparedCompletePageRequest,
     RenderAnalysis,
     RetryProvenance,
 )
@@ -109,31 +110,6 @@ class CompiledPageGeneration:
     request: FrozenPageGenerationRequest
     reference_bytes: tuple[bytes, ...]
     edit_source_bytes: bytes | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedCompletePageRequest:
-    """The exact immutable complete-page request handed to a selected adapter."""
-
-    request_sha256: str
-    model: str
-    prompt: str
-    references: tuple[PageReference, ...]
-    reference_bytes: tuple[bytes, ...]
-    edit_source_bytes: bytes | None
-    width: int
-    height: int
-    media_type: str
-    idempotency_key: str
-    estimated_cost_usd: Decimal
-    frozen_request_json: str
-
-
-class CompletePageTransport(Protocol):
-    async def generate(
-        self,
-        request: PreparedCompletePageRequest,
-    ) -> CompletePageProviderResult: ...
 
 
 class CompletePageAdapter(Protocol):
@@ -516,20 +492,11 @@ def complete_page_adapter(
     if request is not None:
         profile = request_page_profile(config, request)
     profile = profile or current_page_capability_profile(config)
-    if profile.provider == RUNWARE_FIRST_PROVIDER:
-        return RunwareFirstPageAdapter(config, profile)
-    if profile.provider == SUNBURST_FALLBACK_PROVIDER:
-        return SunburstFallbackPageAdapter(config, profile)
-    if profile.provider in {"fal-queue", "openai"}:
-        return OpenAICompletePageAdapter(config, profile)
-    if profile.provider == "openrouter":
-        return OpenRouterCompletePageAdapter(config, profile)
     if page_profile_uses_native_dimensions(profile):
         from novel_to_comic.codex_complete_page import CodexCompletePageAdapter
 
         return CodexCompletePageAdapter(config)
-    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config, profile), profile)
-
+    return GatewayPageAdapter(config, profile)
 
 
 def retained_baked_profile(profile: PageCapabilityProfile) -> bool:
@@ -1468,425 +1435,108 @@ def _validate_prepared_page(
         raise ValueError("Prepared complete-page request differs from its frozen semantic request")
 
 
-class VertexCompletePageAdapter:
-    """Validate a frozen complete-page request and its transport result."""
+def page_route_plan(config: Config, profile: PageCapabilityProfile) -> RoutePlan:
+    """The gateway routes a page profile's identity froze."""
+    def require(base: PageCapabilityProfile, message: str) -> None:
+        if profile not in (base, _integrated_page_profile(base)):
+            raise ValueError(message)
 
-    def __init__(self, transport: CompletePageTransport, profile: PageCapabilityProfile | None = None) -> None:
-        self._transport = transport
-        self._profile = profile or production_page_capability_profile()
+    plan = sunburst_route_plan(profile.provider)
+    if plan is not None:
+        require(
+            runware_first_page_capability_profile() if profile.provider == RUNWARE_FIRST_PROVIDER
+            else sunburst_fallback_page_capability_profile(),
+            "Unsupported Sunburst fallback page profile",
+        )
+        return plan
+    if profile.provider == "fal-queue":
+        require(fal_sunburst_page_capability_profile(), "Unsupported complete-page profile")
+        return SingleRoute(GatewayRoute("fal-queue", "image-sunburst"))
+    if profile.provider == "openai":
+        require(
+            openai_page_capability_profile(profile.model, quality=page_image_quality(profile.id, profile.provider)),
+            "Unsupported complete-page profile",
+        )
+        return SingleRoute(GatewayRoute("openai", OPENAI_PAGE_GATEWAY_MODELS[profile.model]))
+    if profile.provider == "openrouter":
+        require(muse_page_capability_profile(), "Unsupported OpenRouter complete-page profile")
+        # Pinned as found: a Muse page is encoded and recorded under the
+        # configured Draw profile's provider, not under "openrouter".
+        return SingleRoute(GatewayRoute(current_page_capability_profile(config).provider, "image-muse"))
+    return SingleRoute(GatewayRoute(
+        profile.provider,
+        GATEWAY_IMAGE_NANO_BANANA_21 if profile.model == "gemini-nano-banana-2.1" else COMPLETE_PAGE_GATEWAY_MODEL,
+    ))
+
+
+class GatewayPageAdapter:
+    """Every gateway-drawn complete-page profile, on its own routes or on ``routes``."""
+
+    def __init__(self, config: Config, profile: PageCapabilityProfile, *, routes: RoutePlan | None = None) -> None:
+        self._config = config
+        self._profile = profile
+        self._vertex = routes is None and profile.provider == COMPLETE_PAGE_PROVIDER
+        self.routes = routes or page_route_plan(config, profile)
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
-        request = compiled.request
-        if request.provider != self._profile.provider or request.model != self._profile.model:
-            raise ValueError("complete-page request is not bound to the adapter profile")
+        if self._vertex:
+            require_bound_page_request(compiled, self._profile)
         return _prepare_complete_page(compiled, self._profile)
 
-    async def generate(
-        self,
-        prepared: PreparedCompletePageRequest,
-    ) -> CompletePageProviderResult:
+    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
         _validate_prepared_page(prepared, self._profile)
-        result = await self._transport.generate(prepared)
-        actual_model = result.actual_provider_model
-        for prefix in ("vertex_ai/", "vertex-multimodal/"):
-            if actual_model is not None and actual_model.startswith(prefix):
-                actual_model = actual_model.removeprefix(prefix)
-                break
-        mismatches: list[str] = []
-        if result.artifact_kind != "complete_page":
-            mismatches.append(
-                f"artifact_kind expected=complete_page actual={result.artifact_kind}"
-            )
-        if result.media_type != prepared.media_type:
-            mismatches.append(
-                f"media_type expected={prepared.media_type} actual={result.media_type}"
-            )
-        if (result.width, result.height) != (prepared.width, prepared.height):
-            mismatches.append(
-                "dimensions "
-                f"expected={prepared.width}x{prepared.height} "
-                f"actual={result.width}x{result.height}"
-            )
-        if actual_model != prepared.model:
-            mismatches.append(
-                f"model expected={prepared.model} actual={result.actual_provider_model}"
-            )
-        if mismatches:
-            raise ValueError(
-                "provider result does not satisfy the fixed complete-page profile: "
-                + "; ".join(mismatches)
-            )
+        result = await submit_page_image(
+            prepared, routes=self.routes,
+            quality=page_image_quality(self._profile.id, self._profile.provider), config=self._config,
+        )
+        if self._vertex:
+            # After settlement: a mismatch here stays a recorded, paid success.
+            check_vertex_page_result(result, prepared)
         return result
 
 
-class GoogleVertexCompletePageTransport:
-    """Gateway transport to the isolated native Vertex multimodal handler."""
+def require_bound_page_request(compiled: CompiledPageGeneration, profile: PageCapabilityProfile) -> None:
+    request = compiled.request
+    if request.provider != profile.provider or request.model != profile.model:
+        raise ValueError("complete-page request is not bound to the adapter profile")
 
-    def __init__(self, config: Config, profile: PageCapabilityProfile | None = None) -> None:
-        self._config = config
-        self._profile = profile or current_page_capability_profile(config)
-        self._gateway_model = (GATEWAY_IMAGE_NANO_BANANA_21 if self._profile.model == "gemini-nano-banana-2.1"
-                               else COMPLETE_PAGE_GATEWAY_MODEL)
-        # The provider and upstream model this transport submits to. A
-        # single-route profile's route is the profile itself.
-        self._route_provider = self._profile.provider
-        self._provider_model: str | None = None
 
-    async def generate(
-        self,
-        request: PreparedCompletePageRequest,
-    ) -> CompletePageProviderResult:
-        from PIL import Image
-        from novel_to_comic.ai import client as ai_client
-        from novel_to_comic.ai.finalisation import (
-            begin_image_call,
-            finalise_image_cancelled,
-            finalise_image_failure,
-            with_request_estimate,
+def check_vertex_page_result(result: CompletePageProviderResult, prepared: PreparedCompletePageRequest) -> None:
+    actual_model = result.actual_provider_model
+    for prefix in ("vertex_ai/", "vertex-multimodal/"):
+        if actual_model is not None and actual_model.startswith(prefix):
+            actual_model = actual_model.removeprefix(prefix)
+            break
+    mismatches: list[str] = []
+    if result.artifact_kind != "complete_page":
+        mismatches.append(f"artifact_kind expected=complete_page actual={result.artifact_kind}")
+    if result.media_type != prepared.media_type:
+        mismatches.append(f"media_type expected={prepared.media_type} actual={result.media_type}")
+    if (result.width, result.height) != (prepared.width, prepared.height):
+        mismatches.append(
+            "dimensions "
+            f"expected={prepared.width}x{prepared.height} "
+            f"actual={result.width}x{result.height}"
         )
-
-        _validate_prepared_page(request, self._profile)
-        files = []
-        ref_reads: list[tuple[Path, bytes | None]] = []
-        if request.edit_source_bytes is not None:
-            files.append(
-                (
-                    "image",
-                    (
-                        "complete-page-edit-source.png",
-                        request.edit_source_bytes,
-                        "image/png",
-                    ),
-                )
-            )
-            ref_reads.append(
-                (Path("complete-page-edit-source.png"), request.edit_source_bytes)
-            )
-        files.extend(
-            [
-                (
-                    "image",
-                    (
-                        f"complete-page-ref-{reference.order}",
-                        data,
-                        reference.media_type,
-                    ),
-                )
-                for reference, data in zip(
-                    request.references,
-                    request.reference_bytes,
-                    strict=True,
-                )
-            ]
-        )
-        ref_reads.extend(
-            (Path(f"complete-page-ref-{reference.order}-{reference.id}"), data)
-            for reference, data in zip(
-                request.references,
-                request.reference_bytes,
-                strict=True,
-            )
-        )
-        endpoint = "/v1/images/edits" if files else "/v1/images/generations"
-        request_data = {
-            # Route through the configured gateway alias while preserving
-            # the actual provider/model in the frozen edition manifest.
-            "model": self._gateway_model,
-            "prompt": request.prompt,
-            "response_format": "b64_json",
-            "canary_complete_page_request": request.frozen_request_json,
-            "canary_requested_width": str(request.width),
-            "canary_requested_height": str(request.height),
-            "canary_requested_aspect": str(request.width / request.height),
-            "canary_idempotency_key": request.idempotency_key,
-        }
-        if self._route_provider in {"openai", "openrouter", "fal-queue", "runware"}:
-            # GPT Image 2.5 rejects input_fidelity, including on image edits.
-            # Reference images are still sent unchanged in the multipart files.
-            request_data = {
-                "model": self._gateway_model, "prompt": request.prompt,
-                "size": f"{request.width}x{request.height}", "n": 1,
-            }
-            quality = page_image_quality(self._profile.id, self._profile.provider)
-            if self._route_provider in {"openai", "fal-queue", "runware"}:
-                # Runware-only models (MiniMax H3) have no quality tier.
-                quality_controls = [] if quality is None else [["quality", quality]]
-                request_data.update({"output_format": "png", **({} if quality is None else {"quality": quality})})
-                # Both routes run through custom gateway handlers, which lose
-                # standard Images fields. Preserve dimensions and controls
-                # through the manifest those handlers consume.
-                request_data["canary_wire_request"] = json.dumps({
-                    "width": request.width,
-                    "height": request.height,
-                    "controls": [
-                        *quality_controls,
-                        ["output_format", "png"],
-                        ["n", 1],
-                    ],
-                })
-            else:
-                # LiteLLM 1.83.14 drops named size on custom image edits but
-                # forwards aspect_ratio through optional_params to OpenRouter.
-                divisor = gcd(request.width, request.height)
-                request_data["aspect_ratio"] = f"{request.width // divisor}:{request.height // divisor}"
-                # Canary renders public-domain literature whose canonical
-                # content can include distress (e.g. The Gift of the Magi).
-                # Mirror the Vertex safety-off precedent: request Muse's
-                # documented relaxed moderation tier instead of retrying
-                # content-management-policy rejections that no other control
-                # can clear.
-                request_data["moderation"] = "low"
-        feature = "complete_page_draw"
-        ctx = await begin_image_call(
-            config=self._config,
-            model=self._gateway_model,
-            feature=feature,
-            prompt=request.prompt,
-            params={
-                "model": self._gateway_model,
-                "provider_model": request.model,
-                "size": f"{request.width}x{request.height}",
-                "quality": page_image_quality(self._profile.id, self._profile.provider) or self._config.image_quality,
-                "artifact_kind": "complete_page",
-            },
-            ref_reads=ref_reads,
-        )
-        headers = ai_client._headers(self._config, ctx.event_id)
-        url = f"{ai_client._base_url(self._config)}{endpoint}"
-        response = None
-        payload = None
-
-        def retain_incomplete_response() -> None:
-            # An accepted response is not proof of a settled usable result.
-            # Preserve known refusal semantics; retain every other incomplete
-            # successful response for explicit reconciliation.
-            try:
-                refused = isinstance(payload, dict) and ai_client._is_refusal(payload)
-            except (AttributeError, TypeError, IndexError):
-                refused = False  # Malformed refusal fields are not known refusal.
-            if response is not None and response.status_code < 400 and not refused:
-                from novel_to_comic.server.credits import retain_ambiguous_job
-                retain_ambiguous_job(ai_client.current_ai_request_context().job_id)
-
-        try:
-            from novel_to_comic.ai.image_previews import post_image_request
-
-            if files:
-                response = await post_image_request(
-                    url,
-                    headers=headers,
-                    data=request_data,
-                    files=files,
-                    target=f"page:{json.loads(request.frozen_request_json)['page_number']}",
-                )
-            else:
-                response = await post_image_request(
-                    url,
-                    headers=headers,
-                    json=request_data,
-                    target=f"page:{json.loads(request.frozen_request_json)['page_number']}",
-                )
-            if response.status_code >= 400:
-                raise ai_client._gateway_http_error(
-                    response,
-                    feature=feature,
-                    model=request.model,
-                    endpoint=endpoint,
-                )
-            payload = response.json()
-            image_bytes = await ai_client._decode_image_response(payload)
-            with Image.open(io.BytesIO(image_bytes)) as image:
-                source_format = image.format
-                if source_format not in {"PNG", "JPEG", "WEBP"}:
-                    raise ValueError(
-                        "Complete-page output must be PNG, JPEG, or WebP"
-                    )
-                width, height = image.size
-                # Muse does not advertise a supported output-format control,
-                # and OpenRouter may therefore return a valid JPEG or WebP.
-                # The frozen edition still promises a PNG artifact, so
-                # normalize successful raster output locally rather than
-                # rejecting a completed, chargeable image submission.
-                if source_format != "PNG":
-                    image.load()
-                    normalized = io.BytesIO()
-                    image.save(normalized, format="PNG")
-                    image_bytes = normalized.getvalue()
-            if (width, height) != (request.width, request.height):
-                raise ValueError(
-                    "Complete-page output dimensions do not match frozen profile: "
-                    f"actual={width}x{height} expected={request.width}x{request.height}"
-                )
-            latency_ms = int((time.perf_counter() - ctx.started) * 1000)
-            usage = ai_client._extract_usage(
-                payload,
-                ctx.event_id,
-                self._gateway_model,
-                "image",
-                response.headers,
-            )
-            usage = with_request_estimate(usage, ctx)
-            response_model = str(payload.get("model") or "")
-            route_model = self._provider_model or request.model
-            route_prefix = "vertex_ai" if self._route_provider == "vertex-multimodal" else self._route_provider
-            actual_provider_model = (
-                f"{route_prefix}/{route_model}"
-                if response_model == self._gateway_model
-                else response_model or f"{route_prefix}/{route_model}"
-            )
-            if self._route_provider == "openai" and actual_provider_model.removeprefix("openai/") not in {
-                route_model, route_model + "-2026-09-08",
-            }:
-                raise ValueError("OpenAI response model does not match frozen page profile")
-            if self._route_provider == "fal-queue":
-                observed = actual_provider_model.removeprefix("fal-queue/")
-                if observed not in {
-                    route_model,
-                    route_model + "/text-to-image",
-                    route_model + "/edit",
-                }:
-                    raise ValueError("FAL response model does not match frozen page profile")
-            if self._route_provider == "runware" and actual_provider_model.removeprefix("runware/") != route_model:
-                raise ValueError("Runware response model does not match frozen page profile")
-            if self._route_provider == "openrouter" and actual_provider_model.removeprefix("openrouter/") != route_model:
-                raise ValueError("OpenRouter response model does not match frozen page profile")
-            usage = usage.model_copy(
-                update={
-                    "model": self._gateway_model,
-                    "provider_model": actual_provider_model,
-                    "provider": self._route_provider,
-                }
-            )
-            response_data = {
-                key: value for key, value in payload.items() if key != "data"
-            }
-            response_data["model"] = actual_provider_model
-        except asyncio.CancelledError as exc:
-            retain_incomplete_response()
-            await finalise_image_cancelled(
-                ctx=ctx,
-                config=self._config,
-                model=self._gateway_model,
-                feature=feature,
-                error=exc,
-                error_response=response,
-            )
-            raise
-        except BaseException as exc:
-            retain_incomplete_response()
-            # Lets a fallback coordinator name the usage event it absorbs;
-            # per exception, so parallel pages sharing an adapter never mix.
-            if not hasattr(exc, "canary_usage_event_id"):
-                try:
-                    exc.canary_usage_event_id = ctx.event_id  # type: ignore[attr-defined]
-                except AttributeError:
-                    pass
-            await finalise_image_failure(
-                ctx=ctx,
-                config=self._config,
-                model=self._gateway_model,
-                feature=feature,
-                error=exc,
-                error_response=response,
-            )
-            raise
-        # The success write runs outside the cancellation catcher: it is
-        # shielded, so a cancel landing mid-write waits it out, then
-        # propagates without a second terminal write overwriting success.
-        # Only real errors route to failure here; CancelledError propagates.
-        try:
-            await ai_client._finalize_event_shielded(
-                event_id=ctx.event_id,
-                status="succeeded",
-                feature=feature,
-                model_alias=self._gateway_model,
-                latency_ms=latency_ms,
-                usage=usage,
-                response_data=response_data,
-                config=self._config,
-                operation=ctx.operation,
-                metadata=ctx.metadata,
-                estimated_cost_usd=ctx.estimated_cost_usd,
-                expected_cost_usd=ctx.settlement_estimate_usd,
-
-
-                started_at=ctx.started_at,
-            )
-        except Exception as exc:
-            await finalise_image_failure(
-                ctx=ctx,
-                config=self._config,
-                model=self._gateway_model,
-                feature=feature,
-                error=exc,
-                error_response=response,
-            )
-            raise
-        return CompletePageProviderResult(
-            artifact_kind="complete_page",
-            image_bytes=image_bytes,
-            media_type="image/png",
-            width=width,
-            height=height,
-            latency_ms=latency_ms,
-            provider_request_id=payload.get("provider_request_id") or payload.get("id"),
-            actual_provider_model=actual_provider_model,
-            usage=usage,
+    if actual_model != prepared.model:
+        mismatches.append(f"model expected={prepared.model} actual={result.actual_provider_model}")
+    if mismatches:
+        raise ValueError(
+            "provider result does not satisfy the fixed complete-page profile: " + "; ".join(mismatches)
         )
 
 
-class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
-    """Public Image API through the gateway; one accounted submission per page."""
-
-    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        super().__init__(config, profile)
-        base = (fal_sunburst_page_capability_profile()
-                if profile.provider == "fal-queue"
-                else openai_page_capability_profile(
-                    profile.model, quality=page_image_quality(profile.id, profile.provider),
-                ))
-        if profile not in (base, _integrated_page_profile(base)):
-            raise ValueError("Unsupported complete-page profile")
-        self._gateway_model = (
-            "image-sunburst" if profile.provider == "fal-queue"
-            else OPENAI_PAGE_GATEWAY_MODELS[profile.model]
-        )
-
-    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
-        return _prepare_complete_page(compiled, self._profile)
-
-
-
-
-class _PageRouteTransport(GoogleVertexCompletePageTransport):
-    """One route of a multi-route profile: the profile's frozen request, sent
-    to a specific provider deployment."""
-
-    def __init__(self, config: Config, profile: PageCapabilityProfile, *,
-                 provider: str, gateway_model: str, provider_model: str) -> None:
-        super().__init__(config, profile)
-        self._route_provider = provider
-        self._gateway_model = gateway_model
-        self._provider_model = provider_model
-
-
-def sunburst_openai_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+def sunburst_openai_page_transport(config: Config, profile: PageCapabilityProfile) -> GatewayPageAdapter:
     """The OpenAI Sunburst route alone, with no fallback."""
-    return _PageRouteTransport(
-        config, profile, provider="openai",
-        gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
-    )
+    return GatewayPageAdapter(config, profile, routes=SingleRoute(SUNBURST_OPENAI_ROUTE))
 
 
-def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) -> GatewayPageAdapter:
     """The FAL Sunburst route alone, with no fallback."""
-    return _PageRouteTransport(
-        config, profile, provider="fal-queue",
-        gateway_model=FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
-    )
+    return GatewayPageAdapter(config, profile, routes=SingleRoute(SUNBURST_FAL_ROUTE))
 
 
-def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> GatewayPageAdapter:
     """The profile's model through Runware alone, with no fallback.
 
     The GPT Image 2.6 and MiniMax H3 routes serve Labs comparisons only."""
@@ -1900,9 +1550,9 @@ def runware_page_transport(config: Config, profile: PageCapabilityProfile) -> Co
     }
     if profile.model not in gateway_models:
         raise ValueError(f"Runware has no route for {profile.model}")
-    return _PageRouteTransport(
-        config, profile, provider="runware",
-        gateway_model=gateway_models[profile.model], provider_model=profile.model,
+    return GatewayPageAdapter(
+        config, profile,
+        routes=SingleRoute(GatewayRoute("runware", gateway_models[profile.model], profile.model)),
     )
 
 
@@ -1913,95 +1563,6 @@ def prepare_frozen_page_request(
 ) -> PreparedCompletePageRequest:
     """Prepare an already-frozen initial-generation request for submission."""
     return _prepare_complete_page(CompiledPageGeneration(request, reference_bytes, None), profile)
-
-
-def _with_route(result: CompletePageProviderResult, route: str, fallback: dict | None = None) -> CompletePageProviderResult:
-    metadata: dict[str, object] = {**(result.response_metadata or {}), "route": route}
-    if fallback is not None:
-        metadata["fallback"] = fallback
-    return result.model_copy(update={"response_metadata": metadata})
-
-
-class SunburstFallbackPageAdapter:
-    """OpenAI Sunburst first; one FAL attempt when OpenAI fails for availability.
-
-    An OpenAI attempt with an unknown outcome still falls back once: its image
-    can never arrive later, so no duplicate page can be published. Canary
-    absorbs that attempt's possible charge — its call guarantee is released and
-    the job hold is not retained for it. The user's credits settle only the
-    attempt that produced the page. Everything else keeps today's behaviour.
-    """
-
-    _base = staticmethod(sunburst_fallback_page_capability_profile)
-
-    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        base = self._base()
-        if profile not in (base, _integrated_page_profile(base)):
-            raise ValueError("Unsupported Sunburst fallback page profile")
-        self._config = config
-        self._profile = profile
-        self._primary = sunburst_openai_page_transport(config, profile)
-        self._backup = sunburst_fal_page_transport(config, profile)
-
-    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
-        return _prepare_complete_page(compiled, self._profile)
-
-    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
-        _validate_prepared_page(prepared, self._profile)
-        return _with_route(*await self._openai_first(prepared))
-
-    def _openai_first(self, prepared: PreparedCompletePageRequest):
-        return run_openai_first(
-            primary=lambda: self._primary.generate(prepared),
-            backup=lambda: self._backup.generate(prepared),
-            surface="draw", request_key=prepared.request_sha256,
-            estimate_openai_usd=lambda: self._openai_attempt_estimate_usd(prepared),
-        )
-
-    def _openai_attempt_estimate_usd(self, prepared: PreparedCompletePageRequest) -> float:
-        from novel_to_comic.usage import estimate_image_cost
-
-        return estimate_image_cost(
-            OPENAI_SUNBURST_GATEWAY_MODEL, 1,
-            quality=page_image_quality(self._profile.id, self._profile.provider),
-            ref_count=len(prepared.references) + int(prepared.edit_source_bytes is not None),
-            prompt_text=prepared.prompt, width=prepared.width, height=prepared.height, basis="expected",
-        )
-
-
-class RunwareFirstPageAdapter(SunburstFallbackPageAdapter):
-    """Runware Sunburst first; the OpenAI-first chain only when Runware
-    definitely did not run the page (``run_runware_first``). Runware sends no
-    partial previews."""
-
-    _base = staticmethod(runware_first_page_capability_profile)
-
-    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        super().__init__(config, profile)
-        self._runware = runware_page_transport(config, profile)
-
-    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
-        _validate_prepared_page(prepared, self._profile)
-        return _with_route(*await run_runware_first(
-            primary=lambda: self._runware.generate(prepared),
-            backup=lambda: self._openai_first(prepared),
-            surface="draw", request_key=prepared.request_sha256,
-        ))
-
-
-class OpenRouterCompletePageAdapter(GoogleVertexCompletePageTransport):
-    """Muse Image via the gateway's OpenRouter-compatible Images API."""
-
-    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        super().__init__(config)
-        base = muse_page_capability_profile()
-        if profile not in (base, _integrated_page_profile(base)):
-            raise ValueError("Unsupported OpenRouter complete-page profile")
-        self._profile = profile
-        self._gateway_model = "image-muse"
-
-    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
-        return _prepare_complete_page(compiled, self._profile)
 
 
 async def draw_complete_page(

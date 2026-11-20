@@ -4,14 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal
 
 import httpx
-
-from novel_to_comic.config import Config
-
-if TYPE_CHECKING:
-    from novel_to_comic.provider_wire import ProviderWireRequest
 
 RefRole = Literal["subject", "style", "continuity", "location_plate", "prop"]
 
@@ -56,18 +51,3 @@ class ProviderRawResult:
     # Observed response identity only. Never substitutes for configured route
     # identity carried by the compiled/wire request.
     actual_provider_model: str | None = None
-
-
-class ImageProvider(Protocol):
-    name: str
-
-    def wire_request_params(self, wire: ProviderWireRequest) -> dict[str, Any]: ...
-
-    async def generate_wire(
-        self,
-        *,
-        wire: ProviderWireRequest,
-        config: Config,
-        event_id: str,
-        metadata: dict[str, Any],
-    ) -> ProviderRawResult: ...

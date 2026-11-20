@@ -185,7 +185,7 @@ def test_wire_client_dispatches_by_frozen_provider_key(monkeypatch, tmp_path):
     wire = SimpleNamespace(
         schema_version=provider_wire.PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-custom", configured_provider_model="custom-image",
-        provider_key="custom-wire", execution_fingerprint="frozen",
+        provider_key="codex-dev", execution_fingerprint="frozen",
         recompute_execution_fingerprint=lambda: "frozen",
         references=(), prompt_parts=("draw",),
     )
@@ -200,8 +200,8 @@ def test_wire_client_dispatches_by_frozen_provider_key(monkeypatch, tmp_path):
             seen.append((wire, event_id, metadata))
             return raw
 
-    def pick(alias, config, *, provider_key):
-        assert (alias, provider_key) == ("image-custom", "custom-wire")
+    def pick(alias, config):
+        assert alias == "image-custom"
         return Provider()
     async def begin(**kwargs):
         assert kwargs["params"] == {"custom_control": "preserved"}
@@ -211,7 +211,7 @@ def test_wire_client_dispatches_by_frozen_provider_key(monkeypatch, tmp_path):
     async def success(**kwargs):
         assert kwargs["raw"] is raw
         return expected
-    monkeypatch.setattr(selector, "pick", pick)
+    monkeypatch.setattr(selector, "codex_provider", pick)
     monkeypatch.setattr(provider_wire, "materialize_wire_references", lambda wire: ())
     monkeypatch.setattr(client, "begin_image_call", begin)
     monkeypatch.setattr(client, "finalise_image_success", success)
@@ -247,7 +247,7 @@ def test_wire_output_write_failure_finalizes_once_with_generated_usage(monkeypat
     def fail_write(*args):
         raise OSError("output disk is full")
 
-    monkeypatch.setattr(selector, "pick", lambda *args, **kwargs: Provider())
+    monkeypatch.setattr(selector, "codex_provider", lambda *args, **kwargs: Provider())
     monkeypatch.setattr(provider_wire, "materialize_wire_references", lambda wire: ())
     monkeypatch.setattr(finalisation, "_write_image_outputs", fail_write)
     with pytest.raises(OSError, match="output disk is full"):

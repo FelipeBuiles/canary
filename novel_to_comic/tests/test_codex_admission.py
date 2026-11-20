@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from novel_to_comic import codex_dev
+from novel_to_comic.cast_target import CastTarget
 from novel_to_comic.config import Config
 from novel_to_comic.server import credited_job, credits
 from tests.queue_fixtures import enqueue_test_operation
@@ -131,7 +132,7 @@ def test_subscription_quotes_bypass_tariffs_and_minimums(tmp_path, monkeypatch, 
     select_routes(images=(config.effective_image_model(),), text=(config.effective_prompt_model(),))
     monkeypatch.setattr(credits, "estimate_image_cost", lambda *a, **k: pytest.fail("API tariff used"))
     monkeypatch.setattr(credits, "estimate_text_cost", lambda *a, **k: pytest.fail("API tariff used"))
-    image = credits.UnifiedCostResolver.estimate_asset_regen_cost(config, tmp_path, "prop_ref_regen", "prop")
+    image = credits.UnifiedCostResolver.estimate_asset_regen_cost(config, tmp_path, CastTarget("prop", "prop"))
     instructed = credits.UnifiedCostResolver.estimate_instructed_regen_cost(config, image, "cast")
     for estimate in (image, instructed):
         assert estimate["funding"] == "codex_subscription"
@@ -227,7 +228,7 @@ def test_instructed_cast_mixed_estimate_excludes_codex_portion(select_routes, tm
     config = Config()
     select_routes(text=(config.effective_prompt_model(),) if codex_text else (),
                   images=() if codex_text else (config.effective_image_model(),))
-    image = credits.UnifiedCostResolver.estimate_asset_regen_cost(config, tmp_path, "prop_ref_regen", "prop")
+    image = credits.UnifiedCostResolver.estimate_asset_regen_cost(config, tmp_path, CastTarget("prop", "prop"))
     combined = credits.UnifiedCostResolver.estimate_instructed_regen_cost(config, image, "cast")
     assert combined["funding"] == "api"
     if codex_text:

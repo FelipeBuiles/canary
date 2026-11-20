@@ -26,9 +26,9 @@ from novel_to_comic.models.page import (
     ApprovedVisualReference,
     ApprovedVisualReferenceInventory,
 )
+from .page_draw_support import ScriptedPageAdapter
 from novel_to_comic.page_drawing import (
     ApprovedReferenceFile,
-    VertexCompletePageAdapter,
     compile_page_generation_request,
     correct_complete_page,
     fal_sunburst_page_capability_profile,
@@ -639,7 +639,7 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
         correct_complete_page(
             compiled,
             issue=issue,
-            adapter=VertexCompletePageAdapter(_Transport(), _profile()),
+            adapter=ScriptedPageAdapter(_Transport(), _profile()),
             artifacts=artifacts,
             page=_page(),
             request_revision=2,

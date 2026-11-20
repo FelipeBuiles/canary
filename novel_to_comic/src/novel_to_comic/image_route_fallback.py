@@ -25,6 +25,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Literal, TypeVar
 
 from novel_to_comic.image_models import (
@@ -49,6 +50,53 @@ RUNWARE_SUNBURST_GATEWAY_MODEL = GATEWAY_IMAGE_SUNBURST_RUNWARE
 
 Surface = Literal["draw", "asset"]
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayRoute:
+    """One gateway deployment of an image model."""
+
+    provider: str
+    gateway_model: str
+    #: The upstream model id, when it differs from the frozen request's model.
+    provider_model: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SingleRoute:
+    """Exactly one submission, with no fallback."""
+
+    route: GatewayRoute
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIFirst:
+    openai: GatewayRoute
+    fal: GatewayRoute
+
+
+@dataclass(frozen=True, slots=True)
+class _RunwareFirst:
+    runware: GatewayRoute
+    then: _OpenAIFirst
+
+
+RoutePlan = SingleRoute | _OpenAIFirst | _RunwareFirst
+
+SUNBURST_OPENAI_ROUTE = GatewayRoute("openai", OPENAI_SUNBURST_GATEWAY_MODEL, "gpt-image-2.5-sunburst")
+SUNBURST_FAL_ROUTE = GatewayRoute("fal-queue", FAL_SUNBURST_GATEWAY_MODEL, "openai/gpt-image-2.5/sunburst")
+SUNBURST_RUNWARE_ROUTE = GatewayRoute("runware", RUNWARE_SUNBURST_GATEWAY_MODEL, "gpt-image-2.5-sunburst")
+_OPENAI_FIRST_PLAN = _OpenAIFirst(SUNBURST_OPENAI_ROUTE, SUNBURST_FAL_ROUTE)
+
+
+def sunburst_route_plan(provider_key: str) -> RoutePlan | None:
+    """The route order a multi-route Sunburst identity froze, or None for a
+    single-route identity. The only source of multi-route plans."""
+    if provider_key == SUNBURST_FALLBACK_PROVIDER:
+        return _OPENAI_FIRST_PLAN
+    if provider_key == RUNWARE_FIRST_PROVIDER:
+        return _RunwareFirst(SUNBURST_RUNWARE_ROUTE, _OPENAI_FIRST_PLAN)
+    return None
 
 # The streaming OpenAI gateway handler tags failures with the phase they
 # happened in; the proxy wraps them in a generic HTTP 500, keeping the message.
@@ -386,3 +434,37 @@ async def _run_runware_first(
     if then is not None:
         fallback["then"] = then
     return result, route, fallback
+
+
+async def run_route_plan(
+    plan: RoutePlan,
+    attempt: Callable[[GatewayRoute], Awaitable[T]],
+    *,
+    surface: Surface,
+    request_key: str,
+    estimate_openai_usd: Callable[[], float],
+) -> tuple[T, dict[str, object] | None]:
+    """Run ``attempt`` over a plan's routes through the two approved chains.
+
+    Returns the result and the route evidence for provenance: ``None`` for a
+    single route, else the route that produced the result and any fallback.
+    """
+    def openai_first(chain: _OpenAIFirst):
+        return run_openai_first(
+            primary=lambda: attempt(chain.openai), backup=lambda: attempt(chain.fal),
+            surface=surface, request_key=request_key, estimate_openai_usd=estimate_openai_usd,
+        )
+
+    if isinstance(plan, SingleRoute):
+        return await attempt(plan.route), None
+    if isinstance(plan, _RunwareFirst):
+        result, route, fallback = await run_runware_first(
+            primary=lambda: attempt(plan.runware), backup=lambda: openai_first(plan.then),
+            surface=surface, request_key=request_key,
+        )
+    else:
+        result, route, fallback = await openai_first(plan)
+    evidence: dict[str, object] = {"route": route}
+    if fallback is not None:
+        evidence["fallback"] = fallback
+    return result, evidence

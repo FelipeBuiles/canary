@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from novel_to_comic import codex_dev, page_drawing
+from novel_to_comic.image_route_fallback import GatewayRoute
 from novel_to_comic.ai import client
 from novel_to_comic.ai.context import ai_request_context, current_ai_request_context
 from novel_to_comic.ai.errors import AITransportError
@@ -225,11 +226,11 @@ def test_each_cell_submits_once_to_its_route_without_a_user(root, monkeypatch):
         kwargs["output_path"].write_bytes(b"png")
         return ApiResult(value=kwargs["output_path"], usage=_usage())
 
-    monkeypatch.setattr(client, "generate_wire_image_on_route", submit)
+    monkeypatch.setattr(client, "generate_wire_image", submit)
 
     run_id, cell = _run(root, "asset:new", RESTRUCTURED)
 
-    assert seen["calls"] == 1 and seen["user"] is None and seen["gateway_model"] == OPENAI
+    assert seen["calls"] == 1 and seen["user"] is None and seen["routes"].route.gateway_model == OPENAI
     assert cell["status"] == "ok" and cell["cost_usd"] > 0 and cell["funding"] == "api"
     prompt = storage.run_file(root, run_id, cell["prompt_file"]).read_text()
     assert prompt == seen["wire"].prompt_parts[0] and prompt.startswith("Ada at a window.")
@@ -243,7 +244,7 @@ def test_a_failed_cell_is_recorded_and_never_retried(root, monkeypatch, target):
         calls.append(kwargs)
         raise AITransportError("outcome unknown", phase="ambiguous_submission")
 
-    monkeypatch.setattr(client, "generate_wire_image_on_route", submit)
+    monkeypatch.setattr(client, "generate_wire_image", submit)
 
     _, cell = _run(root, "asset:new", {"target": target, "prompt": "production"})
 
@@ -315,7 +316,7 @@ def test_flare_page_compiles_with_medium_quality_and_its_own_identity(root, tmp_
     assert compiled.request.profile_sha256 == profile.content_sha256
     assert profile.exact_visible_lettering == (lettering_mode == "integrated")
     assert page_image_quality(profile.id, profile.provider) == "medium"
-    assert page_drawing.complete_page_adapter(config, profile)._gateway_model == "image-flare"
+    assert page_drawing.complete_page_adapter(config, profile).routes.route.gateway_model == "image-flare"
     assert page_drawing.complete_page_adapter(config, profile).prepare(compiled)
     assert page_image_quality(openai_page_capability_profile("gpt-image-2.5-flare").id, "openai") == "high"
     _, sunburst = image_compare.PageItem(root / "story", 1)._compile(
@@ -543,7 +544,7 @@ def _fail_then_succeed(monkeypatch):
                                           + (1024).to_bytes(4, "big"))
         return ApiResult(value=kwargs["output_path"], usage=_usage())
 
-    monkeypatch.setattr(client, "generate_wire_image_on_route", submit)
+    monkeypatch.setattr(client, "generate_wire_image", submit)
     return calls
 
 
@@ -724,7 +725,7 @@ def test_nano_banana_page_compiles_for_vertex_preserving_lettering_mode(root, tm
     assert page_image_quality(profile.id, profile.provider) == "low"
     assert "-1k-" in profile.id
     adapter = page_drawing.complete_page_adapter(config, profile)
-    assert adapter._transport._gateway_model == "image-nano-banana-2.1"
+    assert adapter.routes.route.gateway_model == "image-nano-banana-2.1"
     assert adapter.prepare(compiled)
 
 
@@ -892,7 +893,7 @@ def test_a_page_arm_quality_draws_through_the_direct_openai_profile(root, tmp_pa
     assert profile.model == compiled.request.model == model and profile.provider == "openai"
     assert page_image_quality(profile.id, profile.provider) == quality
     adapter = page_drawing.complete_page_adapter(config, profile)
-    assert adapter._gateway_model == gateway and adapter.prepare(compiled)
+    assert adapter.routes.route.gateway_model == gateway and adapter.prepare(compiled)
 
 
 def test_a_page_arm_quality_submits_once_through_the_direct_adapter(root, tmp_path, monkeypatch):
@@ -989,7 +990,7 @@ def test_runware_page_arms_draw_on_runware_at_the_chosen_quality(root, tmp_path,
             )
 
     real = page_drawing.runware_page_transport(Config(), profile)
-    assert real._gateway_model == gateway and real._route_provider == "runware"
+    assert real.routes.route == GatewayRoute("runware", gateway, model)
     monkeypatch.setattr(page_drawing, "runware_page_transport", lambda config, profile: Transport())
     for other in ("sunburst_openai_page_transport", "sunburst_fal_page_transport", "complete_page_adapter"):
         monkeypatch.setattr(page_drawing, other, lambda *a: pytest.fail("left Runware"))

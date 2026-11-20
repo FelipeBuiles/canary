@@ -40,6 +40,7 @@ from novel_to_comic.ai.finalisation import (
 )
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.codex_dev import CodexRoute, is_subscription
+from novel_to_comic.image_route_fallback import RoutePlan
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.text_models import text_wire
 from novel_to_comic.model_costs import get_pricing_resolver
@@ -1726,172 +1727,72 @@ async def generate_wire_image(
     wire: "ProviderWireRequest",
     output_path: Path,
     feature: str = "image.generate_wire",
+    routes: RoutePlan | None = None,
 ) -> ApiResult[Path]:
-    """Submit an immutable exact-wire request through the isolated adapter.
+    """Submit an immutable exact-wire Style or Cast request.
 
     A multi-route Sunburst wire runs OpenAI first with one FAL attempt as
     backup (``image_route_fallback``), after Runware when its identity starts
-    there; each route is its own usage event.
+    there; each route is its own usage event. ``routes`` pins a gateway wire
+    to other routes than its identity froze.
     """
-    from novel_to_comic.image_route_fallback import RUNWARE_FIRST_PROVIDER, SUNBURST_FALLBACK_PROVIDER
+    from novel_to_comic.ai.image_submission import submit_look_image
+    from novel_to_comic.ai.providers import selector
 
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
         raise ValueError("ProviderWireRequest execution fingerprint mismatch")
-    if wire.provider_key in {SUNBURST_FALLBACK_PROVIDER, RUNWARE_FIRST_PROVIDER}:
-        return await _generate_sunburst_wire_image(
+    if wire.provider_key == selector.CODEX_PROVIDER_KEY:
+        return await _generate_codex_wire_image(
             config=config, wire=wire, output_path=output_path, feature=feature,
         )
-    return await _generate_wire_image_once(
-        config=config, wire=wire, output_path=output_path, feature=feature,
+    return await submit_look_image(
+        wire, output_path=output_path, feature=feature, config=config, routes=routes,
     )
 
 
-async def _generate_sunburst_wire_image(
+async def _generate_codex_wire_image(
     *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
 ) -> ApiResult[Path]:
-    from dataclasses import replace
-
-    from novel_to_comic.image_route_fallback import (
-        FAL_SUNBURST_GATEWAY_MODEL,
-        OPENAI_SUNBURST_GATEWAY_MODEL,
-        RUNWARE_FIRST_PROVIDER,
-        RUNWARE_SUNBURST_GATEWAY_MODEL,
-        run_openai_first,
-        run_runware_first,
-    )
-    from novel_to_comic.usage import estimate_image_cost
-
-    def attempt(gateway_model: str):
-        return generate_wire_image_on_route(
-            config=config, wire=wire, gateway_model=gateway_model,
-            output_path=output_path, feature=feature,
-        )
-
-    def openai_first():
-        return run_openai_first(
-            primary=lambda: attempt(OPENAI_SUNBURST_GATEWAY_MODEL),
-            backup=lambda: attempt(FAL_SUNBURST_GATEWAY_MODEL),
-            surface="asset", request_key=wire.execution_fingerprint,
-            estimate_openai_usd=lambda: estimate_image_cost(
-                OPENAI_SUNBURST_GATEWAY_MODEL, 1, quality=dict(wire.controls).get("quality"),
-                ref_count=len(wire.references), prompt_text=wire.prompt_parts[0],
-                width=wire.width, height=wire.height, basis="expected",
-            ),
-        )
-
-    if wire.provider_key == RUNWARE_FIRST_PROVIDER:
-        result, route, fallback = await run_runware_first(
-            primary=lambda: attempt(RUNWARE_SUNBURST_GATEWAY_MODEL),
-            backup=openai_first, surface="asset", request_key=wire.execution_fingerprint,
-        )
-    else:
-        result, route, fallback = await openai_first()
-    metadata: dict[str, Any] = {**(result.response_metadata or {}), "route": route}
-    if fallback is not None:
-        metadata["fallback"] = fallback
-    return replace(result, response_metadata=metadata)
-
-
-async def generate_wire_image_on_route(
-    *, config: Config, wire: "ProviderWireRequest", gateway_model: str,
-    output_path: Path, feature: str,
-) -> ApiResult[Path]:
-    """Submit a frozen wire to exactly one route's gateway deployment, once.
-
-    No fallback: the caller owns what happens when this route fails.
-    """
-    from dataclasses import replace
-
-    routed = replace(wire, requested_alias=gateway_model)
-    routed = replace(routed, execution_fingerprint=routed.recompute_execution_fingerprint())
-    return await _generate_wire_image_once(
-        config=config, wire=routed, output_path=output_path, feature=feature,
-    )
-
-
-async def _generate_wire_image_once(
-    *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
-) -> ApiResult[Path]:
+    """The subscription runtime's own call: no gateway, no credit guarantee."""
     from novel_to_comic.ai.image_previews import image_preview_target
-
-    with generation_probe() as probe, image_preview_target(output_path):
-        probe.wire_schema_version = wire.schema_version
-        return await _generate_wire_image_attempt(
-            config=config, wire=wire, output_path=output_path, feature=feature,
-        )
-
-
-async def _generate_wire_image_attempt(
-    *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
-) -> ApiResult[Path]:
     from novel_to_comic.ai.providers import selector
     from novel_to_comic.provider_wire import materialize_wire_references
 
-    transport_wire = wire
-    blobs = materialize_wire_references(transport_wire)
-    ref_reads = [
-        (Path(ref.source_path), data)
-        for ref, data in zip(transport_wire.references, blobs, strict=True)
-    ]
-    provider = selector.pick(
-        transport_wire.requested_alias or "", config, provider_key=transport_wire.provider_key
-    )
-    params = provider.wire_request_params(transport_wire)
-    ctx = await begin_image_call(
-        config=config,
-        model=transport_wire.requested_alias
-        or transport_wire.configured_provider_model,
-        feature=feature,
-        prompt=transport_wire.prompt_parts[0],
-        params=params,
-        ref_reads=ref_reads,
-    )
-    try:
-        await _authorize_model_submission(
-            event_id=ctx.event_id, estimated_cost_usd=ctx.estimated_cost_usd,
-            funding=ctx.metadata.get("funding", "api"), config=config,
+    with generation_probe() as probe, image_preview_target(output_path):
+        probe.wire_schema_version = wire.schema_version
+        ref_reads = [
+            (Path(ref.source_path), data)
+            for ref, data in zip(wire.references, materialize_wire_references(wire), strict=True)
+        ]
+        provider = selector.codex_provider(wire.requested_alias or "", config)
+        model = wire.requested_alias or wire.configured_provider_model
+        ctx = await begin_image_call(
+            config=config, model=model, feature=feature, prompt=wire.prompt_parts[0],
+            params=provider.wire_request_params(wire), ref_reads=ref_reads,
         )
-        # Telemetry only: a serialized runtime marks again when its queue releases.
-        mark_generation_executing()
-        raw = await provider.generate_wire(
-            wire=transport_wire,
-            config=config,
-            event_id=ctx.event_id,
-            metadata=ctx.metadata,
+        try:
+            # Telemetry only: a serialized runtime marks again when its queue releases.
+            mark_generation_executing()
+            raw = await provider.generate_wire(
+                wire=wire, config=config, event_id=ctx.event_id, metadata=ctx.metadata,
+            )
+        except asyncio.CancelledError as exc:
+            await finalise_image_cancelled(
+                ctx=ctx, config=config, model=model, feature=feature,
+                error=exc, error_response=getattr(exc, "response", None),
+            )
+            raise
+        except Exception as exc:
+            await finalise_image_failure(
+                ctx=ctx, config=config, model=model, feature=feature,
+                error=exc, error_response=getattr(exc, "response", None),
+            )
+            raise
+        # Finalization owns output-write failures and their already-generated usage.
+        # Do not catch and finalize again: that would erase the provider evidence.
+        return await finalise_image_success(
+            ctx=ctx, config=config, model=model, feature=feature, output_path=output_path, raw=raw,
         )
-    except asyncio.CancelledError as exc:
-        await finalise_image_cancelled(
-            ctx=ctx,
-            config=config,
-            model=transport_wire.requested_alias
-            or transport_wire.configured_provider_model,
-            feature=feature,
-            error=exc,
-            error_response=getattr(exc, "response", None),
-        )
-        raise
-    except Exception as exc:
-        await finalise_image_failure(
-            ctx=ctx,
-            config=config,
-            model=transport_wire.requested_alias
-            or transport_wire.configured_provider_model,
-            feature=feature,
-            error=exc,
-            error_response=getattr(exc, "response", None),
-        )
-        raise
-    # Finalization owns output-write failures and their already-generated usage.
-    # Do not catch and finalize again: that would erase the provider evidence.
-    return await finalise_image_success(
-        ctx=ctx,
-        config=config,
-        model=transport_wire.requested_alias
-        or transport_wire.configured_provider_model,
-        feature=feature,
-        output_path=output_path,
-        raw=raw,
-    )
 
 
 def _diagnose_empty_image_response(data: dict[str, Any]) -> str:

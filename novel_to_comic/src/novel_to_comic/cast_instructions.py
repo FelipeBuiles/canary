@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
+from novel_to_comic.cast_target import AssetKind, AssetType, CastTarget
 from novel_to_comic.cast_reference_inputs import (
     UploadedReference, resolve_reference_inputs,
 )
@@ -33,10 +34,6 @@ logger = logging.getLogger("canary.cast_instructions")
 
 MAX_INSTRUCTION_CHARS = 500
 MAX_ASSET_ADDENDUM_CHARS = 600
-
-AssetKind = Literal["character_ref", "location_plate", "prop_ref"]
-
-AssetType = Literal["character", "location", "prop"]
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HIGH_RISK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
@@ -53,34 +50,6 @@ _HIGH_RISK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"<script\b",
     )
 )
-
-# One asset type maps to one reference kind, one job kind, one response key, and
-# one telemetry feature. Keeping them in a single table means a new asset type
-# cannot be half-wired.
-_ASSET_TYPES: dict[AssetType, tuple[AssetKind, str, str, str]] = {
-    "character": (
-        "character_ref",
-        "character_ref_regen",
-        "char_id",
-        "cast.character_ref_instruction_rewrite",
-    ),
-    "location": (
-        "location_plate",
-        "location_plate_regen",
-        "loc_id",
-        "cast.location_plate_instruction_rewrite",
-    ),
-    "prop": (
-        "prop_ref",
-        "prop_ref_regen",
-        "prop_id",
-        "cast.prop_ref_instruction_rewrite",
-    ),
-}
-
-ASSET_REGEN_KINDS: dict[AssetType, str] = {
-    asset_type: entry[1] for asset_type, entry in _ASSET_TYPES.items()
-}
 
 
 class PromptInstructionError(ValueError):
@@ -358,12 +327,13 @@ def resolve_cast_asset(project_dir: Path, asset_type: AssetType, asset_id: str, 
 
 
 def instructed_asset_execution(config, project_dir, db, user_id, project_id,
-                               asset_type, asset_id, instruction, state_id, attachments,
+                               target: CastTarget, instruction, attachments,
                                *, with_looks: bool = False):
     from novel_to_comic import artifacts
     from novel_to_comic.clients import text
     from novel_to_comic.server.credits import debit_model_usage
-    ref_kind, _kind, _key, feature = _ASSET_TYPES[asset_type]
+    asset_type, asset_id, state_id = target.asset_type, target.entity_id, target.state_id
+    ref_kind, feature = target.ref_kind, target.feature
     async def _runner():
         from novel_to_comic.ai import current_ai_request_context
         from novel_to_comic.stages import s3_cast
@@ -432,60 +402,7 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
                 **({"design_before": design_before} if design_before else {}),
             },
         )
-        if asset_type == "character":
-            result = (
-                await s3_cast.regenerate_character_state_ref(config, project_dir, asset_id, state_id)
-                if state_id
-                else await s3_cast.regenerate_character_ref(config, project_dir, asset_id)
-            )
-        elif asset_type == "location":
-            result = await s3_cast.regenerate_location_plate(config, project_dir, asset_id, state_id=state_id)
-        else:
-            result = await s3_cast.regenerate_prop_ref(config, project_dir, asset_id)
-        _clear_repaired_cast_failure(
-            project_dir, f"{asset_id}:{state_id}" if state_id else asset_id
-        )
-        if with_looks and not state_id and asset_type in {"character", "location"}:
-            result = await s3_cast.redraw_looks(config, project_dir, asset_type, asset_id, result)
-        return result
+        return await s3_cast.regenerate_cast_target(
+            config, project_dir, target, with_looks=with_looks)
 
     return _runner
-
-
-
-
-def asset_regen_label(
-    asset_type: AssetType,
-    asset_id: str,
-    state_id: str | None = None,
-) -> str:
-    """Human-readable job label shown in the generation queue."""
-    if asset_type == "character":
-        base = "Appearance state" if state_id else "Character ref"
-    elif asset_type == "location":
-        base = "Location state" if state_id else "Location plate"
-    else:
-        base = "Prop ref"
-    subject = f"{asset_id} · {state_id}" if state_id else asset_id
-    return f"{base} / {subject}"
-
-
-def _clear_repaired_cast_failure(project_dir: Path, asset_id: str) -> None:
-    """Drop a repaired asset from the Cast stage's failure list.
-
-    Both plain and instructed regeneration call this domain operation after
-    persisting the reference, so a repaired asset no longer blocks the stage.
-    """
-    from novel_to_comic.state import load_state, save_state
-
-    try:
-        state = load_state(project_dir)
-    except Exception:
-        logger.exception("Could not load state to clear a repaired cast failure")
-        return
-    cast_state = state.stages.get("cast")
-    if cast_state is None or asset_id not in cast_state.items_failed:
-        return
-    cast_state.items_failed.remove(asset_id)
-    cast_state.items_done = min(cast_state.items_total, cast_state.items_done + 1)
-    save_state(state, project_dir)

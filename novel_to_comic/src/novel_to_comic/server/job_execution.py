@@ -89,27 +89,18 @@ async def _operate(app, job, directory, config):
         from .cover_operations import _generate_project_cover
         return await _generate_project_cover(config, directory, spec.user_id, spec.project_id), None
     if spec.operation == "cast_asset":
+        from novel_to_comic.cast_target import CastTarget
         from novel_to_comic.stages import s3_cast
-        asset_id, _, state_id = args["asset_id"].partition(":")
-        if args["kind"] == "character_ref_regen":
-            result = (await s3_cast.regenerate_character_state_ref(config, directory, asset_id, state_id)
-                      if state_id else await s3_cast.regenerate_character_ref(config, directory, asset_id))
-        elif args["kind"] == "location_plate_regen":
-            result = await s3_cast.regenerate_location_plate(config, directory, asset_id, state_id=state_id or None)
-        else:
-            result = await s3_cast.regenerate_prop_ref(config, directory, asset_id)
-        from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
-        _clear_repaired_cast_failure(directory, args["asset_id"])
-        if args.get("with_looks") and not state_id:
-            kind = "character" if args["kind"] == "character_ref_regen" else "location"
-            result = await s3_cast.redraw_looks(config, directory, kind, asset_id, result)
-        return result, None
+        target = CastTarget.from_job(args["kind"], args["asset_id"])
+        return await s3_cast.regenerate_cast_target(
+            config, directory, target, with_looks=bool(args.get("with_looks"))), None
     if spec.operation == "cast_instruction":
         from novel_to_comic.cast_instructions import instructed_asset_execution
         from novel_to_comic.cast_reference_inputs import parse_reference_input
+        from novel_to_comic.cast_target import CastTarget
         from .db import get_db
         work = instructed_asset_execution(config, directory, get_db(), spec.user_id, spec.project_id,
-            args["asset_type"], args["asset_id"], args["instruction"], args.get("state_id"),
+            CastTarget(args["asset_type"], args["asset_id"], args.get("state_id")), args["instruction"],
             [parse_reference_input(item) for item in args["attachments"]],
             with_looks=args.get("with_looks", False))
         return await work(), None
