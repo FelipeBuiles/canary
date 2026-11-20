@@ -314,7 +314,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "openai/gpt-image-2.5/sunburst",
     "page_number": 7,
@@ -655,7 +655,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "openai/gpt-image-2.5/sunburst",
     "page_number": 7,
@@ -1010,7 +1010,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1920,
-    "image_sha256": "c97e5e5a93dbfc14bfeda5554d038f1f6e3ac1dde37fa59f61fa55c1828bb3d9",
+    "image_sha256": "8daa1df2226c78bbe94a9216c0f8eb27652c81e26cf7c13064f77933f71500cb",
     "latency_ms": "<volatile>",
     "model": "meta/muse-image",
     "page_number": 7,
@@ -1216,7 +1216,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1920,
-    "image_sha256": "c97e5e5a93dbfc14bfeda5554d038f1f6e3ac1dde37fa59f61fa55c1828bb3d9",
+    "image_sha256": "8daa1df2226c78bbe94a9216c0f8eb27652c81e26cf7c13064f77933f71500cb",
     "latency_ms": "<volatile>",
     "model": "meta/muse-image",
     "page_number": 7,
@@ -1280,9 +1280,9 @@
       "prompt_sha256": "b7345d51ad57808ca6ddc56fe93fb8edc07ee1aac4fb997c487999705349087a",
       "references": [
        {
-        "bytes": 5937,
+        "bytes": 3217193,
         "name": "complete-page-edit-source.png",
-        "sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96"
+        "sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97"
        },
        {
         "bytes": 7,
@@ -1380,11 +1380,11 @@
     "body": {
      "files": [
       {
-       "bytes": 5937,
+       "bytes": 3217193,
        "content_type": "image/png",
        "field": "image",
        "filename": "complete-page-edit-source.png",
-       "sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96"
+       "sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97"
       },
       {
        "bytes": 7,
@@ -1404,9 +1404,9 @@
      "form": {
       "canary_complete_page_request": {
        "chars": 5350,
-       "sha256": "447da2712730d199edbfb9a917bb7cc6fc9d0affb6aba283f107e12dcf247f8a"
+       "sha256": "99602ecefc19030138ebee99b67b7ce8a065e22dcb8336092e35750a92468aeb"
       },
-      "canary_idempotency_key": "99d905b2cad105ba8b2e84a6da35969379c4ccecb54b745c21891dde592993db",
+      "canary_idempotency_key": "090f45624a8acd803d63e83168467db7a0aeb56a8e7961cc4177b2d5f74c541c",
       "canary_requested_aspect": "0.6708860759493671",
       "canary_requested_height": "1264",
       "canary_requested_width": "848",
@@ -1435,13 +1435,13 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1264,
-    "image_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+    "image_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
     "latency_ms": "<volatile>",
     "model": "gemini-nano-banana-2.1",
     "page_number": 7,
     "parent_revision": 1,
     "provider": "vertex-multimodal",
-    "request_sha256": "99d905b2cad105ba8b2e84a6da35969379c4ccecb54b745c21891dde592993db",
+    "request_sha256": "090f45624a8acd803d63e83168467db7a0aeb56a8e7961cc4177b2d5f74c541c",
     "revision": 2,
     "width": 848
    },
@@ -1940,7 +1940,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1264,
-    "image_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+    "image_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
     "latency_ms": "<volatile>",
     "model": "gemini-nano-banana-2.1",
     "page_number": 7,
@@ -2120,7 +2120,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1264,
-    "image_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+    "image_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
     "latency_ms": "<volatile>",
     "model": "gemini-nano-banana-2.1",
     "page_number": 7,
@@ -2469,7 +2469,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1264,
-    "image_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+    "image_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
     "latency_ms": "<volatile>",
     "model": "gemini-nano-banana-2.1",
     "page_number": 7,
@@ -2817,7 +2817,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-flare",
     "page_number": 7,
@@ -2993,7 +2993,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-flare",
     "page_number": 7,
@@ -3459,7 +3459,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -3917,7 +3917,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -4134,7 +4134,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -4741,7 +4741,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -5199,7 +5199,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -5416,7 +5416,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -5759,9 +5759,9 @@
       "prompt_sha256": "0167d1bf60f40a2619bf722ecc1fb43ca50a96fb659f4b204415b3b6a1c1251c",
       "references": [
        {
-        "bytes": 7962,
+        "bytes": 4720556,
         "name": "complete-page-edit-source.png",
-        "sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6"
+        "sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495"
        },
        {
         "bytes": 7,
@@ -5859,11 +5859,11 @@
     "body": {
      "files": [
       {
-       "bytes": 7962,
+       "bytes": 4720556,
        "content_type": "image/png",
        "field": "image",
        "filename": "complete-page-edit-source.png",
-       "sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6"
+       "sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495"
       },
       {
        "bytes": 7,
@@ -5910,13 +5910,13 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
     "parent_revision": 1,
     "provider": "openai-fal",
-    "request_sha256": "8a661c4a374d826af666bb657b03b5c5709f14c13ba6a42bf0d119f3ad5946d3",
+    "request_sha256": "7cb22174a4dbb9583dcd6c0cfb868f9e2414fad5ad1bce5350420188f350a663",
     "revision": 2,
     "width": 1024
    },
@@ -6240,7 +6240,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -6884,7 +6884,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -7062,7 +7062,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -7391,7 +7391,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -7859,7 +7859,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.04616",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -8189,7 +8189,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -8833,7 +8833,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -9011,7 +9011,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -9340,7 +9340,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.0421",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -9808,7 +9808,7 @@
     "comic_page_sha256": "0b592399441c75d241e43eea2c28ccf3d18c577893fb2b440a47aed40d8348e4",
     "cost_usd": "0.045974999999999995",
     "height": 1536,
-    "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+    "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
     "latency_ms": "<volatile>",
     "model": "gpt-image-2.5-sunburst",
     "page_number": 7,
@@ -10142,7 +10142,7 @@
    "actual_provider_model": "runware/minimax-h3-image",
    "artifact_kind": "complete_page",
    "height": 1536,
-   "image_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+   "image_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
    "latency_ms": "<volatile>",
    "media_type": "image/png",
    "provider_request_id": "resp-fingerprint",
@@ -10816,7 +10816,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-flare",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -11020,7 +11020,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-flare",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -11379,7 +11379,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-flare",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -11922,7 +11922,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/minimax-h3-image",
-   "output_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+   "output_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -12128,7 +12128,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/minimax-h3-image",
-   "output_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+   "output_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -12490,7 +12490,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/minimax-h3-image",
-   "output_sha256": "7bd9609ffcbc33a53e6ca129b6a3bedb44c1106291824b061239823bab579cd6",
+   "output_sha256": "1d1825d323d6170e0b4cba9a5e5a0bf0b5de10e369669e81687633d9f4d21495",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -13016,7 +13016,7 @@
   ],
   "result": {
    "actual_provider_model": "openrouter/meta/muse-image",
-   "output_sha256": "c97e5e5a93dbfc14bfeda5554d038f1f6e3ac1dde37fa59f61fa55c1828bb3d9",
+   "output_sha256": "8daa1df2226c78bbe94a9216c0f8eb27652c81e26cf7c13064f77933f71500cb",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -13170,7 +13170,7 @@
   ],
   "result": {
    "actual_provider_model": "openrouter/meta/muse-image",
-   "output_sha256": "c97e5e5a93dbfc14bfeda5554d038f1f6e3ac1dde37fa59f61fa55c1828bb3d9",
+   "output_sha256": "8daa1df2226c78bbe94a9216c0f8eb27652c81e26cf7c13064f77933f71500cb",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -13456,7 +13456,7 @@
   ],
   "result": {
    "actual_provider_model": "openrouter/meta/muse-image",
-   "output_sha256": "c97e5e5a93dbfc14bfeda5554d038f1f6e3ac1dde37fa59f61fa55c1828bb3d9",
+   "output_sha256": "8daa1df2226c78bbe94a9216c0f8eb27652c81e26cf7c13064f77933f71500cb",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -13999,7 +13999,7 @@
   ],
   "result": {
    "actual_provider_model": "vertex_ai/gemini-nano-banana-2.1",
-   "output_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+   "output_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -14205,7 +14205,7 @@
   ],
   "result": {
    "actual_provider_model": "vertex_ai/gemini-nano-banana-2.1",
-   "output_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+   "output_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -14567,7 +14567,7 @@
   ],
   "result": {
    "actual_provider_model": "vertex_ai/gemini-nano-banana-2.1",
-   "output_sha256": "8b2a375647d3c6a4378be4a041b73a7b560261a4744050e3bdb0ada392c5de96",
+   "output_sha256": "3baa273fe215e8db1fd37709d38687f41d7969d7a12c0df36538e444546f1d97",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -14936,7 +14936,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "fallback": {
@@ -15466,7 +15466,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/openai/gpt-image-2.5/sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "fallback": {
@@ -16029,7 +16029,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "runware"
@@ -16239,7 +16239,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "runware"
@@ -16770,7 +16770,7 @@
   ],
   "result": {
    "actual_provider_model": "runware/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "runware"
@@ -17340,7 +17340,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/bytedance/seedream/v5/lite/edit",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -17506,7 +17506,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/bytedance/seedream/v5/lite/edit",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -17816,7 +17816,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/bytedance/seedream/v5/lite/edit",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": null,
    "usage": {
@@ -18353,7 +18353,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/openai/gpt-image-2.5/sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "fallback": {
@@ -18895,7 +18895,7 @@
   ],
   "result": {
    "actual_provider_model": "fal-queue/openai/gpt-image-2.5/sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "fallback": {
@@ -19602,7 +19602,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "openai"
@@ -19812,7 +19812,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "openai"
@@ -20020,7 +20020,7 @@
   ],
   "result": {
    "actual_provider_model": "openai/gpt-image-2.5-sunburst",
-   "output_sha256": "f532f909fe04f71a0dd206c4594593b61684f260bbe928c4167aa84c919f196c",
+   "output_sha256": "b31284bce601693604655ed2521231d2f1984fbe53d7115df8c3ee53fd19b5f0",
    "provider_request_id": "resp-fingerprint",
    "response_metadata": {
     "route": "openai"
