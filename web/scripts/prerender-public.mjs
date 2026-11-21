@@ -43,7 +43,7 @@ try {
       (isPublicHome(path) ? [...Object.entries(homePaths), ['x-default', '/']].map(([language, target]) => `<link rel="alternate" hreflang="${language}" href="${origin}${target}">`).join('') : '') +
       `<script id="public-schema" type="application/ld+json">${json(publicSchema(path))}</script>`
     const module = isPublicHome(path) ? 'src/pages/HomePage.tsx' : path.startsWith('/legal/') ? { '/legal/terms': 'src/pages/legal/TermsPage.tsx', '/legal/privacy': 'src/pages/legal/PrivacyPage.tsx', '/legal/acceptable-use': 'src/pages/legal/AcceptableUsePage.tsx' }[path] : 'src/pages/ProductPage.tsx'
-    document = document.replace('<html lang="en">', `<html lang="${metadata.language}">`).replace('</head>', head + stylesFor(module) + preloads + '</head>')
+    document = document.replace('<html lang="en"', `<html lang="${metadata.language}"`).replace('</head>', head + stylesFor(module) + preloads + '</head>')
       .replace('<div id="root"></div>', `<div id="root" data-prerendered="true">${markup}</div><script id="public-bootstrap" type="application/json">${json(bootstrap)}</script>`)
     const file = `public/${path === '/' ? 'home' : path.slice(1).replaceAll('/', '-')}.html`
     await writeFile(resolve('dist', file), document)

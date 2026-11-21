@@ -34,7 +34,7 @@ def test_initial_public_html_is_complete_and_has_unique_metadata(public_site, pa
     assert body.count('rel="canonical"') == 1
     assert body.count('name="description"') == 1
     assert f'href="https://scenewright.ink{path}"' in body
-    assert f'<html lang="{language}">' in body
+    assert f'<html lang="{language}" translate="no">' in body
     assert '<h1' in body and len(re.findall(r'<p\b', body)) >= 4
     assert 'data-prerendered="true"' in body
     assert '<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">' in body
