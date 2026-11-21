@@ -27,7 +27,7 @@ describe("PostHog privacy boundary", () => {
     "keeps ingestion and diagnostic metadata on %s without admitting content", event => {
       vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_offline_test");
       const result = scrubEvent({ uuid: "test", event, properties: {
-        token: "private", $session_id: "session-1", $window_id: "window-1", $snapshot_data: [],
+        token: "private", $session_id: "session-1", $window_id: "window-1", $snapshot_data: [{ type: 3, data: { source: 2 } }],
         $lib: "web", $lib_version: "1.434.15", $insert_id: "insert-1", $pageview_id: "view-1",
         $browser: "Chrome", $browser_version: 140, $os: "Mac OS X", $os_version: "15.0",
         $browser_language: "en-CA", $device_type: "Desktop", $timezone: "America/Toronto",
@@ -194,7 +194,19 @@ it("drops automatic top-level person properties and opaque compressed replay fra
   } };
   const result = scrubEvent(raw);
   expect(JSON.stringify(result)).not.toContain("UNPUBLISHED_SECRET");
-  expect(result?.properties.$snapshot_data).toEqual([]);
+  expect(result).toBeNull();
+});
+
+
+it("drops replay batches whose frames were all filtered", () => {
+  const result = scrubEvent({ uuid: "test", event: "$snapshot", properties: {
+    $session_id: "session-1", $window_id: "window-1", $snapshot_data: [
+      { type: 6, data: { plugin: "rrweb/console@1", payload: { level: "log" } } },
+      { type: 5, data: { tag: "custom", payload: {} } },
+      { type: 3, cv: "2024-10", data: "packed" },
+    ],
+  } });
+  expect(result).toBeNull();
 });
 
 

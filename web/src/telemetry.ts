@@ -281,7 +281,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
     if (source.outcome === "succeeded" || source.outcome === "failed") properties.outcome = source.outcome;
     if (event.event === "$snapshot") {
       const frames = scrubSnapshotData(source.$snapshot_data);
-      if (!frames || typeof properties.$session_id !== "string" || typeof properties.$window_id !== "string") return null;
+      if (!frames?.length || typeof properties.$session_id !== "string" || typeof properties.$window_id !== "string") return null;
       properties.$snapshot_data = frames;
       for (const key of ["$snapshot_bytes", "$snapshot_source", "$lib", "$lib_version"]) {
         if (typeof source[key] === "number" || (typeof source[key] === "string" && tokenPattern.test(source[key]))) {
